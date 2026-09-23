@@ -58,6 +58,7 @@ export interface LeaveRequest {
   leave_type_code: string | null;
   employee_name: string | null;
   approver_name: string | null;
+  approver_remarks?: string | null;
 }
 
 export interface Holiday {
@@ -139,13 +140,14 @@ export const leaveApi = {
   cancelRequest: (id: string) =>
     request<LeaveRequest>(`/requests/${id}/cancel`, { method: 'POST' }),
   getPendingApprovals: () => request<LeaveRequest[]>('/approvals/pending'),
-  decide: (id: string, approve: boolean, rejectionReason?: string) =>
+  getApprovalHistory: () => request<LeaveRequest[]>('/approvals/history'),
+  decide: (id: string, approve: boolean, rejectionReason?: string, remarks?: string) =>
     request<LeaveRequest>(`/requests/${id}/approve`, {
       method: 'PUT',
       body: JSON.stringify(
         approve
-          ? { approve: true }
-          : { approve: false, rejection_reason: rejectionReason },
+          ? { approve: true, remarks }
+          : { approve: false, rejection_reason: rejectionReason, remarks },
       ),
     }),
   getHolidays: (year: number) => request<Holiday[]>(`/holidays?year=${year}`),

@@ -1,10 +1,9 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
-import { canSeeToApprove } from '@/lib/auth/canApprove';
-import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { ProfileDropdown } from '@/components/ProfileDropdown';
 import { NotificationsDropdown } from '@/components/NotificationsDropdown';
 import {
@@ -12,6 +11,8 @@ import {
   InboxIcon,
   TeamIcon,
   WalletIcon,
+  TimerIcon,
+  CalendarCheckIcon,
   TrendingUpIcon,
   MessageCircleIcon,
   GlobeIcon,
@@ -19,16 +20,12 @@ import {
   SettingsIcon,
   HelpIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   SearchIcon,
   FingerprintIcon,
-  IdCardIcon,
-  ClipboardCheckIcon,
-  DocumentIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -53,52 +50,27 @@ interface NavItem {
    * team-scoped Admin shouldn't see even though their role otherwise would
    * grant access — see useRequireAccess for the matching route guard. */
   requireOrgScope?: boolean;
-  /** Only show for users holding this backend permission code (e.g. 'roles.manage'). */
-  requirePermission?: string;
-  /** Only show for users holding at least one of these permission codes. */
-  requireAnyPermission?: string[];
-  /** Only show for users who may approve (have reports or an approve-scoped
-   * permission) — see canSeeToApprove. */
-  requireApprover?: boolean;
   badge?: number;
-  children?: NavChild[];
-}
-
-/** A submenu link, optionally gated by the same access rules as a top-level
- * item, so one menu can hold links that only some roles/permissions can see. */
-interface NavChild {
-  label: string;
-  href: string;
-  roles?: RequiredRole[];
-  requireOrgScope?: boolean;
-  requirePermission?: string;
-  requireAnyPermission?: string[];
-  /** Only show for users who may approve (have reports or an approve-scoped
-   * permission) — see canSeeToApprove. */
-  requireApprover?: boolean;
+  children?: { label: string; href: string; anyPermission?: string[] }[];
 }
 
 const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, href: '/', roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'my-onboarding', label: 'My Onboarding', icon: ClipboardCheckIcon, href: '/me/onboarding', roles: ['employee'] },
-  { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
   {
-    id: 'approvals',
-    label: 'Approvals',
-    icon: ClipboardCheckIcon,
-    href: '/approvals',
+    id: 'attendance',
+    label: 'Attendance',
+    icon: CalendarCheckIcon,
+    href: '/attendance',
     roles: ['admin', 'employee', 'superadmin'],
     children: [
-      { label: 'To approve', href: '/approvals?tab=to-approve', requireApprover: true },
-      { label: 'My requests', href: '/approvals?tab=mine' },
+      { label: 'Attendance', href: '/attendance' },
+      { label: 'Leave Management', href: '/leave' },
+      { label: 'Approvals', href: '/approvals', anyPermission: ['leave.approve', 'attendance.approve'] },
+      { label: 'Calendar Management', href: '/attendance/calendar', anyPermission: ['calendar.manage'] },
     ],
   },
-  // Attendance / Leave / Timesheet are hidden until their backends exist. The
-  // pages proxy to /api/{attendance,leave,timesheet}/* which have no matching
-  // backend route (leave's only backend is the minimal example-leave reference,
-  // missing types/balance/holidays), so they render "Upstream error". Re-add
-  // each here when its real (peer-owned) backend lands.
+  { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet', roles: ['admin', 'employee', 'superadmin'] },
   {
     id: 'finances',
     label: 'My Finances',
@@ -120,59 +92,18 @@ const navItems: NavItem[] = [
   },
   { id: 'team', label: 'My Team', icon: TeamIcon, href: '/team', roles: ['admin', 'employee', 'superadmin'] },
   {
-    // Org menu: directory/chart visible to all; admin sections gated to admin+.
-    id: 'org',
-    label: 'Organization',
-    icon: GlobeIcon,
-    href: '/org-module',
-    roles: ['admin', 'superadmin'],
-    children: [
-      { label: 'Dashboard', href: '/org-module', roles: ['admin', 'superadmin'] },
-      { label: 'Employee Directory', href: '/org?tab=directory', requireAnyPermission: ['employees.read', 'employees.write'] },
-      { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
-      { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
-      { label: 'Assets', href: '/assets', requireAnyPermission: ['assets.read', 'assets.write'] },
-      { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },
-      { label: 'Job Architecture', href: '/org-module/org-structure?tab=job-families', roles: ['admin', 'superadmin'] },
-      {
-        label: 'Manage Structure',
-        href: '/manage-org',
-        roles: ['admin', 'superadmin'],
-        requireAnyPermission: ['employees.write', 'org.manage'],
-      },
-      { label: 'Onboarding', href: '/onboarding', roles: ['admin', 'superadmin'] },
-      { label: 'Org Changes', href: '/org-module/promotions', roles: ['admin', 'superadmin'] },
-      { label: 'Exits', href: '/exits', roles: ['superadmin'] },
-      { label: 'Settings', href: '/org-module/org-configuration', roles: ['superadmin'] },
-    ],
-  },
-  {
-    // Employee self-service: org directory and chart, visible to all roles.
-    id: 'directory',
-    label: 'Directory',
+    id: 'org-all',
+    label: 'Organisation',
     icon: GlobeIcon,
     href: '/org',
-    roles: ['employee'],
+    roles: ['admin', 'employee', 'superadmin'],
     children: [
       { label: 'Employee Directory', href: '/org?tab=directory' },
       { label: 'Organisation Chart', href: '/org?tab=chart' },
-      { label: 'My Assets', href: '/assets', requireAnyPermission: ['assets.read'] },
+      { label: 'Organization Documents', href: '/org?tab=documents' },
     ],
   },
-  {
-    id: 'payroll',
-    label: 'Payroll',
-    icon: WalletIcon,
-    href: '/payroll-inputs',
-    roles: ['admin', 'employee', 'superadmin'],
-    requireOrgScope: true,
-    requireAnyPermission: ['payroll.write', 'payroll.manage'],
-    children: [
-      { label: 'Payroll Inputs', href: '/payroll-inputs' },
-      { label: 'Payroll Setup', href: '/payroll-setup' },
-    ],
-  },
-  { id: 'admin', label: 'Access control', icon: IdCardIcon, href: '/admin', roles: ['admin', 'employee', 'superadmin'], requirePermission: 'roles.manage' },
+  { id: 'org', label: 'Organization', icon: TeamIcon, href: '/employees', roles: ['superadmin'], requireOrgScope: true },
   { id: 'engage', label: 'Engage', icon: MessageCircleIcon, href: '/engage', roles: ['admin', 'employee', 'superadmin'] },
   { id: 'apps', label: 'Apps', icon: GridIcon, href: '/apps', roles: ['admin', 'employee', 'superadmin'] },
 ];
@@ -182,27 +113,19 @@ const COLLAPSE_STORAGE_KEY = 'hrms-sidebar-collapsed';
 const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/': { title: 'Home', subtitle: 'Overview of your workday and organization updates' },
   '/inbox': { title: 'Inbox', subtitle: 'Review messages, requests, and notifications that need your attention' },
-  '/approvals': { title: 'Approvals', subtitle: 'Approve requests routed to you and track your own' },
   '/me/attendance': { title: 'Attendance', subtitle: 'Track your attendance, timings, and attendance requests' },
   '/leave': { title: 'Leave Management', subtitle: 'View your leave balance, requests, and time off' },
+  '/approvals': { title: 'Approvals', subtitle: 'Review pending leave, work from home, and regularisation requests' },
+  '/attendance/calendar': { title: 'Calendar Management', subtitle: 'Manage holidays, WFH days, and special events for the whole organisation' },
   '/timesheet': { title: 'Timesheet', subtitle: 'Track logged hours across projects and categories' },
   '/team': { title: 'My Team', subtitle: 'View your team, schedules, and workplace activity' },
   '/employees': { title: 'Organization', subtitle: 'Manage employees and organizational documents' },
-  '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
-  '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
-  '/org-module': { title: 'Organization', subtitle: '' },
-  '/assets': { title: 'Assets', subtitle: 'Company laptop inventory and assignments' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
-  '/me/documents': { title: 'My Documents', subtitle: 'View and download your employment documents' },
-  '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
-  '/me/exit': { title: 'My Exit', subtitle: 'Submit or manage your resignation' },
-  '/exits': { title: 'Exits', subtitle: 'Review resignations and record employee exits' },
-  '/policies': { title: 'Policies', subtitle: 'Manage company policies and track employee acknowledgments' },
   '/engage': { title: 'Engage', subtitle: 'Connect with colleagues and stay updated with your organization' },
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
   '/apps': { title: 'Apps', subtitle: 'Access the tools and applications available to you' },
@@ -219,64 +142,6 @@ function getPageTitle(pathname: string) {
   return match ? pageTitles[match] : null;
 }
 
-/** Uniform page sub-nav: the active sidebar menu's children rendered as tabs
- * below the page heading. Reads the URL so a `?tab=` child highlights correctly
- * (defaulting to the first tab child when no tab is set). */
-function SubNav({ items }: { items: NavChild[] }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  if (items.length === 0) return null;
-
-  const parsed = items.map((c) => {
-    const [path, query] = c.href.split('?');
-    return { ...c, path, tab: query ? new URLSearchParams(query).get('tab') : null };
-  });
-  const currentTab = searchParams.get('tab');
-
-  const matchesPath = (c: (typeof parsed)[number]) =>
-    pathname === c.path || pathname.startsWith(`${c.path}/`);
-  // Only the deepest matching path wins, so a parent tab (e.g. Dashboard at
-  // /org-module) doesn't stay underlined on a child route (/org-module/org-structure).
-  const bestPathLen = Math.max(0, ...parsed.filter(matchesPath).map((c) => c.path.length));
-
-  const isActive = (c: (typeof parsed)[number]) => {
-    if (c.path.length !== bestPathLen || !matchesPath(c)) return false;
-    const siblings = parsed.filter((x) => x.path === c.path);
-    const tabbed = siblings.filter((x) => x.tab != null);
-    // Default to the first tab only when every sibling is tabbed; when one
-    // sibling has no tab (the plain page), that one is the default view.
-    const hasNullSibling = siblings.some((x) => x.tab == null);
-    const effectiveTab = currentTab ?? (hasNullSibling ? null : tabbed[0]?.tab ?? null);
-    if (c.tab == null) return effectiveTab == null || !tabbed.some((x) => x.tab === effectiveTab);
-    return c.tab === effectiveTab;
-  };
-
-  return (
-    <div className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8">
-      <div className="flex gap-5 overflow-x-auto scrollbar-hide" role="tablist">
-        {parsed.map((c) => {
-          const active = isActive(c);
-          return (
-            <Link
-              key={c.href}
-              href={c.href}
-              role="tab"
-              aria-selected={active}
-              className={`px-1 py-3 border-b-2 text-sm font-semibold whitespace-nowrap transition-colors ${
-                active
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {c.label}
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, hasOrgScope, hasPermission } = useAuth();
   const router = useRouter();
@@ -291,17 +156,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, isLoading, router]);
 
-  // Forced temporary-password change (T06): a user with the flag set stays
-  // on the change-password screen until the flag clears — nothing else in
-  // the app is reachable.
-  useEffect(() => {
-    if (!isLoading && isAuthenticated && user?.mustChangePassword) {
-      router.push('/change-password');
-    }
-  }, [isAuthenticated, isLoading, user, router]);
-
   useEffect(() => {
     setIsMobileNavOpen(false);
+  }, [pathname]);
+
+  // Auto-expand (and keep expanded) whichever section owns the current page,
+  // so landing on a child route like /leave shows it nested under its parent
+  // ("Attendance") instead of the sidebar looking collapsed on that page.
+  useEffect(() => {
+    const owner = navItems.find((item) =>
+      item.children?.some((c) => pathname.startsWith(c.href.split('?')[0])),
+    );
+    if (owner) setExpandedId(owner.id);
   }, [pathname]);
 
   // Restore the user's collapse preference, defaulting tablet widths to collapsed.
@@ -334,47 +200,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  // Shared access test for a top-level item or a submenu child.
-  // requireApprover hides the 'To approve' entry from ordinary employees:
-  // it shows only when the user has reports (team/org scope) or holds an
-  // approve-scoped permission — see canSeeToApprove.
-  const isApprover = canSeeToApprove(user);
-  const canAccess = (rules: {
-    roles?: RequiredRole[];
-    requireOrgScope?: boolean;
-    requirePermission?: string;
-    requireAnyPermission?: string[];
-    requireApprover?: boolean;
-  }) =>
-    !!user &&
-    (!rules.roles || rules.roles.includes(user.role as RequiredRole)) &&
-    (!rules.requireOrgScope || hasOrgScope()) &&
-    (!rules.requirePermission || hasPermission(rules.requirePermission)) &&
-    (!rules.requireAnyPermission || rules.requireAnyPermission.some((code) => hasPermission(code))) &&
-    (!rules.requireApprover || isApprover);
+  const filteredNavItems = navItems.filter(
+    (item) =>
+      !!user &&
+      item.roles.includes(user.role as RequiredRole) &&
+      (!item.requireOrgScope || hasOrgScope()),
+  );
 
-  const filteredNavItems = navItems.filter(canAccess);
-
-  const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
+  const isActive = (item: NavItem) => {
+    if (item.href === '/') return pathname === '/';
+    if (pathname.startsWith(item.href)) return true;
+    return item.children?.some((c) => pathname.startsWith(c.href.split('?')[0])) ?? false;
+  };
 
   const currentPageTitle = getPageTitle(pathname);
 
-  // The sidebar menu the current page belongs to, and its access-filtered
-  // children — mirrored as a sub-nav bar under the page heading (uniform).
-  const matchPath = (h: string) => {
-    const p = h.split('?')[0];
-    return p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
-  };
-  const activeItem = navItems.find(
-    (it) => matchPath(it.href) || it.children?.some((c) => matchPath(c.href)),
-  );
-  const subNavChildren = activeItem?.children?.filter(canAccess) ?? [];
-
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
-    const active = isActive(item.href);
-    const visibleChildren = item.children?.filter(canAccess) ?? [];
-    const hasChildren = visibleChildren.length > 0;
+    const active = isActive(item);
+    const hasChildren = !!item.children?.length;
     const expanded = expandedId === item.id;
 
     return (
@@ -431,7 +275,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {hasChildren && expanded && !collapsed ? (
           <div className="mt-1 ml-8 space-y-0.5 border-l border-slate-700 pl-3">
-            {visibleChildren.map((child) => (
+            {item.children!
+              .filter((child) => !child.anyPermission || child.anyPermission.some(hasPermission))
+              .map((child) => (
               <Link
                 key={child.label}
                 href={child.href}
@@ -536,24 +382,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Shared top bar, visible on every page */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
           {currentPageTitle ? (
-            <div className="min-w-0 shrink-0 flex items-center gap-1.5">
-              {pathname !== '/' ? (
-                <button
-                  type="button"
-                  onClick={() => router.back()}
-                  aria-label="Go back"
-                  title="Go back"
-                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
-                >
-                  <ChevronLeftIcon className="w-5 h-5" />
-                </button>
+            <div className="min-w-0 shrink-0">
+              <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
+              {currentPageTitle.subtitle ? (
+                <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
               ) : null}
-              <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
-                {currentPageTitle.subtitle ? (
-                  <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
-                ) : null}
-              </div>
             </div>
           ) : null}
 
@@ -593,12 +426,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </header>
-
-        {subNavChildren.length > 0 ? (
-          <Suspense fallback={null}>
-            <SubNav items={subNavChildren} />
-          </Suspense>
-        ) : null}
 
         <div className="flex-1 overflow-y-auto">{children}</div>
       </div>

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BACKEND_API_URL } from './backend';
+import { MOCK_AUTH_ENABLED, MOCK_REFRESH_TOKEN } from './mock-auth';
+import { handleMockRequest } from './mock-data';
 
 const ACCESS_MAX_AGE = 15 * 60; // 15 minutes — matches the access-token JWT
 const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days — matches the refresh-token JWT
@@ -79,6 +81,16 @@ export async function proxyToBackend(
   path: string,
   init: RequestInit = {},
 ): Promise<ProxyResult> {
+  if (MOCK_AUTH_ENABLED) {
+    if (req.cookies.get('refreshToken')?.value !== MOCK_REFRESH_TOKEN) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+    const method = (init.method as string) || 'GET';
+    const rawBody = typeof init.body === 'string' ? init.body : undefined;
+    const { status, body } = handleMockRequest(method, path, rawBody);
+    return { status, body };
+  }
+
   let accessToken = req.cookies.get('accessToken')?.value;
   const refreshToken = req.cookies.get('refreshToken')?.value;
   let rotated: Rotated | undefined;

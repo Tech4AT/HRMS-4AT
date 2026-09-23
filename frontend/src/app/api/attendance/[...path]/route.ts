@@ -1,4 +1,4 @@
 import { createBackendProxyRoute } from '@/lib/api/proxy';
 
 // Browser → /api/attendance/... → proxyToBackend() → NestJS /attendance/...
-export const { GET, POST, PUT } = createBackendProxyRoute('attendance');
+export const { GET, POST, PUT, PATCH } = createBackendProxyRoute('attendance');
