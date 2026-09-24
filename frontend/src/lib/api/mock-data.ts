@@ -32,11 +32,12 @@ function fail(message: string, status = 400): MockResult {
 
 /* ============================== Leave ============================== */
 
-const LEAVE_TYPES = [
+let leaveTypes = [
   {
     id: 'lt-annual',
     name: 'Annual Leave',
     code: 'AL',
+    category: 'Regular',
     annual_allocation: 20,
     carry_forward_limit: 5,
     requires_approval: true,
@@ -48,6 +49,7 @@ const LEAVE_TYPES = [
     id: 'lt-sick',
     name: 'Sick Leave',
     code: 'SL',
+    category: 'Regular',
     annual_allocation: 10,
     carry_forward_limit: 0,
     requires_approval: true,
@@ -59,6 +61,7 @@ const LEAVE_TYPES = [
     id: 'lt-casual',
     name: 'Casual Leave',
     code: 'CL',
+    category: 'Regular',
     annual_allocation: 6,
     carry_forward_limit: 0,
     requires_approval: true,
@@ -68,7 +71,10 @@ const LEAVE_TYPES = [
   },
 ];
 
-const LEAVE_BALANCES = LEAVE_TYPES.map((t) => {
+// Fixed at module init from the original seed list — new leave types added
+// through Settings don't get a balance row until the (not yet implemented)
+// balance-allocation flow exists.
+const LEAVE_BALANCES = leaveTypes.map((t) => {
   const used = t.code === 'AL' ? 4 : t.code === 'SL' ? 1 : 0;
   const pending = t.code === 'AL' ? 2 : 0;
   return {
@@ -200,7 +206,50 @@ let leaveRequests: any[] = [
 function handleLeave(method: string, segments: string[], _query: URLSearchParams, body: any): MockResult {
   // segments excludes the leading "leave"
   if (method === 'GET' && segments.length === 1 && segments[0] === 'types') {
-    return ok(LEAVE_TYPES);
+    return ok(leaveTypes);
+  }
+  if (method === 'POST' && segments.length === 1 && segments[0] === 'types') {
+    if (!body?.name || typeof body.name !== 'string' || !body.name.trim()) {
+      return fail('Leave type name is required');
+    }
+    const created = {
+      id: nextId('lt'),
+      name: body.name.trim(),
+      code: body.name.trim().slice(0, 3).toUpperCase(),
+      category: body.category || 'Regular',
+      annual_allocation: Number(body.annual_allocation) || 0,
+      carry_forward_limit: Number(body.carry_forward_limit) || 0,
+      requires_approval: body.requires_approval !== false,
+      is_paid: body.is_paid !== false,
+      description: body.description || null,
+      status: 'active',
+    };
+    leaveTypes = [...leaveTypes, created];
+    return ok(created, 201);
+  }
+  if (method === 'PUT' && segments.length === 2 && segments[0] === 'types') {
+    const id = segments[1];
+    const existing = leaveTypes.find((t) => t.id === id);
+    if (!existing) return fail('Leave type not found', 404);
+    if (body?.name !== undefined && !String(body.name).trim()) return fail('Leave type name is required');
+    Object.assign(existing, {
+      name: body.name !== undefined ? String(body.name).trim() : existing.name,
+      category: body.category !== undefined ? body.category : existing.category,
+      annual_allocation: body.annual_allocation !== undefined ? Number(body.annual_allocation) || 0 : existing.annual_allocation,
+      carry_forward_limit:
+        body.carry_forward_limit !== undefined ? Number(body.carry_forward_limit) || 0 : existing.carry_forward_limit,
+      requires_approval: body.requires_approval !== undefined ? !!body.requires_approval : existing.requires_approval,
+      is_paid: body.is_paid !== undefined ? !!body.is_paid : existing.is_paid,
+      description: body.description !== undefined ? body.description || null : existing.description,
+      status: body.status !== undefined ? body.status : existing.status,
+    });
+    return ok(existing);
+  }
+  if (method === 'DELETE' && segments.length === 2 && segments[0] === 'types') {
+    const id = segments[1];
+    if (!leaveTypes.some((t) => t.id === id)) return fail('Leave type not found', 404);
+    leaveTypes = leaveTypes.filter((t) => t.id !== id);
+    return ok({ id });
   }
   if (method === 'GET' && segments.length === 1 && segments[0] === 'balance') {
     return ok(LEAVE_BALANCES);
@@ -225,8 +274,8 @@ function handleLeave(method: string, segments: string[], _query: URLSearchParams
       cancelled_at: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      leave_type_name: LEAVE_TYPES.find((t) => t.id === body.leave_type_id)?.name ?? 'Leave',
-      leave_type_code: LEAVE_TYPES.find((t) => t.id === body.leave_type_id)?.code ?? null,
+      leave_type_name: leaveTypes.find((t) => t.id === body.leave_type_id)?.name ?? 'Leave',
+      leave_type_code: leaveTypes.find((t) => t.id === body.leave_type_id)?.code ?? null,
       employee_name: 'Demo User',
       approver_name: null,
     };

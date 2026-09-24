@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
+import { useAuth } from '@/lib/auth/useAuth';
+import { usePenalisations, type PenalisationStatus } from '@/lib/attendance/penalisation';
 import {
   leaveApi,
   LeaveApiError,
@@ -115,10 +117,36 @@ function statusPillClass(status: LeaveStatus): string {
   }
 }
 
+function fmtDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+const penalisationStatusLabel: Record<PenalisationStatus, string> = {
+  applied: 'Applied',
+  overturn_requested: 'Overturn Requested',
+  overturned: 'Overturned',
+};
+
+function penalisationStatusPillClass(status: PenalisationStatus): string {
+  switch (status) {
+    case 'applied':
+      return 'bg-red-100 text-red-700';
+    case 'overturn_requested':
+      return 'bg-amber-100 text-amber-700';
+    case 'overturned':
+      return 'bg-slate-100 text-slate-600';
+  }
+}
+
 /* ============================== page ============================== */
 
 export default function LeaveManagementPage() {
   const searchParams = useSearchParams();
+  const { user } = useAuth();
 
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([]);
@@ -146,6 +174,32 @@ export default function LeaveManagementPage() {
 
   // per-row action state
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  // Sample-data only — penalisations aren't automated on the backend yet.
+  // Shared (localStorage-backed) with Approvals > Penalisation - see
+  // lib/attendance/penalisation.ts.
+  const [penalisations, updatePenalisations] = usePenalisations();
+  const [requestingOverturnId, setRequestingOverturnId] = useState<string | null>(null);
+  const [overturnReason, setOverturnReason] = useState('');
+
+  const myName = user ? `${user.firstName} ${user.lastName}`.trim() : null;
+  const myPenalisations = useMemo(
+    () => (myName ? penalisations.filter((p) => p.employeeName === myName) : []),
+    [penalisations, myName],
+  );
+
+  const submitOverturnRequest = (id: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    updatePenalisations((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? { ...p, status: 'overturn_requested', overturnRequestReason: overturnReason.trim(), overturnRequestedOn: today }
+          : p,
+      ),
+    );
+    setRequestingOverturnId(null);
+    setOverturnReason('');
+  };
 
   const refresh = useCallback(async () => {
     const [t, b, r] = await Promise.all([
@@ -375,6 +429,82 @@ export default function LeaveManagementPage() {
             {actionMessage ? <p className="text-xs font-medium text-emerald-600">{actionMessage}</p> : null}
             {actionError ? <p className="text-xs font-medium text-red-600">{actionError}</p> : null}
           </div>
+        </div>
+
+        {/* Penalisations */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <h2 className="text-base font-bold text-slate-900 mb-3">Penalisations</h2>
+          {myPenalisations.length === 0 ? (
+            <p className="text-sm text-slate-400">You have no penalisations.</p>
+          ) : (
+            <div className="space-y-3">
+              {myPenalisations.map((p) => (
+                <div key={p.id} className="border border-slate-200 rounded-lg px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900">Absent {fmtDate(p.absentDate)}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {p.reason} · {p.daysOverdue} day(s) overdue
+                      </p>
+                      {p.status === 'overturn_requested' ? (
+                        <p className="text-xs text-slate-500 mt-1">
+                          Overturn requested {fmtDate(p.overturnRequestedOn!)} · {p.overturnRequestReason}
+                        </p>
+                      ) : null}
+                      {p.status === 'overturned' ? (
+                        <p className="text-xs text-slate-400 mt-1">
+                          Overturned by {p.overturnedBy}
+                          {p.overturnedReason ? ` — ${p.overturnedReason}` : ''}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${penalisationStatusPillClass(p.status)}`}
+                      >
+                        {penalisationStatusLabel[p.status]}
+                      </span>
+                      {p.status === 'applied' && requestingOverturnId !== p.id ? (
+                        <button
+                          onClick={() => {
+                            setRequestingOverturnId(p.id);
+                            setOverturnReason('');
+                          }}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
+                        >
+                          Request overturn
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {requestingOverturnId === p.id ? (
+                    <div className="flex items-center gap-2 mt-3">
+                      <input
+                        type="text"
+                        value={overturnReason}
+                        onChange={(e) => setOverturnReason(e.target.value)}
+                        placeholder="Reason for requesting an overturn (required)"
+                        className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+                      />
+                      <button
+                        onClick={() => submitOverturnRequest(p.id)}
+                        disabled={overturnReason.trim().length === 0}
+                        className="text-xs font-semibold px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        Submit request
+                      </button>
+                      <button
+                        onClick={() => setRequestingOverturnId(null)}
+                        className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Leave Balances */}

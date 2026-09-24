@@ -18,6 +18,8 @@ import {
   type AttendanceRequestStatus,
 } from '@/lib/api/attendance';
 import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
+import { AttendancePolicyModal } from '@/components/attendance/AttendancePolicyModal';
+import { fmtHM, isoToHM, toAttendanceRow, toLocalISODate } from '@/lib/attendance/view';
 
 function AttendanceVisual({
   checkIn,
@@ -200,95 +202,12 @@ function RowActionsMenu({
 
 /* ============================== data mapping ============================== */
 
-type DayStatus = 'present' | 'weekoff' | 'holiday' | 'on_leave' | 'absent' | 'not_marked' | 'inprogress';
-
-interface AttendanceRow {
-  date: Date;
-  status: DayStatus;
-  checkIn?: string;
-  checkOut?: string;
-  effectiveMinutes?: number;
-  arrival?: 'On Time' | 'Late';
-  departure?: 'On Time' | 'Early';
-  overtimeMinutes?: number;
-  note?: string;
-  noteDescription?: string | null;
-  isWfhDay?: boolean;
-  wfhNote?: string | null;
-  wfhDescription?: string | null;
-  events?: { name: string; description: string | null }[];
-}
-
-function fmtHM(minutes?: number) {
-  if (minutes == null) return '-';
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}h ${m}m`;
-}
-
-// Local (not UTC) YYYY-MM-DD — Date#toISOString() converts to UTC first, which
-// shifts the date by a day for anyone west of UTC. Build the string from the
-// local getFullYear/getMonth/getDate instead.
-function toLocalISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 function fmtClock(time24: string, use24h: boolean) {
   if (use24h) return time24;
   const [h, m] = time24.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-// ISO timestamp (UTC) → local "HH:MM" 24h string, what AttendanceVisual expects.
-function isoToHM(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function toAttendanceRow(v: AttendanceDayView): AttendanceRow {
-  const date = new Date(`${v.attendance_date}T00:00:00`);
-
-  if (v.status === 'weekend') return { date, status: 'weekoff', events: v.events };
-  if (v.status === 'holiday')
-    return {
-      date,
-      status: 'holiday',
-      note: v.holiday_name ?? 'Holiday',
-      noteDescription: v.holiday_description,
-      events: v.events,
-    };
-  if (v.status === 'on_leave') return { date, status: 'on_leave', note: v.leave_type_name ?? 'On Leave', events: v.events };
-  if (v.status === 'absent') return { date, status: 'absent', events: v.events };
-  if (v.status === 'not_marked')
-    return {
-      date,
-      status: 'not_marked',
-      isWfhDay: v.is_wfh_day,
-      wfhNote: v.wfh_note,
-      wfhDescription: v.wfh_description,
-      events: v.events,
-    };
-
-  // present / work_from_home / half_day
-  return {
-    date,
-    status: v.check_out ? 'present' : 'inprogress',
-    checkIn: v.check_in ? isoToHM(v.check_in) : undefined,
-    checkOut: v.check_out ? isoToHM(v.check_out) : undefined,
-    effectiveMinutes: v.working_minutes ?? undefined,
-    arrival: v.late_minutes && v.late_minutes > 0 ? 'Late' : 'On Time',
-    departure: v.early_leave_minutes && v.early_leave_minutes > 0 ? 'Early' : 'On Time',
-    isWfhDay: v.is_wfh_day,
-    wfhNote: v.wfh_note,
-    wfhDescription: v.wfh_description,
-    events: v.events,
-    overtimeMinutes: v.overtime_minutes ?? undefined,
-  };
 }
 
 type LogRangeMode = 'week' | 'month' | 'custom';
@@ -322,7 +241,7 @@ function AttendanceTab() {
   const [statsPeriod, setStatsPeriod] = useState<'This Week' | 'Last Week' | 'This Month'>('Last Week');
   const [statsMenuOpen, setStatsMenuOpen] = useState(false);
   const [now, setNow] = useState(new Date());
-  const [logSubTab, setLogSubTab] = useState<'log' | 'calendar' | 'requests'>('log');
+  const [logSubTab, setLogSubTab] = useState<'log' | 'requests'>('log');
   const [logRangeMode, setLogRangeMode] = useState<LogRangeMode>('month');
   const [logRangeMenuOpen, setLogRangeMenuOpen] = useState(false);
   const [rowActionsFor, setRowActionsFor] = useState<string | null>(null);
@@ -338,6 +257,7 @@ function AttendanceTab() {
   const [todayLoading, setTodayLoading] = useState(true);
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showPolicy, setShowPolicy] = useState(false);
 
   const [historyViews, setHistoryViews] = useState<AttendanceDayView[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -712,7 +632,7 @@ function AttendanceTab() {
               Work From Home
             </button>
             <button
-              onClick={() => router.push('/help')}
+              onClick={() => setShowPolicy(true)}
               className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
             >
               <ClockIcon className="w-4 h-4" />
@@ -721,6 +641,8 @@ function AttendanceTab() {
           </div>
         </div>
       </div>
+
+      {showPolicy ? <AttendancePolicyModal onClose={() => setShowPolicy(false)} /> : null}
 
       {/* Logs & Requests */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
@@ -743,7 +665,6 @@ function AttendanceTab() {
           {(
             [
               ['log', 'Attendance Log'],
-              ['calendar', 'Calendar'],
               ['requests', 'My Requests'],
             ] as const
           ).map(([id, label]) => (
@@ -941,287 +862,11 @@ function AttendanceTab() {
           </>
         ) : null}
 
-        {logSubTab === 'calendar' ? <MiniCalendar /> : null}
         {logSubTab === 'requests' ? <MyAttendanceRequests rangeLabel={logRangeLabel} /> : null}
       </div>
 
       {/* only reason use24h/fmtClock helper exists is to keep parity with the toggle; small usage to avoid unused warnings */}
       <span className="sr-only">{fmtClock('09:00', use24h)}</span>
-    </div>
-  );
-}
-
-/** Read-only month calendar: your own attendance (green = attended, red =
- *  absent) plus org-wide holidays/WFH days/events, with the same
- *  regularise/WFH/leave actions as the Attendance Log table, available per
- *  day. Navigates its own month independently of the Log tab's date range. */
-function MiniCalendar() {
-  const [viewDate, setViewDate] = useState(() => new Date());
-  const [rows, setRows] = useState<AttendanceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [openMenuDate, setOpenMenuDate] = useState<string | null>(null);
-
-  const year = viewDate.getFullYear();
-  const month = viewDate.getMonth();
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
-    const from = toLocalISODate(new Date(year, month, 1));
-    const to = toLocalISODate(new Date(year, month + 1, 0));
-    attendanceApi
-      .getHistory({ from, to })
-      .then((views) => {
-        if (!cancelled) setRows(views.map(toAttendanceRow));
-      })
-      .catch((e) => {
-        if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load calendar');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [year, month]);
-
-  const byDate = new Map(rows.map((r) => [toLocalISODate(r.date), r]));
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
-  const todayStr = toLocalISODate(new Date());
-
-  const cells: (string | null)[] = Array(firstWeekday).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(toLocalISODate(new Date(year, month, d)));
-
-  const colorFor = (status?: DayStatus) => {
-    switch (status) {
-      case 'present':
-        return 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200';
-      case 'inprogress':
-        return 'bg-blue-100 text-blue-700 hover:bg-blue-200';
-      case 'on_leave':
-        return 'bg-violet-100 text-violet-700 hover:bg-violet-200';
-      case 'holiday':
-        return 'bg-amber-100 text-amber-700 hover:bg-amber-200';
-      case 'absent':
-        return 'bg-red-100 text-red-700 hover:bg-red-200';
-      case 'weekoff':
-        return 'bg-slate-100 text-slate-400 hover:bg-slate-200';
-      default:
-        return 'text-slate-400 hover:bg-slate-50';
-    }
-  };
-
-  const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  const goToMonth = (delta: number) => {
-    setOpenMenuDate(null);
-    setViewDate(new Date(year, month + delta, 1));
-  };
-  const goToToday = () => {
-    setOpenMenuDate(null);
-    const now = new Date();
-    setViewDate(new Date(now.getFullYear(), now.getMonth(), 1));
-  };
-
-  return (
-    <div className="p-5">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-bold text-slate-900">{monthLabel}</h3>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => goToMonth(-1)}
-            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500"
-            aria-label="Previous month"
-          >
-            ‹
-          </button>
-          <button
-            onClick={goToToday}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
-          >
-            Today
-          </button>
-          <button
-            onClick={() => goToMonth(1)}
-            className="p-2 rounded-lg hover:bg-slate-100 text-slate-500"
-            aria-label="Next month"
-          >
-            ›
-          </button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3 mb-3 text-[11px] font-medium text-slate-500">
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" /> Attended
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-red-500" /> Absent
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-violet-500" /> Leave
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-amber-500" /> Holiday
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> WFH
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-500" /> Event
-        </span>
-      </div>
-
-      {loadError ? <p className="text-sm text-red-600 mb-3">{loadError}</p> : null}
-
-      <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-slate-400 uppercase mb-2">
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-          <span key={d}>{d}</span>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-2">
-        {cells.map((dateStr, i) => {
-          if (!dateStr) return <div key={i} />;
-          const row = byDate.get(dateStr);
-          const isToday = dateStr === todayStr;
-          const menuOpen = openMenuDate === dateStr;
-
-          const tooltipParts = [
-            row?.note ? `${row.note}${row.noteDescription ? ` — ${row.noteDescription}` : ''}` : null,
-            row?.isWfhDay ? `WFH: ${row.wfhNote ?? 'Org-wide WFH day'}${row.wfhDescription ? ` — ${row.wfhDescription}` : ''}` : null,
-            ...(row?.events?.map((e) => `Event: ${e.name}${e.description ? ` — ${e.description}` : ''}`) ?? []),
-          ].filter(Boolean);
-
-          return (
-            <div key={dateStr} className="relative">
-              <button
-                onClick={() => setOpenMenuDate(menuOpen ? null : dateStr)}
-                disabled={loading}
-                title={tooltipParts.join('\n') || undefined}
-                className={`w-full aspect-square rounded-lg flex flex-col items-center justify-center text-sm font-medium transition-colors ${colorFor(
-                  row?.status,
-                )} ${isToday ? 'ring-2 ring-blue-500' : ''}`}
-              >
-                {Number(dateStr.slice(-2))}
-                <span className="flex items-center gap-0.5 mt-0.5">
-                  {row?.isWfhDay ? <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> : null}
-                  {row?.events?.length ? <span className="w-1.5 h-1.5 rounded-full bg-fuchsia-500" /> : null}
-                </span>
-              </button>
-
-              {menuOpen ? (
-                <CalendarDayMenu date={dateStr} row={row} onClose={() => setOpenMenuDate(null)} />
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function fmtDayHeading(dateStr: string): string {
-  return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-/** Popover shown when a day is clicked in {@link MiniCalendar}: what's on
- *  that day (holiday/WFH/event details), followed by the same three actions
- *  as the Attendance Log table's row "⋮" menu. */
-function CalendarDayMenu({
-  date,
-  row,
-  onClose,
-}: {
-  date: string;
-  row?: AttendanceRow;
-  onClose: () => void;
-}) {
-  const router = useRouter();
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  const go = (href: string) => {
-    onClose();
-    router.push(href);
-  };
-
-  const hasDetails = Boolean(row?.note || row?.isWfhDay || row?.events?.length);
-
-  return (
-    <div
-      ref={ref}
-      className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-64 bg-white border border-slate-200 rounded-lg shadow-lg z-20 text-left"
-    >
-      <div className="px-4 pt-3 pb-2 border-b border-slate-100">
-        <p className="text-xs font-bold text-slate-900">{fmtDayHeading(date)}</p>
-      </div>
-
-      {hasDetails ? (
-        <div className="px-4 py-2.5 space-y-2 border-b border-slate-100">
-          {row?.note ? (
-            <div>
-              <span className="inline-flex text-[10px] font-semibold rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">
-                {row.status === 'on_leave' ? 'Leave' : 'Holiday'}
-              </span>
-              <p className="text-xs text-slate-700 mt-1">{row.note}</p>
-              {row.noteDescription ? <p className="text-[11px] text-slate-500">{row.noteDescription}</p> : null}
-            </div>
-          ) : null}
-          {row?.isWfhDay ? (
-            <div>
-              <span className="inline-flex text-[10px] font-semibold rounded px-1.5 py-0.5 bg-blue-100 text-blue-700">
-                WFH
-              </span>
-              <p className="text-xs text-slate-700 mt-1">{row.wfhNote ?? 'Org-wide WFH day'}</p>
-              {row.wfhDescription ? <p className="text-[11px] text-slate-500">{row.wfhDescription}</p> : null}
-            </div>
-          ) : null}
-          {row?.events?.map((e, i) => (
-            <div key={i}>
-              <span className="inline-flex text-[10px] font-semibold rounded px-1.5 py-0.5 bg-fuchsia-100 text-fuchsia-700">
-                Event
-              </span>
-              <p className="text-xs text-slate-700 mt-1">{e.name}</p>
-              {e.description ? <p className="text-[11px] text-slate-500">{e.description}</p> : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="py-1">
-        <button
-          onClick={() => go(`/attendance/regularize?date=${date}`)}
-          className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          Regularise
-        </button>
-        <button
-          onClick={() => go(`/attendance/wfh?date=${date}`)}
-          className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          Request Work From Home
-        </button>
-        <button
-          onClick={() => go(`/leave/apply?date=${date}`)}
-          className="block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-        >
-          Request Leave
-        </button>
-      </div>
     </div>
   );
 }

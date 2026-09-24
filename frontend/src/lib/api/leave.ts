@@ -16,12 +16,23 @@ export interface LeaveType {
   id: string;
   name: string;
   code: string;
+  category: string;
   annual_allocation: number;
   carry_forward_limit: number;
   requires_approval: boolean;
   is_paid: boolean;
   description: string | null;
   status: string;
+}
+
+export interface LeaveTypeInput {
+  name: string;
+  category: string;
+  annual_allocation: number;
+  carry_forward_limit: number;
+  requires_approval: boolean;
+  is_paid: boolean;
+  description?: string;
 }
 
 export interface LeaveBalanceItem {
@@ -129,6 +140,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const leaveApi = {
   getTypes: () => request<LeaveType[]>('/types'),
+  createType: (input: LeaveTypeInput) =>
+    request<LeaveType>('/types', { method: 'POST', body: JSON.stringify(input) }),
+  updateType: (id: string, input: Partial<LeaveTypeInput>) =>
+    request<LeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  deleteType: (id: string) => request<{ id: string }>(`/types/${id}`, { method: 'DELETE' }),
   getBalance: () => request<LeaveBalanceItem[]>('/balance'),
   getRequests: () => request<LeaveRequest[]>('/requests'),
   getRequest: (id: string) => request<LeaveRequest>(`/requests/${id}`),

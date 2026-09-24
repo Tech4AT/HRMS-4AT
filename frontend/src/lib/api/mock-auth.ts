@@ -29,6 +29,7 @@ export const MOCK_USER = {
     'leave.approve',
     'expense.approve',
     'calendar.manage',
+    'attendance.settings.manage',
     'scope.all',
   ],
   scope: { kind: 'org' as const },
