@@ -9,6 +9,7 @@ import {
   type CalendarEntryType,
   type RecurringWfhRule,
 } from '@/lib/api/calendar';
+import { mondayFirstOffset, WEEKDAY_LABELS_MONDAY_FIRST } from '@/lib/attendance/calendar-grid';
 import { toLocalISODate } from '@/lib/attendance/view';
 
 const typeMeta: Record<CalendarEntryType, { label: string; dot: string; pillClass: string }> = {
@@ -113,7 +114,7 @@ export function CalendarManagementPanel() {
   }, [rules]);
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstWeekday = new Date(year, month, 1).getDay(); // Sunday-first, matches WEEKDAY_NAMES
+  const firstWeekday = mondayFirstOffset(new Date(year, month, 1));
   const cells: (string | null)[] = Array(firstWeekday).fill(null);
   for (let day = 1; day <= daysInMonth; day++) {
     cells.push(toLocalISODate(new Date(year, month, day)));
@@ -287,8 +288,8 @@ export function CalendarManagementPanel() {
             </div>
 
             <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] font-semibold text-slate-400 uppercase mb-2">
-              {WEEKDAY_NAMES.map((d) => (
-                <span key={d}>{d.slice(0, 3)}</span>
+              {WEEKDAY_LABELS_MONDAY_FIRST.map((d) => (
+                <span key={d}>{d}</span>
               ))}
             </div>
             <div className="grid grid-cols-7 gap-1.5">

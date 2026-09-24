@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { attendanceApi } from '@/lib/api/attendance';
+import { mondayFirstOffset, WEEKDAY_LABELS_MONDAY_FIRST } from '@/lib/attendance/calendar-grid';
 import { fmtHM, toAttendanceRow, toLocalISODate, type AttendanceRow, type DayStatus } from '@/lib/attendance/view';
 
 const STATUS_LABEL: Record<DayStatus, string> = {
@@ -57,7 +58,7 @@ export function MyAttendanceCalendar() {
 
   const byDate = new Map(rows.map((r) => [toLocalISODate(r.date), r]));
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
+  const firstWeekday = mondayFirstOffset(new Date(year, month, 1));
   const todayStr = toLocalISODate(new Date());
 
   const cells: (string | null)[] = Array(firstWeekday).fill(null);
@@ -148,7 +149,7 @@ export function MyAttendanceCalendar() {
         {loadError ? <p className="text-sm text-red-600 mb-3">{loadError}</p> : null}
 
         <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-slate-400 uppercase mb-2">
-          {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+          {WEEKDAY_LABELS_MONDAY_FIRST.map((d) => (
             <span key={d}>{d}</span>
           ))}
         </div>
