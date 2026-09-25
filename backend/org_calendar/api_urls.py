@@ -13,10 +13,11 @@ change in config/settings."""
 
 from rest_framework.routers import DefaultRouter
 
-from org_calendar.views import CalendarEntryViewSet, RecurringWfhRuleViewSet
+from org_calendar.views import CalendarEntryViewSet, RecurringWfhRuleViewSet, WeekOffViewSet
 
 router = DefaultRouter(trailing_slash=False)
 router.register("calendar/entries", CalendarEntryViewSet, basename="calendar-entry")
 router.register("calendar/recurring-wfh", RecurringWfhRuleViewSet, basename="recurring-wfh-rule")
+router.register("calendar/week-off", WeekOffViewSet, basename="week-off")
 
 urlpatterns = router.urls

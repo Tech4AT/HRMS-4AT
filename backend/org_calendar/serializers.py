@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from org_calendar.models import CalendarEntry, RecurringWfhRule
+from org_calendar.models import CalendarEntry, RecurringWfhRule, WeekOff
 
 
 class CalendarEntrySerializer(serializers.ModelSerializer):
@@ -14,4 +14,11 @@ class RecurringWfhRuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecurringWfhRule
         fields = ["id", "weekday", "label", "active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class WeekOffSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WeekOff
+        fields = ["id", "weekday", "active", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]

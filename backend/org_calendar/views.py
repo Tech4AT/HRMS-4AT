@@ -20,8 +20,12 @@ from rest_framework.response import Response
 from audit.service import write_audit
 from core.api import FrontendEnvelopeMixin
 from core.permissions import HasPermissionCode
-from org_calendar.models import CalendarEntry, RecurringWfhRule
-from org_calendar.serializers import CalendarEntrySerializer, RecurringWfhRuleSerializer
+from org_calendar.models import CalendarEntry, RecurringWfhRule, WeekOff
+from org_calendar.serializers import (
+    CalendarEntrySerializer,
+    RecurringWfhRuleSerializer,
+    WeekOffSerializer,
+)
 
 
 class EnvelopeMixin(FrontendEnvelopeMixin):
@@ -116,4 +120,18 @@ class RecurringWfhRuleViewSet(EnvelopeMixin, viewsets.ModelViewSet):
     queryset = RecurringWfhRule.objects.all()
     serializer_class = RecurringWfhRuleSerializer
     audit_entity_name = "RecurringWfhRule"
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+
+class WeekOffViewSet(EnvelopeMixin, viewsets.ModelViewSet):
+    """/calendar/week-off - which weekdays are org-wide non-working days.
+    attendance/day_facts.py reads this instead of hardcoding Saturday/Sunday -
+    see WeekOff's own docstring for why. Same PATCH-to-toggle shape as
+    RecurringWfhRuleViewSet."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "calendar.manage"
+    queryset = WeekOff.objects.all()
+    serializer_class = WeekOffSerializer
+    audit_entity_name = "WeekOff"
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]

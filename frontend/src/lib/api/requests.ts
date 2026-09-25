@@ -139,4 +139,26 @@ export const requestsApi = {
     });
     return toApprovalRequest(raw);
   },
+  // The `approvals.manage` escape hatch (HR Admin/Finance): resolves a
+  // request directly, bypassing the assigned approver. approve()/reject()
+  // only work for the person the request is actually routed to — use this
+  // instead for an oversight viewer who isn't that person.
+  resolve: async (
+    id: string,
+    status: 'approved' | 'rejected',
+    note?: string,
+  ): Promise<ApprovalRequest> => {
+    const raw = await request<RawRequest>(`/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ status, note: note ?? '' }),
+    });
+    return toApprovalRequest(raw);
+  },
+  reassign: async (id: string, approverUserId: string): Promise<ApprovalRequest> => {
+    const raw = await request<RawRequest>(`/${id}/reassign`, {
+      method: 'POST',
+      body: JSON.stringify({ approver: approverUserId }),
+    });
+    return toApprovalRequest(raw);
+  },
 };

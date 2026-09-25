@@ -4,7 +4,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
 import { SectionTabs, type SectionTab } from '@/components/SectionTabs';
-import { usePenalisations, type PenalisationRecord, type PenalisationStatus } from '@/lib/attendance/penalisation';
+import { requestsApi } from '@/lib/api/requests';
+import {
+  attendanceApi,
+  AttendanceApiError,
+  type AttendanceRequest,
+  type AttendanceRequestStatus,
+} from '@/lib/api/attendance';
 import {
   leaveApi,
   LeaveApiError,
@@ -14,14 +20,18 @@ import {
   type LeaveRequest,
   type LeaveType,
 } from '@/lib/api/leave';
-import {
-  attendanceApi,
-  AttendanceApiError,
-  type AttendanceRequest,
-  type AttendanceRequestStatus,
-} from '@/lib/api/attendance';
+import { usePenalisations, type PenalisationRecord, type PenalisationStatus } from '@/lib/attendance/penalisation';
 
-/* ============================== shared helpers ============================== */
+/* ============================== shared: approvals review (pending + history) ==============================
+ *
+ * Each of WFH/Regularisation/Leave reads its "awaiting my decision" and
+ * "already decided" lists from that module's own scoped endpoints
+ * (attendanceApi/leaveApi.getPendingApprovals/getApprovalHistory - real,
+ * scope-checked data with the rich per-domain detail the generic engine's raw
+ * payload doesn't carry), but the actual approve/reject call always goes
+ * through the *generic* approvals engine (requestsApi.approve/reject/resolve,
+ * keyed by each row's approval_request_id) - neither module exposes its own
+ * decide endpoint (docs/LEAVE-ATTENDANCE-INTEGRATION.md). */
 
 function statusPillClass(status: string): string {
   switch (status) {
@@ -57,26 +67,33 @@ function fmtDateRange(start: string, end: string): string {
   return start === end ? fmtDate(start) : `${fmtDate(start)} – ${fmtDate(end)}`;
 }
 
-/* ============================== generic section shell ============================== */
+interface PendingItem {
+  /** The generic approvals.Request id - what we actually decide. */
+  approvalRequestId: string;
+  /** The user id this request is actually routed to. If it isn't the viewer,
+   *  deciding it uses the approvals.manage override (resolve) instead of the
+   *  normal approve/reject, which only the named approver may call. */
+  approverId: string | null;
+  heading: string;
+  detail: string;
+}
+
+interface HistoryItem {
+  id: string;
+  heading: string;
+  detail: string;
+  status: string;
+  statusLabel: string;
+  approverName?: string | null;
+  approverRemarks?: string | null;
+}
 
 interface ApprovalSectionProps {
   title: string;
   emptyPendingLabel: string;
   emptyHistoryLabel: string;
-  pending: {
-    id: string;
-    heading: string;
-    detail: string;
-  }[];
-  history: {
-    id: string;
-    heading: string;
-    detail: string;
-    status: string;
-    statusLabel: string;
-    approverName?: string | null;
-    approverRemarks?: string | null;
-  }[];
+  pending: PendingItem[];
+  history: HistoryItem[];
   decidingId: string | null;
   rejectingId: string | null;
   rejectReason: string;
@@ -86,7 +103,7 @@ interface ApprovalSectionProps {
   approveRemarks: string;
   onSetApproving: (id: string | null) => void;
   onSetApproveRemarks: (v: string) => void;
-  onDecide: (id: string, approve: boolean, remarks?: string) => void;
+  onDecide: (item: PendingItem, approve: boolean, note?: string) => void;
 }
 
 function ApprovalSection({
@@ -138,39 +155,40 @@ function ApprovalSection({
             <p className="text-sm text-slate-400">{emptyPendingLabel}</p>
           ) : (
             <div className="space-y-3">
-              {pending.map((p) => (
-                <div key={p.id} className="border border-slate-200 rounded-lg px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
+              {pending.map((item) => (
+                <div key={item.approvalRequestId} className="border border-slate-200 rounded-lg px-4 py-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 truncate">{p.heading}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">{p.detail}</p>
+                      <p className="text-sm font-semibold text-slate-900 truncate">{item.heading}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{item.detail}</p>
                     </div>
-                    {rejectingId === p.id || approvingId === p.id ? null : (
+                    {rejectingId !== item.approvalRequestId && approvingId !== item.approvalRequestId ? (
                       <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={() => {
-                            onSetApproving(p.id);
+                            onSetApproving(item.approvalRequestId);
                             onSetApproveRemarks('');
                           }}
-                          disabled={decidingId === p.id}
+                          disabled={decidingId === item.approvalRequestId}
                           className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                         >
                           Approve
                         </button>
                         <button
                           onClick={() => {
-                            onSetRejecting(p.id);
+                            onSetRejecting(item.approvalRequestId);
                             onSetRejectReason('');
                           }}
-                          disabled={decidingId === p.id}
+                          disabled={decidingId === item.approvalRequestId}
                           className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
                         >
                           Reject
                         </button>
                       </div>
-                    )}
+                    ) : null}
                   </div>
-                  {approvingId === p.id ? (
+
+                  {approvingId === item.approvalRequestId ? (
                     <div className="flex items-center gap-2 mt-3">
                       <input
                         type="text"
@@ -180,8 +198,8 @@ function ApprovalSection({
                         className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
                       />
                       <button
-                        onClick={() => onDecide(p.id, true, approveRemarks.trim() || undefined)}
-                        disabled={decidingId === p.id}
+                        onClick={() => onDecide(item, true, approveRemarks.trim() || undefined)}
+                        disabled={decidingId === item.approvalRequestId}
                         className="text-xs font-semibold px-3 py-2 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
                         Confirm approve
@@ -194,18 +212,19 @@ function ApprovalSection({
                       </button>
                     </div>
                   ) : null}
-                  {rejectingId === p.id ? (
+
+                  {rejectingId === item.approvalRequestId ? (
                     <div className="flex items-center gap-2 mt-3">
                       <input
                         type="text"
                         value={rejectReason}
                         onChange={(e) => onSetRejectReason(e.target.value)}
-                        placeholder="Reason for rejection (required)"
+                        placeholder="Reason for rejecting this request (required)"
                         className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
                       />
                       <button
-                        onClick={() => onDecide(p.id, false)}
-                        disabled={decidingId === p.id || rejectReason.trim().length === 0}
+                        onClick={() => onDecide(item, false, rejectReason.trim())}
+                        disabled={decidingId === item.approvalRequestId || rejectReason.trim().length === 0}
                         className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                       >
                         Confirm reject
@@ -250,7 +269,14 @@ function ApprovalSection({
   );
 }
 
-/* ============================== penalisations ============================== */
+/* ============================== penalisations (no engine equivalent - see docs/LEAVE-ATTENDANCE-INTEGRATION.md) ==============================
+ *
+ * A penalisation applies automatically once the regularisation grace period
+ * lapses - there's no "raise a request, route to a manager" step, so it
+ * doesn't fit the approvals engine's pending/approved/rejected/withdrawn
+ * request lifecycle. It stays a bespoke section on this page rather than
+ * being ported onto `requestsApi`. Sample-data only for now (no backend yet)
+ * - see lib/attendance/penalisation.ts. */
 
 const PENALISATION_FILTERS: { id: PenalisationStatus; label: string }[] = [
   { id: 'applied', label: 'Applied' },
@@ -461,7 +487,7 @@ type ApprovalTabId = 'wfh' | 'regularisation' | 'leave' | 'penalisation';
 export default function ApprovalsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isLoading: authLoading, hasPermission } = useAuth();
+  const { user, isLoading: authLoading, hasPermission } = useAuth();
   const canApproveLeave = hasPermission('leave.approve');
   const canApproveAttendance = hasPermission('attendance.approve');
   const canApprove = canApproveLeave || canApproveAttendance;
@@ -470,18 +496,18 @@ export default function ApprovalsPage() {
     if (!authLoading && !canApprove) router.replace('/');
   }, [authLoading, canApprove, router]);
 
-  // Order matches the product spec: WFH, Regularisation, Leave, Penalisation.
-  // Penalisation has no permission of its own yet (not implemented on the
-  // backend) - it's visible to anyone who can see Approvals at all.
+  // Order matches the original product design: WFH, Regularisation, Leave,
+  // Penalisation. Penalisation has no permission of its own yet (not
+  // implemented on the backend) - visible to anyone who can see Approvals.
   const tabs: SectionTab[] = [
-    ...(canApproveAttendance ? [{ id: 'wfh', label: 'WFH', href: '/approvals?type=wfh' }] : []),
+    ...(canApproveAttendance ? [{ id: 'wfh', label: 'WFH', href: '/approvals?tab=wfh' }] : []),
     ...(canApproveAttendance
-      ? [{ id: 'regularisation', label: 'Regularisation', href: '/approvals?type=regularisation' }]
+      ? [{ id: 'regularisation', label: 'Regularisation', href: '/approvals?tab=regularisation' }]
       : []),
-    ...(canApproveLeave ? [{ id: 'leave', label: 'Leave', href: '/approvals?type=leave' }] : []),
-    { id: 'penalisation', label: 'Penalisation', href: '/approvals?type=penalisation' },
+    ...(canApproveLeave ? [{ id: 'leave', label: 'Leave', href: '/approvals?tab=leave' }] : []),
+    { id: 'penalisation', label: 'Penalisation', href: '/approvals?tab=penalisation' },
   ];
-  const requestedTab = searchParams.get('type');
+  const requestedTab = searchParams.get('tab');
   const activeTab: ApprovalTabId = (tabs.some((t) => t.id === requestedTab) ? requestedTab : tabs[0]?.id) as ApprovalTabId;
 
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
@@ -556,33 +582,36 @@ export default function ApprovalsPage() {
     setApproveRemarks('');
   };
 
-  const decideLeave = async (id: string, approve: boolean, remarks?: string) => {
-    setDecidingId(id);
+  // Both Leave and Attendance (WFH/Regularisation) requests decide through
+  // the *same* generic engine endpoint - there's only one decide path in this
+  // app, unlike the pre-engine version of this page which called each
+  // module's own (now-retired) approve endpoint separately.
+  //
+  // approve()/reject() only work for the request's actual named approver
+  // (the employee's manager) - that's the engine's own rule, not a bug. An
+  // oversight viewer (e.g. HR Admin browsing every pending leave company-wide
+  // via leave.approve at ALL scope) isn't that person, so their decision goes
+  // through the approvals.manage escape hatch (resolve) instead, which is
+  // exactly what it's for. Whoever the item is actually routed to still
+  // decides through the normal path.
+  const decide = async (item: PendingItem, approve: boolean, note?: string) => {
+    const { approvalRequestId, approverId } = item;
+    const isAssignedApprover = !!user && approverId === user.id;
+    setDecidingId(approvalRequestId);
     setActionError(null);
     setActionMessage(null);
     try {
-      await leaveApi.decide(id, approve, approve ? undefined : rejectReason.trim(), remarks);
-      setActionMessage(approve ? 'Leave request approved.' : 'Leave request rejected.');
-      clearDecisionState();
-      await refresh();
-    } catch (e) {
-      setActionError(e instanceof LeaveApiError ? e.message : 'Could not update this leave request');
-    } finally {
-      setDecidingId(null);
-    }
-  };
-
-  const decideAttendance = async (id: string, approve: boolean, remarks?: string) => {
-    setDecidingId(id);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await attendanceApi.decideRequest(id, approve, approve ? undefined : rejectReason.trim(), remarks);
+      if (isAssignedApprover) {
+        if (approve) await requestsApi.approve(approvalRequestId, note);
+        else await requestsApi.reject(approvalRequestId, note);
+      } else {
+        await requestsApi.resolve(approvalRequestId, approve ? 'approved' : 'rejected', note);
+      }
       setActionMessage(approve ? 'Request approved.' : 'Request rejected.');
       clearDecisionState();
       await refresh();
     } catch (e) {
-      setActionError(e instanceof AttendanceApiError ? e.message : 'Could not update this request');
+      setActionError(e instanceof AttendanceApiError || e instanceof LeaveApiError || e instanceof Error ? e.message : 'Could not update this request');
     } finally {
       setDecidingId(null);
     }
@@ -653,11 +682,14 @@ export default function ApprovalsPage() {
                 title="Leave Requests"
                 emptyPendingLabel="No leave requests awaiting your approval."
                 emptyHistoryLabel="No decided leave requests yet."
-                pending={leavePending.map((r) => ({
-                  id: r.id,
-                  heading: `${r.employee_name || 'Employee'} — ${typeName(r)}`,
-                  detail: `${formatDateRange(r.start_date, r.end_date, r.half_day_option)} · ${formatDays(r.duration_days)} day(s)${r.reason ? ` · ${r.reason}` : ''}`,
-                }))}
+                pending={leavePending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — ${typeName(r)}`,
+                    detail: `${formatDateRange(r.start_date, r.end_date, r.half_day_option)} · ${formatDays(r.duration_days)} day(s)${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
                 history={leaveHistory.map((r) => ({
                   id: r.id,
                   heading: `${r.employee_name || 'Employee'} — ${typeName(r)}`,
@@ -666,7 +698,9 @@ export default function ApprovalsPage() {
                   }`,
                   status: r.status,
                   statusLabel: leaveStatusLabel(r.status),
-                  approverName: r.approver_name,
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
                   approverRemarks: r.approver_remarks,
                 }))}
                 decidingId={decidingId}
@@ -678,7 +712,7 @@ export default function ApprovalsPage() {
                 approveRemarks={approveRemarks}
                 onSetApproving={setApprovingId}
                 onSetApproveRemarks={setApproveRemarks}
-                onDecide={decideLeave}
+                onDecide={decide}
               />
             ) : null}
 
@@ -687,11 +721,14 @@ export default function ApprovalsPage() {
                 title="Work From Home Requests"
                 emptyPendingLabel="No Work From Home requests awaiting your approval."
                 emptyHistoryLabel="No decided Work From Home requests yet."
-                pending={wfhPending.map((r) => ({
-                  id: r.id,
-                  heading: `${r.employee_name || 'Employee'} — Work From Home`,
-                  detail: `${fmtDateRange(r.start_date, r.end_date)}${r.reason ? ` · ${r.reason}` : ''}`,
-                }))}
+                pending={wfhPending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — Work From Home`,
+                    detail: `${fmtDateRange(r.start_date, r.end_date)}${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
                 history={wfhHistory.map((r) => ({
                   id: r.id,
                   heading: `${r.employee_name || 'Employee'} — Work From Home`,
@@ -700,7 +737,9 @@ export default function ApprovalsPage() {
                   }`,
                   status: r.status,
                   statusLabel: attendanceStatusLabel[r.status],
-                  approverName: r.approver_name,
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
                   approverRemarks: r.approver_remarks,
                 }))}
                 decidingId={decidingId}
@@ -712,7 +751,7 @@ export default function ApprovalsPage() {
                 approveRemarks={approveRemarks}
                 onSetApproving={setApprovingId}
                 onSetApproveRemarks={setApproveRemarks}
-                onDecide={decideAttendance}
+                onDecide={decide}
               />
             ) : null}
 
@@ -721,11 +760,14 @@ export default function ApprovalsPage() {
                 title="Regularisation Requests"
                 emptyPendingLabel="No regularisation requests awaiting your approval."
                 emptyHistoryLabel="No decided regularisation requests yet."
-                pending={regPending.map((r) => ({
-                  id: r.id,
-                  heading: `${r.employee_name || 'Employee'} — Regularisation`,
-                  detail: `${fmtDate(r.start_date)}${r.reason ? ` · ${r.reason}` : ''}`,
-                }))}
+                pending={regPending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — Regularisation`,
+                    detail: `${fmtDate(r.start_date)}${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
                 history={regHistory.map((r) => ({
                   id: r.id,
                   heading: `${r.employee_name || 'Employee'} — Regularisation`,
@@ -734,7 +776,9 @@ export default function ApprovalsPage() {
                   }`,
                   status: r.status,
                   statusLabel: attendanceStatusLabel[r.status],
-                  approverName: r.approver_name,
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
                   approverRemarks: r.approver_remarks,
                 }))}
                 decidingId={decidingId}
@@ -746,7 +790,7 @@ export default function ApprovalsPage() {
                 approveRemarks={approveRemarks}
                 onSetApproving={setApprovingId}
                 onSetApproveRemarks={setApproveRemarks}
-                onDecide={decideAttendance}
+                onDecide={decide}
               />
             ) : null}
 

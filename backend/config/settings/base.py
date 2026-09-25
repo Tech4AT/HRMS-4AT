@@ -32,6 +32,8 @@ INSTALLED_APPS = [
     # Plug-in modules built on the core.
     "payroll",
     "org_calendar",
+    "attendance",
+    "leave",
     # approvals, notifications, documents, and further plugin apps land here
     # as Phase 0/2/3+ scaffolding proceeds (docs/TASKS.md P0-E1-03/04).
 ]

@@ -69,7 +69,15 @@ export interface LeaveRequest {
   leave_type_code: string | null;
   employee_name: string | null;
   approver_name: string | null;
+  /** Who actually decided this — usually the same as approver_name, but not
+   *  when an HR Admin resolved it via the approvals.manage override instead
+   *  of the assigned approver deciding it themselves. Use this, not
+   *  approver_name, for a "decided by" display. */
+  decided_by_name?: string | null;
   approver_remarks?: string | null;
+  /** The generic approvals engine's own request id — decide through
+   *  requestsApi.approve/reject(this id), never a per-module endpoint. */
+  approval_request_id?: string | null;
 }
 
 export interface Holiday {

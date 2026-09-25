@@ -47,6 +47,36 @@ class CalendarEntry(models.Model):
         return f"{self.get_type_display()}: {self.name} ({self.date})"
 
 
+class WeekOff(models.Model):
+    """Which weekdays are org-wide non-working days — HR-admin-configurable
+    rather than a hardcoded Saturday/Sunday assumption, since not every
+    organisation's week-off pattern is the same. One row per weekday that's
+    ever been configured; `active` toggles it without losing the row (same
+    shape as RecurringWfhRule, for the same reason). A weekday with no row at
+    all is treated as a working day — see attendance/day_facts.py's consumer
+    side, which is the reason this model exists.
+
+    Deliberately simple: a single, org-wide, non-alternating weekly pattern.
+    A shift-based or team-specific week-off (e.g. alternate Saturdays) is out
+    of scope here — PLAN.md Step 6 (Shifts) is where a per-employee working
+    pattern would live, if one is ever needed."""
+
+    weekday = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(0), MaxValueValidator(6)],
+        unique=True,
+        help_text="0 = Sunday ... 6 = Saturday, matching WEEKDAY_NAMES.",
+    )
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["weekday"]
+
+    def __str__(self):
+        return f"{WEEKDAY_NAMES[self.weekday]} ({'off' if self.active else 'working'})"
+
+
 class RecurringWfhRule(models.Model):
     """A weekday-wide WFH rule, e.g. "every Wednesday". Independent of any
     one-off CalendarEntry(type=wfh) - both are checked when deciding whether
