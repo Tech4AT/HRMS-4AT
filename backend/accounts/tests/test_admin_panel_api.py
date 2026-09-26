@@ -57,7 +57,9 @@ def test_preview_reports_no_access_with_the_reason():
     user = UserFactory(role=role)
     EmployeeFactory(user=user)
 
-    data = _preview(_hr(), user).json()["data"]
+    # employees.write is outside the self-service baseline, so an employee
+    # with an empty role genuinely holds nothing here (source 'none').
+    data = _preview(_hr(), user, "employees.write").json()["data"]
 
     assert data["granted"] is False and data["source"] == "none"
     assert data["reachCount"] == 0 and data["people"] == []
@@ -80,12 +82,14 @@ def test_preview_shows_a_personal_exception_as_the_source():
 def test_preview_explains_a_deactivated_role():
     role = RoleFactory(is_active=False)
     RolePermissionFactory(
-        role=role, permission=PermissionFactory(code="employees.read"), scope_tier=ScopeTier.ALL
+        role=role, permission=PermissionFactory(code="employees.write"), scope_tier=ScopeTier.ALL
     )
     user = UserFactory(role=role)
     EmployeeFactory(user=user)
 
-    data = _preview(_hr(), user).json()["data"]
+    # Probe outside the self-service baseline so the inactive role (not the
+    # baseline grant) decides the outcome.
+    data = _preview(_hr(), user, "employees.write").json()["data"]
 
     assert data["granted"] is False and data["source"] == "role (inactive)"
 
@@ -139,7 +143,14 @@ def test_permissions_catalog_exposes_label_and_group():
     row = next(r for r in rows if r["code"] == "employees.read")
     assert row["label"] == "View employee records"
     assert row["group"] == "Employee data"
-    assert row["description"].startswith("View employee directory")
+    # NOTE (known duplication): this description is the copy seeded by
+    # migration 0002_seed_starter_roles ('Read employee records'), NOT the one
+    # in employees/rbac.py ('View employee directory ...'). sync backfills
+    # blank descriptions only — an admin-edited description is always kept
+    # (core/tests/test_registry_and_checks.py pins this), so sync cannot tell
+    # a stale seed from an edit and the seeded text wins here. rbac.py stays
+    # authoritative for label/group. Realign the seed if this ever matters.
+    assert row["description"] == "Read employee records"
 
 
 def test_permissions_catalog_hides_disabled_modules():

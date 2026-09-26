@@ -141,10 +141,35 @@ class FictionalOrg:
         return role
 
     def give_no_permissions(self, key):
-        """Give one person a role that holds nothing."""
+        """Give one person a role that holds nothing.
+
+        NOTE: this alone does NOT make them permission-less — anyone WITH an
+        employee record still holds the self-service baseline
+        (core.scope.baseline_self_permissions). For a truly permission-less
+        signed-in caller use add_user_without_permissions()."""
         self._role_counter += 1
         role = Role.objects.create(name=f"VFY empty #{self._role_counter}", archetype="employee")
         user = self.people[key].user
         user.role = role
         user.save(update_fields=["role"])
         return role
+
+    def add_user_without_permissions(self, key="ned"):
+        """Create a signed-in user holding an empty role and NO employee record.
+
+        The self-service baseline only applies to users WITH an employee
+        record, so this outsider genuinely holds no permissions — the only
+        clean way to exercise the signed-in-but-unauthorised (403) invariant.
+        Returns the key; sign in with org.email(key) / PASSWORD."""
+        self._role_counter += 1
+        email = f"vfy.{key}@{EMAIL_DOMAIN}"
+        role = Role.objects.create(name=f"VFY empty #{self._role_counter}", archetype="employee")
+        User.objects.create(
+            username=email,
+            email=email,
+            first_name="Ned",
+            last_name="Noemp",
+            password=self.hashed_password,
+            role=role,
+        )
+        return key

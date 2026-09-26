@@ -25,7 +25,7 @@ class Command(BaseCommand):
 
         perm, _ = Permission.objects.get_or_create(
             code='employees.read',
-            defaults={'description': 'Read employee records'},
+            defaults={'description': 'View employee directory records within the holder\'s scope'},
         )
 
         rp, rp_created = RolePermission.objects.get_or_create(

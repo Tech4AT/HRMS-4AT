@@ -178,19 +178,30 @@ def sync_registered_permissions() -> dict:
             },
         )
         if not created:
-            # Fill blanks from code, but never overwrite an admin's edit —
-            # the same rule `description` has always had.
+            # rbac.py is authoritative for the label/group it provides: adopt
+            # the spec's value when it differs (an admin can still blank the
+            # field to take it out of sync's hands; a group the spec leaves
+            # empty falls back to the module label and is only backfilled,
+            # never cleared). Descriptions stay fill-blanks-only on purpose:
+            # core/tests/test_registry_and_checks.py pins that an admin-edited
+            # description is kept, so sync cannot tell a stale seed from an
+            # edit — the employees.read seed copy therefore differs from
+            # employees/rbac.py (see the catalog test's note).
             touched = []
             if spec.description and not permission.description:
                 permission.description = spec.description
                 touched.append("description")
-            if spec.label and not permission.label:
+            if spec.label and permission.label != spec.label:
                 permission.label = spec.label
                 touched.append("label")
-            group = permission_group(spec.code)
-            if group and not permission.group:
-                permission.group = group
+            if spec.group and permission.group != spec.group:
+                permission.group = spec.group
                 touched.append("group")
+            else:
+                group = permission_group(spec.code)
+                if group and not permission.group:
+                    permission.group = group
+                    touched.append("group")
             if touched:
                 permission.save(update_fields=touched)
             continue

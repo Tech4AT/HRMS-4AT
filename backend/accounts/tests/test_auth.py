@@ -11,6 +11,7 @@ from accounts.factories import RoleFactory, UserFactory
 from accounts.models import FailedLoginAttempt
 from audit.models import AuditLog
 from core.enums import RoleArchetype, ScopeTier
+from core.scope import baseline_self_permissions
 from employees.factories import EmployeeFactory
 
 pytestmark = pytest.mark.django_db
@@ -141,7 +142,8 @@ def test_me_scope_is_self_with_no_role():
     resp = client.get("/api/v1/users/me")
 
     assert resp.json()["data"]["scope"] == {"kind": "self"}
-    assert resp.json()["data"]["permissions"] == []
+    # Role-less but still an employee: holds exactly the self-service baseline.
+    assert set(resp.json()["data"]["permissions"]) == baseline_self_permissions()
 
 
 def test_me_patch_updates_name_only():
