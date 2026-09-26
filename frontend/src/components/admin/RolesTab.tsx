@@ -3,15 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   adminApi,
-  ARCHETYPE_OPTIONS,
-  REACH_OPTIONS,
   type AdminUser,
-  type Archetype,
   type Permission,
   type Role,
-  type ScopeTier,
 } from '@/lib/admin/api';
-import { Badge, Button, ConfirmModal, Drawer, Notice, Select, SectionTitle, errorText } from './ui';
+import { Badge, Button, ConfirmModal, Notice, errorText } from './ui';
 import { RoleBuilder } from './RoleBuilder';
 
 // The seeded starter roles show an "Inbuilt" tag, like Keka's system roles.
@@ -58,7 +54,11 @@ export function RolesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [advancedId, setAdvancedId] = useState<number | null>(null);
+  const [menuId, setMenuId] = useState<number | null>(null);
+  const [statusTarget, setStatusTarget] = useState<Role | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
+  const [opBusy, setOpBusy] = useState(false);
+  const [opError, setOpError] = useState<string | null>(null);
   const [builder, setBuilder] = useState<{ role: Role | null } | null>(null);
 
   const load = useCallback(async () => {
@@ -92,9 +92,36 @@ export function RolesTab() {
     return map;
   }, [users]);
 
-  const advanced = roles.find((r) => r.id === advancedId) ?? null;
   const total = permissions.length;
   const shown = roles.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const setActive = async (role: Role, isActive: boolean) => {
+    setOpBusy(true);
+    setOpError(null);
+    try {
+      await adminApi.updateRole(role.id, { isActive });
+      setStatusTarget(null);
+      await load();
+    } catch (e) {
+      setOpError(errorText(e));
+    } finally {
+      setOpBusy(false);
+    }
+  };
+
+  const remove = async (role: Role) => {
+    setOpBusy(true);
+    setOpError(null);
+    try {
+      await adminApi.deleteRole(role.id);
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setOpError(errorText(e));
+    } finally {
+      setOpBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -176,9 +203,68 @@ export function RolesTab() {
                   </div>
                 </div>
 
-                <div className="flex gap-1.5">
-                  <Button onClick={() => setBuilder({ role })}>Edit</Button>
-                  <Button onClick={() => setAdvancedId(role.id)}>⋯</Button>
+                <div className="relative">
+                  <Button
+                    aria-label={`Actions for ${role.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menuId === role.id}
+                    onClick={() => setMenuId(menuId === role.id ? null : role.id)}
+                  >
+                    ⋮
+                  </Button>
+                  {menuId === role.id && (
+                    <>
+                      <button
+                        aria-label="Close menu"
+                        className="fixed inset-0 z-10 cursor-default"
+                        onClick={() => setMenuId(null)}
+                        onKeyDown={(e) => e.key === 'Escape' && setMenuId(null)}
+                      />
+                      <div
+                        role="menu"
+                        className="absolute right-0 z-20 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                      >
+                        <button
+                          role="menuitem"
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => {
+                            setMenuId(null);
+                            setBuilder({ role });
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          role="menuitem"
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => {
+                            setMenuId(null);
+                            if (role.isActive && role.userCount > 0) {
+                              setOpError(null);
+                              setStatusTarget(role);
+                            } else {
+                              setActive(role, !role.isActive);
+                            }
+                          }}
+                        >
+                          {role.isActive ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                        {!STARTER_ROLES.has(role.name) && (
+                          <button
+                            role="menuitem"
+                            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                            onClick={() => {
+                              setMenuId(null);
+                              setOpError(null);
+                              setDeleteTarget(role);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -199,247 +285,43 @@ export function RolesTab() {
         />
       )}
 
-      {advanced && (
-        <RoleEditor
-          key={advanced.id}
-          role={advanced}
-          permissions={permissions}
-          onClose={() => setAdvancedId(null)}
-          onChanged={load}
-          onDeleted={async () => {
-            setAdvancedId(null);
-            await load();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function RoleEditor({
-  role,
-  permissions,
-  onClose,
-  onChanged,
-  onDeleted,
-}: {
-  role: Role;
-  permissions: Permission[];
-  onClose: () => void;
-  onChanged: () => Promise<void>;
-  onDeleted: () => Promise<void>;
-}) {
-  const [name, setName] = useState(role.name);
-  const [archetype, setArchetype] = useState<Archetype>(role.archetype);
-  const [detailsMsg, setDetailsMsg] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
-  const [savingDetails, setSavingDetails] = useState(false);
-  const [confirm, setConfirm] = useState<'deactivate' | 'delete' | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
-
-  const detailsChanged = name.trim() !== role.name || archetype !== role.archetype;
-
-  const saveDetails = async () => {
-    setSavingDetails(true);
-    setDetailsMsg(null);
-    try {
-      await adminApi.updateRole(role.id, { name: name.trim(), archetype });
-      await onChanged();
-      setDetailsMsg({ tone: 'success', text: 'Saved.' });
-    } catch (e) {
-      setDetailsMsg({ tone: 'error', text: errorText(e) });
-    } finally {
-      setSavingDetails(false);
-    }
-  };
-
-  const setActive = async (isActive: boolean) => {
-    setBusy(true);
-    setConfirmError(null);
-    try {
-      await adminApi.updateRole(role.id, { isActive });
-      await onChanged();
-      setConfirm(null);
-    } catch (e) {
-      setConfirmError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const remove = async () => {
-    setBusy(true);
-    setConfirmError(null);
-    try {
-      await adminApi.deleteRole(role.id);
-      await onDeleted();
-    } catch (e) {
-      setConfirmError(errorText(e));
-      setBusy(false);
-    }
-  };
-
-  const grantFor = (permissionId: number) => role.permissions.find((g) => g.permission === permissionId);
-
-  return (
-    <Drawer title={role.name} subtitle={`${role.userCount} ${role.userCount === 1 ? 'person holds' : 'people hold'} this role`} onClose={onClose}>
-      <section>
-        <SectionTitle>Details</SectionTitle>
-        <div className="space-y-3">
-          <label className="block text-sm">
-            <span className="font-semibold text-gray-700">Role name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg" />
-          </label>
-          <label className="block text-sm">
-            <span className="font-semibold text-gray-700">App view</span>
-            <Select value={archetype} onChange={(e) => setArchetype(e.target.value as Archetype)} className="mt-1">
-              {ARCHETYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <div className="flex items-center gap-3">
-            <Button variant="primary" onClick={saveDetails} disabled={!detailsChanged || savingDetails || !name.trim()}>
-              {savingDetails ? 'Saving…' : 'Save details'}
-            </Button>
-            {detailsMsg && <Notice tone={detailsMsg.tone}>{detailsMsg.text}</Notice>}
-          </div>
-        </div>
-      </section>
-
-      <section>
-        <SectionTitle hint="For each permission, choose how far this role's holders can reach. Each change saves immediately.">
-          What this role can do
-        </SectionTitle>
-        {!role.isActive && <Notice tone="warning">This role is inactive, so none of the permissions below are in effect.</Notice>}
-        <div className="mt-3 border border-gray-200 rounded-xl divide-y divide-gray-100">
-          {permissions.map((p) => (
-            <GrantRow key={p.id} role={role} permission={p} grantId={grantFor(p.id)?.id} tier={grantFor(p.id)?.scopeTier} onChanged={onChanged} />
-          ))}
-          {permissions.length === 0 && <p className="p-4 text-sm text-gray-500">No permissions are registered yet.</p>}
-        </div>
-      </section>
-
-      <section>
-        <SectionTitle>Status</SectionTitle>
-        <div className="flex flex-wrap gap-2">
-          {role.isActive ? (
-            <Button
-              onClick={() => (role.userCount > 0 ? setConfirm('deactivate') : setActive(false))}
-              disabled={busy}
-            >
-              Deactivate role
-            </Button>
-          ) : (
-            <Button onClick={() => setActive(true)} disabled={busy}>
-              Reactivate role
-            </Button>
-          )}
-          <Button variant="danger" onClick={() => setConfirm('delete')}>
-            Delete role
-          </Button>
-        </div>
-        <p className="text-xs text-gray-500 mt-2">
-          Deactivating removes everything the role grants, straight away, but keeps the role so it can be turned back on. A role that people still hold cannot be deleted.
-        </p>
-      </section>
-
-      {confirm === 'deactivate' && (
+      {statusTarget && (
         <ConfirmModal
-          title={`Deactivate “${role.name}”?`}
+          title={`Deactivate “${statusTarget.name}”?`}
           body={
             <p>
-              {role.userCount} {role.userCount === 1 ? 'person holds' : 'people hold'} this role. They will lose everything it grants immediately, even if they are signed in.
+              {statusTarget.userCount} {statusTarget.userCount === 1 ? 'person holds' : 'people hold'} this role. They will lose everything it grants immediately, even if they are signed in.
               You can reactivate it at any time.
             </p>
           }
           confirmLabel="Deactivate"
           danger
-          busy={busy}
-          error={confirmError}
-          onConfirm={() => setActive(false)}
-          onCancel={() => setConfirm(null)}
-        />
-      )}
-      {confirm === 'delete' && (
-        <ConfirmModal
-          title={`Delete “${role.name}”?`}
-          body={<p>This permanently removes the role and its permission settings. It cannot be undone.</p>}
-          confirmLabel="Delete role"
-          danger
-          busy={busy}
-          error={confirmError}
-          onConfirm={remove}
+          busy={opBusy}
+          error={opError}
+          onConfirm={() => setActive(statusTarget, false)}
           onCancel={() => {
-            setConfirm(null);
-            setConfirmError(null);
+            setStatusTarget(null);
+            setOpError(null);
           }}
         />
       )}
-    </Drawer>
-  );
-}
 
-function GrantRow({
-  role,
-  permission,
-  grantId,
-  tier,
-  onChanged,
-}: {
-  role: Role;
-  permission: Permission;
-  grantId?: number;
-  tier?: ScopeTier;
-  onChanged: () => Promise<void>;
-}) {
-  const [state, setState] = useState<{ kind: 'idle' | 'saving' | 'saved' | 'error'; text?: string }>({ kind: 'idle' });
-
-  const change = async (value: string) => {
-    setState({ kind: 'saving' });
-    try {
-      if (value === 'none') {
-        if (grantId !== undefined) await adminApi.removeGrant(grantId);
-      } else if (grantId !== undefined) {
-        await adminApi.changeGrant(grantId, value as ScopeTier);
-      } else {
-        await adminApi.addGrant(role.id, permission.id, value as ScopeTier);
-      }
-      await onChanged();
-      setState({ kind: 'saved' });
-    } catch (e) {
-      setState({ kind: 'error', text: errorText(e) });
-    }
-  };
-
-  return (
-    <div className="p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="font-semibold text-gray-900 text-sm">{permission.description || permission.code}</p>
-          <p className="text-xs text-gray-500 font-mono">{permission.code}</p>
-        </div>
-        <div className="w-52 shrink-0">
-          <Select
-            aria-label={`Reach for ${permission.code}`}
-            value={tier ?? 'none'}
-            onChange={(e) => change(e.target.value)}
-            disabled={state.kind === 'saving'}
-          >
-            <option value="none">No access</option>
-            {REACH_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
-      {state.kind === 'saving' && <p className="text-xs text-gray-500 mt-1">Saving…</p>}
-      {state.kind === 'saved' && <p className="text-xs text-green-700 mt-1">Saved</p>}
-      {state.kind === 'error' && <p className="text-xs text-red-600 mt-1">{state.text}</p>}
+      {deleteTarget && (
+        <ConfirmModal
+          title={`Delete “${deleteTarget.name}”?`}
+          body={<p>This permanently removes the role and its permission settings. It cannot be undone.</p>}
+          confirmLabel="Delete role"
+          danger
+          busy={opBusy}
+          error={opError}
+          onConfirm={() => remove(deleteTarget)}
+          onCancel={() => {
+            setDeleteTarget(null);
+            setOpError(null);
+          }}
+        />
+      )}
     </div>
   );
 }
+
