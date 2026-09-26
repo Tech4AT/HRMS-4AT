@@ -131,4 +131,10 @@ class DueOrgChangesView(viewsets.ViewSet):
             .select_related("employee__user")
             .order_by("effective_date")
         )
+        # orgchanges.read may be held at SELF tier (every employee has it), so
+        # only org.manage sees the whole org; everyone else sees their scope.
+        if not user_has_permission(request.user, "org.manage"):
+            due = due.filter(
+                employee__in=resolve_employee_scope(request.user, "orgchanges.read")
+            )
         return Response({"success": True, "data": OrgChangeSerializer(due, many=True).data})

@@ -75,6 +75,22 @@ def test_a_person_sees_only_their_own_changes():
     assert bob_client.get("/api/v1/org-changes/").json()["data"] == []
 
 
+def test_due_peek_is_scoped_for_self_tier_holders():
+    """orgchanges.read at SELF (every employee) must not reveal the whole org's
+    pending changes through the due-changes peek; HR (org.manage) sees them all."""
+    hr, _ = _hr_client()
+    alice = EmployeeFactory(user=UserFactory(role=Role.objects.get(name="Employee")))
+    bob = EmployeeFactory(user=UserFactory(role=Role.objects.get(name="Employee")))
+    dept = DepartmentFactory(name="New Home")
+    assert _raise(hr, alice, to_data={"department_id": dept.pk}).status_code == 201
+
+    bob_client = APIClient()
+    bob_client.force_authenticate(user=bob.user)
+
+    assert bob_client.get("/api/v1/org-changes-due/").json()["data"] == []
+    assert len(hr.get("/api/v1/org-changes-due/").json()["data"]) == 1
+
+
 def test_raising_a_change_for_an_unknown_target_is_a_field_error():
     hr, _ = _hr_client()
 

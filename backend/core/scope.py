@@ -15,30 +15,23 @@ from django.db.models import Q, QuerySet
 
 from accounts.models import RolePermission, UserPermissionOverride
 from core.enums import ScopeTier
+from core.registry import registered_permissions
 from employees.models import Employee
 
 # Every person with an employee record is also a plain employee, whatever their
-# job role — so they always keep the "own stuff" self-service permissions below,
-# at SELF tier, even if their role never granted them. This is a floor, not a
-# ceiling: a role may still widen any of these to a broader tier, and an explicit
-# UserPermissionOverride deny still wins (so access can be revoked). Without this
-# floor, a specialised role (Finance, Payroll Admin, HR, …) built as "just the job
-# keys" silently loses the ability to see its own profile / apply for its own
-# leave / see its own payslip. Keep this list == the plain Employee role's own
-# self-tier grants; when a module adds a new self-service permission, add its code
-# here too.
-BASELINE_SELF_PERMISSIONS = frozenset(
-    {
-        "ess.profile.read",
-        "ess.profile.write",
-        "employees.read",
-        "example_leave.read",
-        "example_leave.write",
-        "onboarding.read",
-        "orgchanges.read",
-        "payroll.read",
-    }
-)
+# job role — so they always keep the "own stuff" self-service permissions, at SELF
+# tier, even if their role never granted them. This is a floor, not a ceiling: a
+# role may still widen any of these to a broader tier, and an explicit
+# UserPermissionOverride deny still wins (so access can be revoked). The set is
+# every registered permission whose default grant to the plain Employee role is
+# SELF (see each module's rbac.py), so a new module's self-service codes join the
+# baseline automatically.
+def baseline_self_permissions() -> frozenset:
+    return frozenset(
+        code
+        for code, spec in registered_permissions().items()
+        if spec.default_grants.get("Employee") == ScopeTier.SELF
+    )
 
 
 def _has_employee_record(user) -> bool:
@@ -128,7 +121,7 @@ def _baseline_or_deny(user, permission_code: str):
     """Fallback when neither an override nor the user's role grants the code:
     a self-service baseline permission is granted at SELF tier to anyone with an
     employee record; everything else is denied."""
-    if permission_code in BASELINE_SELF_PERMISSIONS and _has_employee_record(user):
+    if permission_code in baseline_self_permissions() and _has_employee_record(user):
         return (ScopeTier.SELF, True)
     return (None, False)
 
@@ -152,7 +145,7 @@ def explain_permission(user, permission_code: str) -> dict:
             "source": "override" if override.is_granted else "override (deny)",
         }
     baseline = {"granted": True, "tier": ScopeTier.SELF, "source": "baseline (employee)"}
-    is_baseline = permission_code in BASELINE_SELF_PERMISSIONS and _has_employee_record(user)
+    is_baseline = permission_code in baseline_self_permissions() and _has_employee_record(user)
     if user.role_id is None:
         return baseline if is_baseline else {"granted": False, "tier": None, "source": "none"}
     grant = (
@@ -187,9 +180,9 @@ def user_effective_permissions(user) -> set:
     granted = {o.permission.code for o in overrides if o.is_granted}
     denied = {o.permission.code for o in overrides if not o.is_granted}
 
-    # Every employee also holds the self-service baseline (see BASELINE_SELF_
-    # PERMISSIONS), unless an explicit override denies a specific one.
-    baseline = set(BASELINE_SELF_PERMISSIONS) if _has_employee_record(user) else set()
+    # Every employee also holds the self-service baseline (see baseline_self_
+    # permissions), unless an explicit override denies a specific one.
+    baseline = set(baseline_self_permissions()) if _has_employee_record(user) else set()
 
     return (role_codes | granted | baseline) - denied
 
