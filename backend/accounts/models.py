@@ -103,10 +103,15 @@ class Role(models.Model):
 class Permission(models.Model):
     """Enumerated permission strings in dot-notation (leave.approve,
     expense.write, ...). Declared by the module that owns the action being
-    gated — not admin-creatable through any UI."""
+    gated — not admin-creatable through any UI. `label` is the short row text
+    in the role UI; `group` is the feature area it is listed under. Both are
+    synced from the module's `rbac.py` (blank values are filled, edited ones
+    are kept — same rule as `description`)."""
 
     code = models.CharField(max_length=150, unique=True)
     description = models.CharField(max_length=255, blank=True)
+    label = models.CharField(max_length=120, blank=True)
+    group = models.CharField(max_length=120, blank=True)
 
     class Meta:
         ordering = ["code"]

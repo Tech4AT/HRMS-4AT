@@ -170,12 +170,29 @@ def sync_registered_permissions() -> dict:
     summary = {"created": [], "grants_written": [], "grants_skipped": []}
     for spec in _REGISTRY.values():
         permission, created = Permission.objects.get_or_create(
-            code=spec.code, defaults={"description": spec.description}
+            code=spec.code,
+            defaults={
+                "description": spec.description,
+                "label": spec.label,
+                "group": permission_group(spec.code),
+            },
         )
         if not created:
+            # Fill blanks from code, but never overwrite an admin's edit —
+            # the same rule `description` has always had.
+            touched = []
             if spec.description and not permission.description:
                 permission.description = spec.description
-                permission.save(update_fields=["description"])
+                touched.append("description")
+            if spec.label and not permission.label:
+                permission.label = spec.label
+                touched.append("label")
+            group = permission_group(spec.code)
+            if group and not permission.group:
+                permission.group = group
+                touched.append("group")
+            if touched:
+                permission.save(update_fields=touched)
             continue
 
         summary["created"].append(spec.code)
