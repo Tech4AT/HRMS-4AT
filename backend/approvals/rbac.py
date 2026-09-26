@@ -5,12 +5,21 @@ reassign a stuck one's approver, or force-resolve it (the escape hatch for when
 the original approver is unavailable)."""
 
 from core.enums import ScopeTier
-from core.registry import PermissionSpec, register_permissions
+from core.registry import ModuleSpec, PermissionSpec, register_module
 
-register_permissions(
-    PermissionSpec(
-        "approvals.manage",
-        "Oversee all approval requests — reassign or force-resolve",
-        default_grants={"HR Admin": ScopeTier.ALL, "Finance": ScopeTier.ALL},
-    ),
+register_module(
+    ModuleSpec(
+        key="approvals",
+        label="Approvals",
+        enabled=True,
+        permissions=(
+            PermissionSpec(
+                "approvals.manage",
+                "Oversee all approval requests — reassign or force-resolve",
+                label="Oversee all approval requests",
+                group="Approvals",
+                default_grants={"HR Admin": ScopeTier.ALL, "Finance": ScopeTier.ALL},
+            ),
+        ),
+    )
 )
