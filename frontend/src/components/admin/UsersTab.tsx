@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth/useAuth';
 import {
   adminApi,
@@ -14,12 +14,29 @@ import {
   type Role,
   type ScopeTier,
 } from '@/lib/admin/api';
-import { Badge, Button, ConfirmModal, Drawer, Notice, Pager, SectionTitle, Select, errorText } from './ui';
+import { Button, ConfirmModal, Drawer, Notice, Pager, SectionTitle, Select, errorText } from './ui';
 import { PermissionPicker } from './PermissionPicker';
 
 const PAGE_SIZE = 20;
 
-export function PeopleTab() {
+const AVATAR_COLORS = [
+  'bg-purple-200 text-purple-800',
+  'bg-blue-200 text-blue-800',
+  'bg-green-200 text-green-800',
+  'bg-amber-200 text-amber-800',
+  'bg-pink-200 text-pink-800',
+  'bg-teal-200 text-teal-800',
+];
+
+function initialsOf(u: AdminUser) {
+  return `${u.firstName?.[0] ?? ''}${u.lastName?.[0] ?? ''}`.toUpperCase() || u.email[0]?.toUpperCase() || '?';
+}
+
+function displayName(u: AdminUser) {
+  return `${u.firstName} ${u.lastName}`.trim() || u.email;
+}
+
+export function UsersTab() {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(1);
@@ -29,6 +46,8 @@ export function PeopleTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [menuId, setMenuId] = useState<number | null>(null);
+  const [exceptionsId, setExceptionsId] = useState<number | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -64,53 +83,133 @@ export function PeopleTab() {
   }, [load]);
 
   const selected = data?.results.find((u) => u.id === selectedId) ?? null;
+  const exceptionsUser = data?.results.find((u) => u.id === exceptionsId) ?? null;
+
+  // Role grant counts for the Permissions column. The users endpoint exposes
+  // no designation and no effective-permission count, so the count shows what
+  // the person's role grants (personal exceptions may add or remove single
+  // permissions on top — manage them per user from the Actions menu).
+  const grantsByRole = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const r of roles) map.set(r.id, r.permissions.length);
+    return map;
+  }, [roles]);
+  const totalPermissions = permissions.length;
 
   const replaceUser = (updated: AdminUser) =>
     setData((d) => (d ? { ...d, results: d.results.map((u) => (u.id === updated.id ? updated : u)) } : d));
 
   return (
     <div>
-      <p className="text-sm text-gray-600 max-w-2xl mb-4">
-        Find a person to change their role, manage their account, give or take away a specific permission, or check exactly what they can reach.
-      </p>
-
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name or email…"
-        aria-label="Search people"
-        className="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg mb-4"
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Users</h2>
+          <p className="text-sm text-gray-600 max-w-2xl mt-1">
+            Everyone with access. Change a person&apos;s role or manage their personal
+            exceptions from the Actions menu on their row.
+          </p>
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or employee number"
+          aria-label="Search users"
+          className="w-64 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        />
+      </div>
 
       {error && <Notice tone="error">{error}</Notice>}
-      {loading && !data && <p className="text-sm text-gray-500">Loading people…</p>}
+      {loading && !data && <p className="text-sm text-gray-500">Loading users…</p>}
 
       {data && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
+          <table className="w-full text-sm min-w-[40rem]">
             <thead className="bg-gray-50 text-gray-600 text-left">
               <tr>
-                <th className="px-4 py-3 font-semibold">Person</th>
-                <th className="px-4 py-3 font-semibold hidden md:table-cell">Email</th>
-                <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Account</th>
+                <th className="px-4 py-3 font-semibold">Users</th>
+                <th className="px-4 py-3 font-semibold">Roles</th>
+                <th className="px-4 py-3 font-semibold">Permissions</th>
+                <th className="px-4 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {data.results.map((u) => (
-                <tr key={u.id} onClick={() => setSelectedId(u.id)} className="border-t border-gray-100 hover:bg-purple-50 cursor-pointer">
-                  <td className="px-4 py-3 font-semibold text-gray-900">
-                    <button className="text-left hover:underline" onClick={() => setSelectedId(u.id)}>
-                      {`${u.firstName} ${u.lastName}`.trim() || u.email}
-                    </button>
-                    {u.employeeCode && <span className="ml-2 text-xs text-gray-400 font-normal">{u.employeeCode}</span>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{u.email}</td>
-                  <td className="px-4 py-3 text-gray-700">{u.roleName ?? <span className="text-gray-400">No role</span>}</td>
-                  <td className="px-4 py-3">{u.isActive ? <Badge tone="green">Active</Badge> : <Badge tone="red">Deactivated</Badge>}</td>
-                </tr>
-              ))}
+              {data.results.map((u, i) => {
+                const granted = u.role != null ? (grantsByRole.get(u.role) ?? 0) : 0;
+                return (
+                  <tr key={u.id} className="border-t border-gray-100 hover:bg-purple-50">
+                    <td className="px-4 py-3">
+                      <button className="flex items-center gap-3 text-left" onClick={() => setSelectedId(u.id)}>
+                        <span
+                          aria-hidden="true"
+                          className={`w-9 h-9 rounded-full grid place-items-center text-xs font-bold shrink-0 ${AVATAR_COLORS[i % AVATAR_COLORS.length]}`}
+                        >
+                          {initialsOf(u)}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-gray-900 truncate hover:underline">
+                            {displayName(u)}
+                          </span>
+                          <span className="block text-xs text-gray-500 truncate">
+                            {u.employeeCode ?? u.email}
+                          </span>
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">{u.roleName ?? <span className="text-gray-400">No role</span>}</td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {granted} / {totalPermissions}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="relative">
+                        <Button
+                          aria-label={`Actions for ${displayName(u)}`}
+                          aria-haspopup="menu"
+                          aria-expanded={menuId === u.id}
+                          onClick={() => setMenuId(menuId === u.id ? null : u.id)}
+                        >
+                          ⋮
+                        </Button>
+                        {menuId === u.id && (
+                          <>
+                            <button
+                              aria-label="Close menu"
+                              className="fixed inset-0 z-10 cursor-default"
+                              onClick={() => setMenuId(null)}
+                              onKeyDown={(e) => e.key === 'Escape' && setMenuId(null)}
+                            />
+                            <div
+                              role="menu"
+                              className="absolute right-0 z-20 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                            >
+                              <button
+                                role="menuitem"
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                onClick={() => {
+                                  setMenuId(null);
+                                  setSelectedId(u.id);
+                                }}
+                              >
+                                Change role
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                onClick={() => {
+                                  setMenuId(null);
+                                  setExceptionsId(u.id);
+                                }}
+                              >
+                                Manage exceptions
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {data.results.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-gray-500">
@@ -123,6 +222,10 @@ export function PeopleTab() {
         </div>
       )}
       {data && <Pager page={data.page} pageSize={data.pageSize} total={data.total} onPage={setPage} />}
+      <p className="text-xs text-gray-500 mt-3">
+        Permission counts show what each person&apos;s role grants; personal exceptions
+        can add or remove individual permissions on top.
+      </p>
 
       {selected && (
         <PersonPanel
@@ -133,6 +236,16 @@ export function PeopleTab() {
           onChanged={replaceUser}
           onClose={() => setSelectedId(null)}
         />
+      )}
+
+      {exceptionsUser && (
+        <Drawer
+          title={`Exceptions — ${displayName(exceptionsUser)}`}
+          subtitle={exceptionsUser.email}
+          onClose={() => setExceptionsId(null)}
+        >
+          <ExceptionsSection person={exceptionsUser} permissions={permissions} onChanged={() => {}} />
+        </Drawer>
       )}
     </div>
   );
@@ -332,7 +445,7 @@ function PersonPanel({
   );
 }
 
-function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUser; permissions: Permission[]; onChanged: () => void }) {
+export function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUser; permissions: Permission[]; onChanged: () => void }) {
   const [items, setItems] = useState<Exception[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
