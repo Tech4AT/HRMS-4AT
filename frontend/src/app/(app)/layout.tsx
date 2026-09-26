@@ -11,9 +11,6 @@ import {
   InboxIcon,
   TeamIcon,
   WalletIcon,
-  TimerIcon,
-  CalendarCheckIcon,
-  CalendarIcon,
   TrendingUpIcon,
   MessageCircleIcon,
   GlobeIcon,
@@ -89,9 +86,11 @@ const navItems: NavItem[] = [
       { label: 'My requests', href: '/approvals?tab=mine' },
     ],
   },
-  { id: 'attendance', label: 'Attendance', icon: CalendarCheckIcon, href: '/attendance', roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'leave', label: 'Leave Management', icon: CalendarIcon, href: '/leave', roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet', roles: ['admin', 'employee', 'superadmin'] },
+  // Attendance / Leave / Timesheet are hidden until their backends exist. The
+  // pages proxy to /api/{attendance,leave,timesheet}/* which have no matching
+  // backend route (leave's only backend is the minimal example-leave reference,
+  // missing types/balance/holidays), so they render "Upstream error". Re-add
+  // each here when its real (peer-owned) backend lands.
   {
     id: 'finances',
     label: 'My Finances',
@@ -128,7 +127,6 @@ const navItems: NavItem[] = [
       { label: 'Job Architecture', href: '/org-module/job-families', roles: ['admin', 'superadmin'] },
       { label: 'Onboarding', href: '/onboarding', roles: ['admin', 'superadmin'] },
       { label: 'Exits', href: '/exits', roles: ['superadmin'] },
-      { label: 'Policies', href: '/policies', roles: ['superadmin'] },
       { label: 'Org Changes', href: '/org-module/promotions', roles: ['admin', 'superadmin'] },
       { label: 'Settings', href: '/org-module/org-configuration', roles: ['superadmin'] },
       {
