@@ -66,7 +66,11 @@ export interface Role {
 export interface Permission {
   id: number;
   code: string;
+  /** Short row text (from the module's rbac.py; may be blank on old rows). */
+  label: string;
   description: string;
+  /** Feature area for grouping (from the module's rbac.py). */
+  group: string;
 }
 
 export interface AdminUser {
