@@ -82,3 +82,7 @@ docs/GOD-AGENT-ORCHESTRATION.md
 /backend/docker-entrypoint.sh
 /frontend/.dockerignore
 /frontend/Dockerfile
+
+# Local DB dumps (data reproducible from roster.xlsx at startup)
+hrms_dump.sql
+*.sql
