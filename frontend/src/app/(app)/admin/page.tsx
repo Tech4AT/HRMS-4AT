@@ -5,18 +5,21 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
 import { useRequireAccess } from '@/lib/auth/useRequireAccess';
 import { RolesTab } from '@/components/admin/RolesTab';
-import { PermissionsTab } from '@/components/admin/PermissionsTab';
-import { PeopleTab } from '@/components/admin/PeopleTab';
-import { ExceptionsTab } from '@/components/admin/ExceptionsTab';
+import { UsersTab } from '@/components/admin/UsersTab';
 import { ActivityTab } from '@/components/admin/ActivityTab';
 
-type TabId = 'roles' | 'permissions' | 'people' | 'exceptions' | 'activity';
+type TabId = 'roles' | 'users' | 'activity';
+
+// Legacy tab ids from the old 5-tab layout keep landing somewhere sensible.
+const LEGACY_TABS: Record<string, TabId> = {
+  people: 'users',
+  permissions: 'roles',
+  exceptions: 'users',
+};
 
 const TABS: { id: TabId; label: string; permission?: string }[] = [
-  { id: 'roles', label: 'Roles & permissions' },
-  { id: 'permissions', label: 'Permissions by module' },
-  { id: 'people', label: 'People' },
-  { id: 'exceptions', label: 'Personal exceptions' },
+  { id: 'roles', label: 'User Roles' },
+  { id: 'users', label: 'Users' },
   { id: 'activity', label: 'Activity log', permission: 'audit.read' },
 ];
 
@@ -27,7 +30,11 @@ function AccessControl() {
   const searchParams = useSearchParams();
 
   const visibleTabs = TABS.filter((t) => !t.permission || hasPermission(t.permission));
-  const requested = searchParams.get('tab') as TabId | null;
+  const requestedParam = searchParams.get('tab');
+  const requested: TabId | null =
+    requestedParam && requestedParam in LEGACY_TABS
+      ? LEGACY_TABS[requestedParam]
+      : (requestedParam as TabId | null);
   const tab: TabId = visibleTabs.some((t) => t.id === requested) ? (requested as TabId) : 'roles';
 
   if (isLoading || !hasAccess) return null;
@@ -54,9 +61,7 @@ function AccessControl() {
 
       <div className="p-4 sm:p-8">
         {tab === 'roles' && <RolesTab />}
-        {tab === 'permissions' && <PermissionsTab />}
-        {tab === 'people' && <PeopleTab />}
-        {tab === 'exceptions' && <ExceptionsTab />}
+        {tab === 'users' && <UsersTab />}
         {tab === 'activity' && <ActivityTab />}
       </div>
     </div>
