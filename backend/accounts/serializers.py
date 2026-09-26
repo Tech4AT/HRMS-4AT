@@ -6,7 +6,7 @@ from accounts.models import Permission, Role, RolePermission, User, UserPermissi
 class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
-        fields = ["id", "code", "description"]
+        fields = ["id", "code", "label", "description", "group"]
 
 
 class RolePermissionSerializer(serializers.ModelSerializer):

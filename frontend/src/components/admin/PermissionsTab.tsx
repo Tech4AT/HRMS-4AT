@@ -12,7 +12,7 @@ import {
   type ScopeTier,
 } from '@/lib/admin/api';
 import { Badge, Button, Notice, Select, SectionTitle } from './ui';
-import { groupPermissions } from '@/lib/admin/permissionGroups';
+import { groupPermissions, permissionLabel } from '@/lib/admin/permissionGroups';
 
 export function PermissionsTab() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -63,7 +63,8 @@ export function PermissionsTab() {
                       : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
-                  {perm.code}
+                  <span className="block truncate">{permissionLabel(perm)}</span>
+                  <span className="block truncate text-xs opacity-60 font-mono">{perm.code}</span>
                 </button>
               ))}
             </div>
@@ -118,7 +119,8 @@ function PermissionDetail({ permission, roles }: { permission: Permission; roles
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-slate-900">{permission.code}</h2>
+        <h2 className="text-xl font-bold text-slate-900">{permissionLabel(permission)}</h2>
+        <p className="text-xs text-gray-500 font-mono mt-0.5">{permission.code}</p>
         {permission.description && <p className="text-gray-600 mt-1">{permission.description}</p>}
       </div>
 
