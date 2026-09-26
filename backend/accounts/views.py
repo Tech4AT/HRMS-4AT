@@ -53,12 +53,18 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only — permission codes are declared in code by whichever module
     owns the action, not admin-creatable (docs/REQUIREMENTS.md §0). This
     endpoint exists so a role-management UI can list what's available to
-    assign."""
+    assign. Only permissions of built (`enabled`) modules are listed — a
+    reference or not-yet-enforcing module's codes stay out until it ships."""
 
     queryset = Permission.objects.all()
     serializer_class = PermissionSerializer
     permission_classes = [HasPermissionCode]
     required_permission = "roles.manage"
+
+    def get_queryset(self):
+        from core.registry import enabled_permission_codes
+
+        return super().get_queryset().filter(code__in=enabled_permission_codes())
 
 
 class RolePermissionViewSet(AuditedModelViewSet):

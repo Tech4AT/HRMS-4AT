@@ -15,6 +15,7 @@ import {
   type ScopeTier,
 } from '@/lib/admin/api';
 import { Badge, Button, ConfirmModal, Drawer, Notice, Pager, SectionTitle, Select, errorText } from './ui';
+import { PermissionPicker } from './PermissionPicker';
 
 const PAGE_SIZE = 20;
 
@@ -398,14 +399,12 @@ function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUs
       {available.length > 0 && (
         <div className="border border-dashed border-gray-300 rounded-xl p-3 space-y-2">
           <p className="text-sm font-semibold text-gray-700">Add an exception</p>
-          <Select aria-label="Permission" value={permissionId} onChange={(e) => setPermissionId(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">Choose a permission…</option>
-            {available.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.description || p.code}
-              </option>
-            ))}
-          </Select>
+          <PermissionPicker
+            permissions={available}
+            value={permissionId}
+            onChange={(v) => setPermissionId(v as number | '')}
+            label="Permission"
+          />
           <div className="flex gap-2">
             <Select aria-label="Effect" value={effect} onChange={(e) => setEffect(e.target.value as 'allow' | 'deny')}>
               <option value="allow">Allow</option>
@@ -480,13 +479,13 @@ function PreviewSection({ person, permissions, version }: { person: AdminUser; p
   return (
     <section className="space-y-3">
       <SectionTitle hint="The result of the rules as they stand right now, using the same logic the system enforces.">What can this person reach?</SectionTitle>
-      <Select aria-label="Permission to preview" value={code} onChange={(e) => setCode(e.target.value)}>
-        {permissions.map((p) => (
-          <option key={p.id} value={p.code}>
-            {p.description || p.code}
-          </option>
-        ))}
-      </Select>
+      <PermissionPicker
+        permissions={permissions}
+        value={code}
+        onChange={(v) => setCode(v as string)}
+        label="Permission to preview"
+        valueKey="code"
+      />
       {error && <Notice tone="error">{error}</Notice>}
       {preview && (
         <div className="space-y-2">

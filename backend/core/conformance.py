@@ -168,8 +168,11 @@ def run_conformance(v, org: FictionalOrg, endpoint: ScopedEndpoint):
         f"got HTTP {anonymous.status_code}",
     )
 
-    org.give_no_permissions("eve")
-    nothing = login("eve").get(endpoint.list_url)
+    # Eve keeps her employee record (and its self-service baseline), so she can
+    # never be the permission-less caller: the outsider has no employee record
+    # and therefore genuinely holds nothing.
+    outsider = org.add_user_without_permissions()
+    nothing = login(outsider).get(endpoint.list_url)
     v.check(
         "a signed-in caller holding no permissions is refused (403)",
         nothing.status_code == 403,
@@ -231,12 +234,25 @@ def run_conformance(v, org: FictionalOrg, endpoint: ScopedEndpoint):
         body = {**endpoint.create_payload, "employee": org.people["sam"].pk}
 
         org.give_permission("eli", read, ScopeTier.SELF)
+        # Eli is an employee, so the self-service baseline may grant the write
+        # permission too — explicitly deny it to model "read alone" precisely
+        # (a no-op for modules whose write code is outside the baseline).
+        write_perm = Permission.objects.get(code=endpoint.write_permission)
+        UserPermissionOverride.objects.create(
+            user=org.people["eli"].user,
+            permission=write_perm,
+            scope_tier=ScopeTier.SELF,
+            is_granted=False,
+        )
         r = login("eli").post(endpoint.list_url, body)
         v.check(
             "read permission alone cannot create (403)",
             r.status_code == 403,
             f"got HTTP {r.status_code}",
         )
+        UserPermissionOverride.objects.filter(
+            user=org.people["eli"].user, permission=write_perm
+        ).delete()
 
         org.give_permission("eli", endpoint.write_permission, ScopeTier.SELF)
         r = login("eli").post(endpoint.list_url, body)

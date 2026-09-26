@@ -477,10 +477,14 @@ class Command(VerificationCommand):
 
         response = hana.patch(f"{API}/roles/{role.pk}/", {"isActive": False})
         v.expect_status("HR Admin deactivates the role", response, 200)
-        v.expect_status(
-            "the same login is refused at once: a deactivated role grants nothing",
-            maya.get(f"{API}/employees/"),
-            403,
+        # The dead role grants nothing: Maya falls back to exactly the
+        # self-service baseline (herself, nothing else) — she is an employee,
+        # so the baseline still applies even with no live role grant.
+        self._expect_sees(
+            v,
+            "deactivation strips the role grant: only baseline self-service remains",
+            maya,
+            {"maya"},
         )
         v.expect_status(
             "reactivating the role restores access",

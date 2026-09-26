@@ -10,7 +10,13 @@ from accounts.models import Permission, RolePermission
 from core import registry
 from core.checks import check_view_permission_codes
 from core.enums import ScopeTier
-from core.registry import PermissionSpec, register_permissions, sync_registered_permissions
+from core.registry import (
+    ModuleSpec,
+    PermissionSpec,
+    register_module,
+    register_permissions,
+    sync_registered_permissions,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -18,6 +24,8 @@ pytestmark = pytest.mark.django_db
 @pytest.fixture
 def empty_registry(monkeypatch):
     monkeypatch.setattr(registry, "_REGISTRY", {})
+    monkeypatch.setattr(registry, "_MODULES", {})
+    monkeypatch.setattr(registry, "_PERMISSION_MODULE", {})
 
 
 # --- registration ---------------------------------------------------------
@@ -47,6 +55,92 @@ def test_two_modules_cannot_claim_one_code_with_different_definitions(empty_regi
 
     with pytest.raises(ValueError, match="registered twice"):
         register_permissions(PermissionSpec("leave.read", "Something else"))
+
+
+# --- module self-registration ------------------------------------------------
+
+
+def test_register_module_registers_its_permissions(empty_registry):
+    register_module(
+        ModuleSpec(
+            key="payroll",
+            label="Payroll",
+            enabled=True,
+            permissions=(
+                PermissionSpec("payroll.read", "View payroll", label="View payroll records",
+                               group="Payroll"),
+            ),
+        )
+    )
+
+    assert registry.is_registered("payroll.read")
+    assert registry.permission_group("payroll.read") == "Payroll"
+    assert registry.permission_label("payroll.read") == "View payroll records"
+    assert registry.is_module_enabled("payroll")
+
+
+def test_register_module_is_idempotent(empty_registry):
+    spec = ModuleSpec(key="payroll", label="Payroll", enabled=True, permissions=())
+    register_module(spec)
+    register_module(spec)
+
+    assert list(registry.registered_modules()) == ["payroll"]
+
+
+def test_register_module_with_a_different_definition_is_rejected(empty_registry):
+    register_module(ModuleSpec(key="payroll", label="Payroll"))
+    with pytest.raises(ValueError, match="registered twice"):
+        register_module(ModuleSpec(key="payroll", label="Something else"))
+
+
+def test_bad_module_keys_are_rejected(empty_registry):
+    for bad in ["", "Payroll", " payroll "]:
+        with pytest.raises(ValueError, match="lower-case slug"):
+            register_module(ModuleSpec(key=bad))
+
+
+def test_permission_group_defaults_to_the_module_label(empty_registry):
+    register_module(
+        ModuleSpec(
+            key="payroll",
+            label="Payroll",
+            permissions=(PermissionSpec("payroll.read", "View payroll"),),
+        )
+    )
+
+    assert registry.permission_group("payroll.read") == "Payroll"
+
+
+def test_permission_label_falls_back_to_description_then_code(empty_registry):
+    register_permissions(
+        PermissionSpec("legacy.read", "Legacy description"),
+        PermissionSpec("bare.write"),
+    )
+
+    assert registry.permission_label("legacy.read") == "Legacy description"
+    assert registry.permission_label("bare.write") == "bare.write"
+
+
+def test_enabled_permission_codes_excludes_disabled_modules(empty_registry):
+    register_module(
+        ModuleSpec(
+            key="payroll", label="Payroll", enabled=True,
+            permissions=(PermissionSpec("payroll.read"),),
+        )
+    )
+    register_module(
+        ModuleSpec(
+            key="example_leave", label="Leaves & attendance", enabled=False,
+            permissions=(PermissionSpec("example_leave.read"),),
+        )
+    )
+    register_permissions(PermissionSpec("legacy.read"))
+
+    assert registry.enabled_permission_codes() == {"payroll.read", "legacy.read"}
+
+
+def test_unknown_module_keys_count_as_enabled(empty_registry):
+    assert registry.is_module_enabled("never.registered") is True
 
 
 # --- database sync --------------------------------------------------------
