@@ -85,15 +85,10 @@ export function UsersTab() {
   const selected = data?.results.find((u) => u.id === selectedId) ?? null;
   const exceptionsUser = data?.results.find((u) => u.id === exceptionsId) ?? null;
 
-  // Role grant counts for the Permissions column. The users endpoint exposes
-  // no designation and no effective-permission count, so the count shows what
-  // the person's role grants (personal exceptions may add or remove single
-  // permissions on top — manage them per user from the Actions menu).
-  const grantsByRole = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const r of roles) map.set(r.id, r.permissions.length);
-    return map;
-  }, [roles]);
+  // Permission counts come straight from the backend (`permissionCount` =
+  // the user's true effective set: union across active roles + overrides +
+  // baseline − denies), so a multi-role user's count always matches the
+  // backend instead of guessing from one role's grants.
   const totalPermissions = permissions.length;
 
   const replaceUser = (updated: AdminUser) =>
@@ -105,7 +100,7 @@ export function UsersTab() {
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Users</h2>
           <p className="text-sm text-gray-600 max-w-2xl mt-1">
-            Everyone with access. Change a person&apos;s role or manage their personal
+            Everyone with access. Change a person&apos;s roles or manage their personal
             exceptions from the Actions menu on their row.
           </p>
         </div>
@@ -135,7 +130,7 @@ export function UsersTab() {
             </thead>
             <tbody>
               {data.results.map((u, i) => {
-                const granted = u.role != null ? (grantsByRole.get(u.role) ?? 0) : 0;
+                const roleNames = u.roles.map((r) => r.name);
                 return (
                   <tr key={u.id} className="border-t border-gray-100 hover:bg-purple-50">
                     <td className="px-4 py-3">
@@ -156,9 +151,9 @@ export function UsersTab() {
                         </span>
                       </button>
                     </td>
-                    <td className="px-4 py-3 text-gray-700">{u.roleName ?? <span className="text-gray-400">No role</span>}</td>
+                    <td className="px-4 py-3 text-gray-700">{roleNames.length ? roleNames.join(', ') : <span className="text-gray-400">No roles</span>}</td>
                     <td className="px-4 py-3 text-gray-700">
-                      {granted} / {totalPermissions}
+                      {u.permissionCount} / {totalPermissions}
                     </td>
                     <td className="px-4 py-3">
                       <div className="relative">
@@ -190,7 +185,7 @@ export function UsersTab() {
                                   setSelectedId(u.id);
                                 }}
                               >
-                                Change role
+                                Change roles
                               </button>
                               <button
                                 role="menuitem"
@@ -223,8 +218,8 @@ export function UsersTab() {
       )}
       {data && <Pager page={data.page} pageSize={data.pageSize} total={data.total} onPage={setPage} />}
       <p className="text-xs text-gray-500 mt-3">
-        Permission counts show what each person&apos;s role grants; personal exceptions
-        can add or remove individual permissions on top.
+        Permission counts show what each person effectively holds across all their roles;
+        personal exceptions can add or remove individual permissions on top.
       </p>
 
       {selected && (
@@ -270,7 +265,7 @@ function PersonPanel({
   const isMe = me?.email.toLowerCase() === person.email.toLowerCase();
   const name = `${person.firstName} ${person.lastName}`.trim() || person.email;
 
-  const [roleId, setRoleId] = useState<number | ''>(person.role ?? '');
+  const [roleIds, setRoleIds] = useState<number[]>(person.roles.map((r) => r.id));
   const [confirm, setConfirm] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -278,7 +273,13 @@ function PersonPanel({
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [version, setVersion] = useState(0); // bump to refresh the reach preview
 
-  const chosenRole = roles.find((r) => r.id === roleId);
+  const currentIds = useMemo(() => person.roles.map((r) => r.id).sort((a, b) => a - b), [person]);
+  const chosenIds = useMemo(() => [...roleIds].sort((a, b) => a - b), [roleIds]);
+  const rolesChanged =
+    chosenIds.length !== currentIds.length || chosenIds.some((id, i) => id !== currentIds[i]);
+
+  const toggleRole = (id: number) =>
+    setRoleIds((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -301,26 +302,31 @@ function PersonPanel({
   return (
     <Drawer title={name} subtitle={person.email} onClose={onClose}>
       <section className="space-y-3">
-        <SectionTitle>Role</SectionTitle>
-        <Select
-          aria-label="Role"
-          value={roleId}
-          onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : '')}
-          disabled={isMe}
-        >
-          {person.role === null && <option value="">No role</option>}
-          {roles
-            .filter((r) => r.isActive || r.id === person.role)
-            .map((r) => (
-              <option key={r.id} value={r.id}>
+        <SectionTitle>Roles</SectionTitle>
+        <div className="space-y-1.5 max-h-56 overflow-y-auto border border-gray-200 rounded-lg p-2">
+          {roles.map((r) => (
+            <label
+              key={r.id}
+              className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-gray-50 ${isMe ? 'opacity-60' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={roleIds.includes(r.id)}
+                onChange={() => toggleRole(r.id)}
+                disabled={isMe}
+                aria-label={r.name}
+              />
+              <span className="text-gray-900">
                 {r.name}
                 {r.isActive ? '' : ' (inactive)'}
-              </option>
-            ))}
-        </Select>
-        {isMe && <p className="text-xs text-gray-500">You cannot change your own role. Ask another administrator.</p>}
-        <Button variant="primary" disabled={isMe || busy || roleId === '' || roleId === person.role} onClick={() => setConfirm('role')}>
-          Change role
+              </span>
+            </label>
+          ))}
+          {roles.length === 0 && <p className="text-sm text-gray-500 px-2 py-1">No roles yet.</p>}
+        </div>
+        {isMe && <p className="text-xs text-gray-500">You cannot change your own roles. Ask another administrator.</p>}
+        <Button variant="primary" disabled={isMe || busy || !rolesChanged} onClick={() => setConfirm('role')}>
+          Change roles
         </Button>
         {message && <Notice tone="success">{message}</Notice>}
       </section>
@@ -354,22 +360,33 @@ function PersonPanel({
       <ExceptionsSection person={person} permissions={permissions} onChanged={() => setVersion((v) => v + 1)} />
       <PreviewSection person={person} permissions={permissions} version={version} />
 
-      {confirm === 'role' && chosenRole && (
+      {confirm === 'role' && (
         <ConfirmModal
-          title={`Change ${name}'s role?`}
+          title={`Change ${name}'s roles?`}
           body={
             <p>
-              From <strong>{person.roleName ?? 'no role'}</strong> to <strong>{chosenRole.name}</strong>. What they can do changes immediately, even if they are signed in.
+              From <strong>{person.roles.map((r) => r.name).join(', ') || 'no roles'}</strong> to{' '}
+              <strong>
+                {roles
+                  .filter((r) => chosenIds.includes(r.id))
+                  .map((r) => r.name)
+                  .join(', ') || 'no roles'}
+              </strong>
+              . What they can do changes immediately, even if they are signed in.
             </p>
           }
-          confirmLabel="Change role"
+          confirmLabel="Change roles"
           busy={busy}
           error={actionError}
           onCancel={close}
           onConfirm={() =>
             run(async () => {
-              onChanged(await adminApi.updateUser(person.id, { role: chosenRole.id }));
-              setMessage(`Role changed to ${chosenRole.name}.`);
+              const updated = await adminApi.updateUser(person.id, { roleIds: chosenIds });
+              onChanged(updated);
+              setRoleIds(updated.roles.map((r) => r.id));
+              setMessage(
+                `Roles updated (${chosenIds.length === 0 ? 'no roles' : `${chosenIds.length} role${chosenIds.length === 1 ? '' : 's'}`}).`,
+              );
               setVersion((v) => v + 1);
             })
           }
@@ -492,7 +509,7 @@ export function ExceptionsSection({ person, permissions, onChanged }: { person: 
       </SectionTitle>
       {loading && <p className="text-sm text-gray-500">Loading…</p>}
       {error && <Notice tone="error">{error}</Notice>}
-      {!loading && items.length === 0 && <p className="text-sm text-gray-500">None. This person has exactly what their role gives them.</p>}
+      {!loading && items.length === 0 && <p className="text-sm text-gray-500">None. This person has exactly what their roles give them.</p>}
       {items.length > 0 && (
         <ul className="border border-gray-200 rounded-xl divide-y divide-gray-100">
           {items.map((i) => (
@@ -552,8 +569,9 @@ export function ExceptionsSection({ person, permissions, onChanged }: { person: 
 }
 
 const SOURCE_TEXT: Record<string, string> = {
-  role: 'their role',
+  role: 'their roles',
   override: 'a personal exception',
+  'baseline (employee)': 'their standard employee access',
 };
 
 const NO_ACCESS_TEXT: Record<string, string> = {

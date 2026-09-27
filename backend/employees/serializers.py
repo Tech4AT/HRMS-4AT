@@ -348,12 +348,14 @@ class EmployeeWriteSerializer(serializers.Serializer):
             email=email,
             first_name=validated["first_name"],
             last_name=validated.get("last_name", ""),
-            role=Role.objects.filter(name="Employee").first(),
         )
         user.set_unusable_password()
         status = validated.get("status", EmployeeStatus.ACTIVE)
         user.is_active = status != EmployeeStatus.EXITED
         user.save()
+        employee_role = Role.objects.filter(name="Employee").first()
+        if employee_role is not None:
+            user.roles.add(employee_role)
         exit_date = validated.get("date_of_exit")
         if status == EmployeeStatus.EXITED and exit_date is None:
             exit_date = date.today()

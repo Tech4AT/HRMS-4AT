@@ -92,8 +92,8 @@ class FictionalOrg:
                 first_name=first,
                 last_name=last,
                 password=hashed,
-                role=Role.objects.get(name=role_name),
             )
+            user.roles.add(Role.objects.get(name=role_name))
             people[key] = Employee.objects.create(
                 user=user,
                 employee_code=f"VFY-{key.upper()}",
@@ -107,12 +107,12 @@ class FictionalOrg:
                 people[key].save(update_fields=["manager"])
 
         # Not part of the org chart: the account the lockout demo hammers.
-        User.objects.create(
+        lou = User.objects.create(
             username=f"vfy.lou@{EMAIL_DOMAIN}",
             email=f"vfy.lou@{EMAIL_DOMAIN}",
             password=hashed,
-            role=Role.objects.get(name="Employee"),
         )
+        lou.roles.add(Role.objects.get(name="Employee"))
         return cls(people, hashed)
 
     def email(self, key):
@@ -136,8 +136,7 @@ class FictionalOrg:
             role=role, permission=Permission.objects.get(code=code), scope_tier=tier
         )
         user = self.people[key].user
-        user.role = role
-        user.save(update_fields=["role"])
+        user.roles.set([role])
         return role
 
     def give_no_permissions(self, key):
@@ -150,8 +149,7 @@ class FictionalOrg:
         self._role_counter += 1
         role = Role.objects.create(name=f"VFY empty #{self._role_counter}", archetype="employee")
         user = self.people[key].user
-        user.role = role
-        user.save(update_fields=["role"])
+        user.roles.set([role])
         return role
 
     def add_user_without_permissions(self, key="ned"):
@@ -164,12 +162,12 @@ class FictionalOrg:
         self._role_counter += 1
         email = f"vfy.{key}@{EMAIL_DOMAIN}"
         role = Role.objects.create(name=f"VFY empty #{self._role_counter}", archetype="employee")
-        User.objects.create(
+        outsider = User.objects.create(
             username=email,
             email=email,
             first_name="Ned",
             last_name="Noemp",
             password=self.hashed_password,
-            role=role,
         )
+        outsider.roles.add(role)
         return key

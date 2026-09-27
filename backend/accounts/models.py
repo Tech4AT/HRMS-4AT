@@ -162,9 +162,11 @@ class CompatUserManager(UserManager):
 
 
 class User(AbstractUser):
-    """Single role per user via a direct FK (a DB constraint, not a convention) —
-    see docs/ARCHITECTURE.md primitive 2 for why this isn't M2M. Per-individual
-    customization goes through UserPermissionOverride below, not multiple roles.
+    """Zero, one, or many roles per user via a ManyToMany to Role — see
+    docs/MULTI-ROLE-TESTS.md §0 for the resolution contract (union across
+    active roles, broadest tier wins; overrides always win; employee baseline
+    is the floor). Per-individual customization goes through
+    UserPermissionOverride below.
 
     `email` is overridden unique — the frontend contract logs in with
     `{email, password}` (frontend/src/app/api/auth/login/route.ts), so the
@@ -172,8 +174,13 @@ class User(AbstractUser):
     AbstractUser's non-unique default."""
 
     email = models.EmailField(unique=True)
-    role = models.ForeignKey(
-        Role, null=True, blank=True, on_delete=models.PROTECT, related_name="users"
+    roles = models.ManyToManyField(
+        Role,
+        blank=True,
+        related_name="users",
+        help_text="Roles this user holds. Effective access is the union "
+        "across active roles (broadest scope tier wins); see "
+        "core.scope._resolve_effective_scope.",
     )
     must_change_password = models.BooleanField(
         default=False,

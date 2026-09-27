@@ -7,7 +7,7 @@ import {
   type Permission,
   type Role,
 } from '@/lib/admin/api';
-import { Badge, Button, ConfirmModal, Notice, errorText } from './ui';
+import { Badge, Button, ConfirmModal, Drawer, Notice, errorText } from './ui';
 import { RoleBuilder } from './RoleBuilder';
 
 // The seeded starter roles show an "Inbuilt" tag, like Keka's system roles.
@@ -35,7 +35,7 @@ function roleScope(role: Role): { head: string; sub: string; global: boolean } {
     : { head: 'Scoped', sub: 'By team / department', global: false };
 }
 
-function UserChip({ user, color }: { user: AdminUser; color: string }) {
+function UserChip({ user, color, onRemove }: { user: AdminUser; color: string; onRemove?: () => void }) {
   const name = `${user.firstName} ${user.lastName}`.trim() || user.email;
   return (
     <span className="inline-flex items-center gap-1.5 bg-gray-100 rounded-full pl-1 pr-2.5 py-0.5 text-xs text-gray-700 max-w-[12rem]">
@@ -43,6 +43,15 @@ function UserChip({ user, color }: { user: AdminUser; color: string }) {
         {initials(user)}
       </span>
       <span className="truncate">{name}</span>
+      {onRemove && (
+        <button
+          aria-label={`Remove ${name} from role`}
+          onClick={onRemove}
+          className="text-gray-400 hover:text-red-600 font-bold leading-none"
+        >
+          ×
+        </button>
+      )}
     </span>
   );
 }
@@ -60,6 +69,7 @@ export function RolesTab() {
   const [opBusy, setOpBusy] = useState(false);
   const [opError, setOpError] = useState<string | null>(null);
   const [builder, setBuilder] = useState<{ role: Role | null } | null>(null);
+  const [addUsersTarget, setAddUsersTarget] = useState<Role | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -86,8 +96,9 @@ export function RolesTab() {
   const usersByRole = useMemo(() => {
     const map = new Map<number, AdminUser[]>();
     for (const u of users) {
-      if (u.role == null) continue;
-      (map.get(u.role) ?? map.set(u.role, []).get(u.role)!).push(u);
+      for (const r of u.roles) {
+        (map.get(r.id) ?? map.set(r.id, []).get(r.id)!).push(u);
+      }
     }
     return map;
   }, [users]);
@@ -115,6 +126,19 @@ export function RolesTab() {
     try {
       await adminApi.deleteRole(role.id);
       setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      setOpError(errorText(e));
+    } finally {
+      setOpBusy(false);
+    }
+  };
+
+  const removeUserFromRole = async (role: Role, user: AdminUser) => {
+    setOpBusy(true);
+    setOpError(null);
+    try {
+      await adminApi.removeUsersFromRole(role.id, [user.id]);
       await load();
     } catch (e) {
       setOpError(errorText(e));
@@ -195,7 +219,12 @@ export function RolesTab() {
                   <div className="text-sm text-gray-600 mb-1.5">Added users ({roleUsers.length})</div>
                   <div className="flex flex-wrap gap-1.5">
                     {roleUsers.slice(0, 5).map((u, i) => (
-                      <UserChip key={u.id} user={u} color={AVATAR_COLORS[i % AVATAR_COLORS.length]} />
+                      <UserChip
+                        key={u.id}
+                        user={u}
+                        color={AVATAR_COLORS[i % AVATAR_COLORS.length]}
+                        onRemove={() => removeUserFromRole(role, u)}
+                      />
                     ))}
                     {roleUsers.length > 5 && (
                       <span className="text-xs text-gray-500 self-center">+{roleUsers.length - 5} more</span>
@@ -233,6 +262,17 @@ export function RolesTab() {
                           }}
                         >
                           Edit
+                        </button>
+                        <button
+                          role="menuitem"
+                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          onClick={() => {
+                            setMenuId(null);
+                            setOpError(null);
+                            setAddUsersTarget(role);
+                          }}
+                        >
+                          Add users
                         </button>
                         <button
                           role="menuitem"
@@ -321,7 +361,103 @@ export function RolesTab() {
           }}
         />
       )}
+
+      {addUsersTarget && (
+        <AddUsersPanel
+          role={addUsersTarget}
+          users={users}
+          onClose={() => setAddUsersTarget(null)}
+          onSaved={async () => {
+            setAddUsersTarget(null);
+            await load();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function AddUsersPanel({
+  role,
+  users,
+  onClose,
+  onSaved,
+}: {
+  role: Role;
+  users: AdminUser[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const memberIds = useMemo(
+    () =>
+      new Set(
+        users.filter((u) => u.roles.some((r) => r.id === role.id)).map((u) => u.id),
+      ),
+    [users, role.id],
+  );
+  const candidates = users.filter(
+    (u) =>
+      !memberIds.has(u.id) &&
+      (`${u.firstName} ${u.lastName} ${u.email}`.toLowerCase().includes(search.trim().toLowerCase())),
+  );
+
+  const toggle = (id: number) =>
+    setSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+
+  const save = async () => {
+    if (selected.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi.addUsersToRole(role.id, selected);
+      await onSaved();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Drawer title={`Add users — ${role.name}`} subtitle={`${memberIds.size} already hold this role`} onClose={onClose}>
+      <div className="space-y-3">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search people by name or email…"
+          aria-label="Search people"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        />
+        {error && <Notice tone="error">{error}</Notice>}
+        <div className="space-y-1.5 max-h-80 overflow-y-auto border border-gray-200 rounded-lg p-2">
+          {candidates.map((u) => (
+            <label key={u.id} className="flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-gray-50">
+              <input
+                type="checkbox"
+                checked={selected.includes(u.id)}
+                onChange={() => toggle(u.id)}
+                aria-label={`${u.firstName} ${u.lastName}`.trim() || u.email}
+              />
+              <span className="text-gray-900">
+                {`${u.firstName} ${u.lastName}`.trim() || u.email}
+              </span>
+              <span className="text-xs text-gray-400 truncate">{u.email}</span>
+            </label>
+          ))}
+          {candidates.length === 0 && (
+            <p className="text-sm text-gray-500 px-2 py-1">Everyone is already in this role.</p>
+          )}
+        </div>
+        <Button variant="primary" disabled={busy || selected.length === 0} onClick={save}>
+          {busy ? 'Adding…' : `Add ${selected.length === 0 ? '' : `${selected.length} `}user${selected.length === 1 ? '' : 's'}`}
+        </Button>
+      </div>
+    </Drawer>
   );
 }
 
