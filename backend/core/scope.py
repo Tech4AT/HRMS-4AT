@@ -14,7 +14,7 @@ from django.db import connection
 from django.db.models import Q, QuerySet
 
 from accounts.models import RolePermission, UserPermissionOverride
-from core.enums import ScopeTier
+from core.enums import RoleArchetype, ScopeTier
 from core.registry import registered_permissions
 from employees.models import Employee
 
@@ -31,6 +31,40 @@ def baseline_self_permissions() -> frozenset:
         code
         for code, spec in registered_permissions().items()
         if spec.default_grants.get("Employee") == ScopeTier.SELF
+    )
+
+
+# Broadest-to-narrowest scope order for the multi-role tier union
+# (docs/MULTI-ROLE-TESTS.md §0): SELF < MANAGER < TEAM < DEPARTMENT <
+# LOCATION < LEGAL_ENTITY < ALL. The ONLY new logic in multi-role RBAC is
+# that the role layer takes the broadest tier across the user's ACTIVE
+# roles; the override layer (always wins) and the baseline layer (SELF
+# floor for employees) are unchanged from single-role.
+_TIER_RANK = {
+    ScopeTier.SELF: 0,
+    ScopeTier.MANAGER: 1,
+    ScopeTier.TEAM: 2,
+    ScopeTier.DEPARTMENT: 3,
+    ScopeTier.LOCATION: 4,
+    ScopeTier.LEGAL_ENTITY: 5,
+    ScopeTier.ALL: 6,
+}
+
+
+def _active_roles(user):
+    """The user's roles that contribute grants (is_active=True). Prefetches
+    when the caller already did; otherwise one small query."""
+    return user.roles.filter(is_active=True)
+
+
+def _role_grant_tiers(user, permission_code: str) -> list:
+    """Scope tiers of every ACTIVE role of `user` granting `permission_code`."""
+    return list(
+        RolePermission.objects.filter(
+            role__in=_active_roles(user),
+            role__is_active=True,
+            permission__code=permission_code,
+        ).values_list("scope_tier", flat=True)
     )
 
 
@@ -73,8 +107,10 @@ def resolve_employee_scope(user, permission_code: str) -> QuerySet:
 
 def _resolve_effective_scope(user, permission_code: str):
     """A UserPermissionOverride on this exact (user, permission) always wins over
-    the role's own grant — whether that means a wider scope, a narrower one, or
-    an explicit denial (is_granted=False).
+    the roles' own grants — whether that means a wider scope, a narrower one, or
+    an explicit denial (is_granted=False). Otherwise the effective tier is the
+    BROADEST tier among the user's ACTIVE roles granting the code
+    (docs/MULTI-ROLE-TESTS.md §0); inactive roles contribute nothing.
 
     Memoized on the `user` instance for the lifetime of the request: DRF's
     JWTAuthentication loads a fresh User instance per request (it isn't cached
@@ -99,18 +135,15 @@ def _resolve_effective_scope(user, permission_code: str):
         cache[permission_code] = result
         return result
 
-    if user.role_id is None:
+    roles = getattr(user, "roles", None)
+    if roles is None or not roles.exists():
         result = _baseline_or_deny(user, permission_code)
         cache[permission_code] = result
         return result
 
-    role_permission = (
-        RolePermission.objects.select_related("permission")
-        .filter(role_id=user.role_id, role__is_active=True, permission__code=permission_code)
-        .first()
-    )
-    if role_permission is not None:
-        result = (role_permission.scope_tier, True)
+    tiers = _role_grant_tiers(user, permission_code)
+    if tiers:
+        result = (max(tiers, key=lambda t: _TIER_RANK[t]), True)
     else:
         result = _baseline_or_deny(user, permission_code)
     cache[permission_code] = result
@@ -146,35 +179,45 @@ def explain_permission(user, permission_code: str) -> dict:
         }
     baseline = {"granted": True, "tier": ScopeTier.SELF, "source": "baseline (employee)"}
     is_baseline = permission_code in baseline_self_permissions() and _has_employee_record(user)
-    if user.role_id is None:
-        return baseline if is_baseline else {"granted": False, "tier": None, "source": "none"}
-    grant = (
-        RolePermission.objects.filter(role_id=user.role_id, permission__code=permission_code)
-        .select_related("role")
-        .first()
+    tiers = _role_grant_tiers(user, permission_code)
+    if tiers:
+        return {
+            "granted": True,
+            "tier": max(tiers, key=lambda t: _TIER_RANK[t]),
+            "source": "role",
+        }
+    if is_baseline:
+        return baseline
+    _staff = (
+        RolePermission.objects.filter(
+            role__in=user.roles.all(),
+            permission__code=permission_code,
+        ).exists()
+        if getattr(user, "roles", None) is not None
+        else False
     )
-    if grant is None or not grant.role.is_active:
-        if is_baseline:
-            return baseline
-        source = "none" if grant is None else "role (inactive)"
-        return {"granted": False, "tier": None, "source": source}
-    return {"granted": True, "tier": grant.scope_tier, "source": "role"}
+    source = "role (inactive)" if _staff else "none"
+    return {"granted": False, "tier": None, "source": source}
 
 
 def user_effective_permissions(user) -> set:
     """The flat set of permission codes `user` holds at all, regardless of
-    scope tier — role grants plus granted overrides, minus denied overrides.
+    scope tier — the union across all ACTIVE roles' codes, plus granted
+    overrides, plus the employee baseline, minus denied overrides
+    (docs/MULTI-ROLE-TESTS.md §0).
     This is what `GET /users/me` reports as `permissions` (docs/IMPLEMENTATION-
     PLAN.md's contract); it is not scope-filtered because scope only matters
     once you're asking "on whom," not "can you at all.\" """
-    role_codes = set()
-    if user.role_id is not None:
+    roles = getattr(user, "roles", None)
+    if roles is not None:
         # A deactivated role grants nothing (overrides below still apply).
         role_codes = set(
-            RolePermission.objects.filter(role_id=user.role_id, role__is_active=True).values_list(
-                "permission__code", flat=True
-            )
+            RolePermission.objects.filter(
+                role__in=roles.all(), role__is_active=True
+            ).values_list("permission__code", flat=True)
         )
+    else:
+        role_codes = set()
 
     overrides = list(UserPermissionOverride.objects.filter(user=user).select_related("permission"))
     granted = {o.permission.code for o in overrides if o.is_granted}
@@ -185,6 +228,44 @@ def user_effective_permissions(user) -> set:
     baseline = set(baseline_self_permissions()) if _has_employee_record(user) else set()
 
     return (role_codes | granted | baseline) - denied
+
+
+# Most-privileged-first rank for the deterministic primary archetype
+# (docs/MULTI-ROLE-TESTS.md § "Primary role / archetype"). The RoleArchetype
+# enum only knows employee/admin/superadmin, so the legacy starter names
+# finance/manager slot in as tie-breaks between admin and plain employee.
+_ARCHETYPE_RANK = {
+    RoleArchetype.SUPERADMIN: 5,
+    RoleArchetype.ADMIN: 4,
+}
+
+
+def _role_privilege_rank(role) -> int:
+    rank = _ARCHETYPE_RANK.get(getattr(role, "archetype", None), 0)
+    if rank:
+        return rank
+    name = (getattr(role, "name", "") or "").lower().replace(" ", "_")
+    if name == "finance":
+        return 3
+    if name == "manager":
+        return 2
+    return 1
+
+
+def primary_archetype(user) -> str:
+    """One deterministic archetype for a multi-role user: the archetype of
+    the most-privileged ACTIVE role (superadmin > admin > finance-name >
+    manager-name > employee). Zero (active) roles → "employee" if the user
+    has an employee record, else the account default ("employee")."""
+    roles = getattr(user, "roles", None)
+    best = None
+    if roles is not None:
+        for role in roles.filter(is_active=True):
+            if best is None or _role_privilege_rank(role) > _role_privilege_rank(best):
+                best = role
+    if best is not None:
+        return best.archetype
+    return RoleArchetype.EMPLOYEE
 
 
 def resolve_management_scope(user, permission_code: str = "employees.read") -> dict:
@@ -288,12 +369,24 @@ def _recursive_subtree_ids(root_employee_id) -> set:
 # ---------------------------------------------------------------------------
 
 
-def _normalized_role_name(user) -> str:
+def _normalized_role_names(user) -> set:
     """Role names in either convention: his lowercase ('hr_admin') and ours
-    title-cased ('HR Admin'). Normalizing both lets one check serve both."""
-    role = getattr(user, "role", None)
-    name = getattr(role, "name", "") or ""
-    return name.lower().replace(" ", "_")
+    title-cased ('HR Admin'). Normalizing both lets one check serve both.
+    Multi-role: the union across all of the user's roles."""
+    roles = getattr(user, "roles", None)
+    if roles is None:
+        return set()
+    return {
+        (name or "").lower().replace(" ", "_")
+        for name in roles.values_list("name", flat=True)
+    }
+
+
+def _normalized_role_name(user) -> str:
+    """Legacy single-name form (kept for any caller expecting a string):
+    one of the user's role names, or ""."""
+    names = sorted(_normalized_role_names(user))
+    return names[0] if names else ""
 
 
 def is_it_admin(user) -> bool:
@@ -301,7 +394,7 @@ def is_it_admin(user) -> bool:
     onboarding tasks and read the employee directory."""
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    return _normalized_role_name(user) == "it_admin"
+    return "it_admin" in _normalized_role_names(user)
 
 
 def is_hr_admin(user) -> bool:
@@ -313,7 +406,7 @@ def is_hr_admin(user) -> bool:
         return False
     if getattr(user, "is_superuser", False):
         return True
-    return _normalized_role_name(user) == "hr_admin"
+    return "hr_admin" in _normalized_role_names(user)
 
 
 def is_finance(user) -> bool:
@@ -322,7 +415,7 @@ def is_finance(user) -> bool:
     his call sites always test `is_hr_admin or is_finance` explicitly."""
     if not user or not getattr(user, "is_authenticated", False):
         return False
-    return _normalized_role_name(user) == "finance"
+    return "finance" in _normalized_role_names(user)
 
 
 def visible_employee_ids(user, permission_code: str = "employees.read"):
