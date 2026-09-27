@@ -89,7 +89,7 @@ class Command(VerificationCommand):
         for key in ("eve", "maya", "finn"):
             who = self.org.first_name(key)
             v.expect_status(
-                f"{who} ({self.people[key].user.role.name}) cannot manage the structure",
+                f"{who} ({','.join(self.people[key].user.roles.values_list('name', flat=True))}) cannot manage the structure",
                 self.login(v, key).get(f"{API}/org/departments/"),
                 403,
             )
@@ -300,7 +300,7 @@ class Command(VerificationCommand):
         )
         for key in ("maya", "eve", "finn"):
             v.expect_status(
-                f"{self.org.first_name(key)} ({self.people[key].user.role.name}) cannot read them",
+                f"{self.org.first_name(key)} ({','.join(self.people[key].user.roles.values_list('name', flat=True))}) cannot read them",
                 self.login(v, key).get(f"{eli_url}personal/"),
                 403,
             )

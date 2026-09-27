@@ -32,7 +32,7 @@ def _resolve_recipients(request, target: dict):
     if kind == "admins":
         return users.filter(is_superuser=True)
     if kind == "role":
-        return users.filter(role_id=target.get("role_id"))
+        return users.filter(roles__id=target.get("role_id"))
     if kind == "department":
         return users.filter(employee__department_id=target.get("department_id"))
     if kind == "users":

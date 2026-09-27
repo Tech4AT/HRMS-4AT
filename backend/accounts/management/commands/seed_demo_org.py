@@ -71,15 +71,14 @@ class Command(BaseCommand):
                     "username": email_for(key),
                     "first_name": first,
                     "last_name": last,
-                    "role": role,
                 },
             )
             if created:
                 user.set_password(PASSWORD)
                 user.save(update_fields=["password"])
-            elif user.role_id != role.pk:
-                user.role = role
-                user.save(update_fields=["role"])
+                user.roles.add(role)
+            elif set(user.roles.values_list("pk", flat=True)) != {role.pk}:
+                user.roles.set([role])
             employee, _ = Employee.objects.update_or_create(
                 user=user,
                 defaults={

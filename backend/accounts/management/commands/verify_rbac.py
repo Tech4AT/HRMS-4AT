@@ -78,7 +78,9 @@ class Command(VerificationCommand):
             {"role": role_id, "permission": self.read_permission_id, "scopeTier": tier},
         )
         v.expect_status(f"admin grants employees.read at tier '{tier}'", grant, 201)
-        assign = admin.patch(f"{API}/users/{self.people[person_key].user_id}/", {"role": role_id})
+        assign = admin.patch(
+            f"{API}/users/{self.people[person_key].user_id}/", {"roleIds": [role_id]}
+        )
         v.expect_status(
             f"admin assigns the role to {self.people[person_key].user.first_name}", assign, 200
         )
@@ -124,12 +126,14 @@ class Command(VerificationCommand):
         v.check("login returns an access token and a refresh token", bool(probe.tokens))
         me = probe.get(f"{API}/users/me").json()["data"]
         v.note(
-            f"/users/me: role={me['roles'][0]['name']}, scope={me['scope']['kind']}, "
-            f"{len(me['permissions'])} permissions"
+            f"/users/me: roles={me['roles']}, archetype={me['archetype']}, "
+            f"scope={me['scope']['kind']}, {len(me['permissions'])} permissions"
         )
         v.check(
             "/users/me reports HR Admin with organisation-wide scope",
-            me["roles"][0]["name"] == "HR Admin" and me["scope"]["kind"] == "org",
+            me["roles"] == ["HR Admin"]
+            and me["archetype"] == "superadmin"
+            and me["scope"]["kind"] == "org",
         )
 
         old_refresh = probe.tokens["refresh"]
@@ -333,7 +337,12 @@ class Command(VerificationCommand):
         v.expect_status("HR Admin can administer roles", hana.get(f"{API}/roles/"), 200)
         v.check(
             "Eve's role is unchanged after her attempt",
-            User.objects.get(pk=self.people["eve"].user_id).role.name == "Employee",
+            list(
+                User.objects.get(pk=self.people["eve"].user_id).roles.values_list(
+                    "name", flat=True
+                )
+            )
+            == ["Employee"],
         )
 
     def _sessions_and_deactivation(self, v):
@@ -401,7 +410,7 @@ class Command(VerificationCommand):
         )
         v.check(
             "a role named in the request body is ignored (roles are roles.manage only)",
-            nia.role.name == "Employee",
+            list(nia.roles.values_list("name", flat=True)) == ["Employee"],
         )
 
         dana_id, eli_id = self.people["dana"].pk, self.people["eli"].pk
@@ -536,8 +545,8 @@ class Command(VerificationCommand):
         hana_id = self.people["hana"].user_id
         finance = Role.objects.get(name="Finance").pk
         v.expect_status(
-            "an admin cannot change their own role (avoids locking everyone out)",
-            hana.patch(f"{API}/users/{hana_id}/", {"role": finance}),
+            "an admin cannot drop their own last roles.manage role (avoids locking everyone out)",
+            hana.patch(f"{API}/users/{hana_id}/", {"roleIds": [finance]}),
             403,
         )
         v.expect_status(

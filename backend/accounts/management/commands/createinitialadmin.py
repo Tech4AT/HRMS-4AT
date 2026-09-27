@@ -43,10 +43,10 @@ class Command(BaseCommand):
             password=password,
             first_name="Admin",
             last_name="",
-            role=hr_admin_role,
             is_staff=True,
             is_superuser=True,
         )
+        user.roles.add(hr_admin_role)
         Employee.objects.create(user=user, employee_code=email.split("@", 1)[0].upper())
 
         self.stdout.write(self.style.SUCCESS(f"Created initial admin: {email}"))
