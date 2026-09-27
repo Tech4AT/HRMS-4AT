@@ -335,3 +335,296 @@ def test_baseline_does_not_apply_to_non_employee():
     so the self-service baseline does not manufacture access for them."""
     user = UserFactory(role=None)  # no EmployeeFactory
     assert not user_has_permission(user, "ess.profile.read")
+
+
+# --- multi-role RBAC (docs/MULTI-ROLE-TESTS.md §A): union across active roles ---
+
+from core.scope import (  # noqa: E402
+    _resolve_effective_scope,
+    baseline_self_permissions,
+    explain_permission,
+    resolve_management_scope,
+)
+
+
+def _role_granting(code, tier, active=True):
+    permission = PermissionFactory(code=code)
+    role = RoleFactory(is_active=active)
+    RolePermissionFactory(role=role, permission=permission, scope_tier=tier)
+    return role
+
+
+def test_a1_single_role_regression():
+    role = _role_granting("employees.read", ScopeTier.TEAM)
+    user = UserFactory(role=role)
+    EmployeeFactory(user=user)
+
+    tier, granted = _resolve_effective_scope(user, "employees.read")
+
+    assert granted is True and tier == ScopeTier.TEAM
+    assert user_has_permission(user, "employees.read") is True
+
+
+def test_a2_no_roles_employee_gets_only_baseline():
+    user = UserFactory(role=None)
+    EmployeeFactory(user=user)
+
+    assert user_effective_permissions(user) == set(baseline_self_permissions())
+    code = next(iter(baseline_self_permissions()))
+    assert _resolve_effective_scope(user, code) == (ScopeTier.SELF, True)
+    assert user_has_permission(user, "roles.manage") is False
+
+
+def test_a3_no_roles_non_employee_gets_nothing():
+    user = UserFactory(role=None)  # no EmployeeFactory
+
+    assert user_effective_permissions(user) == set()
+    assert user_has_permission(user, "ess.profile.read") is False
+    assert _resolve_effective_scope(user, "ess.profile.read") == (None, False)
+
+
+def test_a4_two_roles_broadest_tier_wins():
+    r1 = _role_granting("employees.read", ScopeTier.TEAM)
+    r2 = _role_granting("employees.read", ScopeTier.DEPARTMENT)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.DEPARTMENT, True)
+
+
+def test_a5_two_roles_one_all():
+    r1 = _role_granting("employees.read", ScopeTier.MANAGER)
+    r2 = _role_granting("employees.read", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.ALL, True)
+
+
+def test_a6_two_roles_disjoint_codes():
+    r1 = _role_granting("payroll.read", ScopeTier.ALL)
+    r2 = _role_granting("org.manage", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "payroll.read") == (ScopeTier.ALL, True)
+    assert _resolve_effective_scope(user, "org.manage") == (ScopeTier.ALL, True)
+    assert {"payroll.read", "org.manage"} <= user_effective_permissions(user)
+
+
+def test_a7_broadest_tie_is_idempotent():
+    r1 = _role_granting("employees.read", ScopeTier.DEPARTMENT)
+    r2 = _role_granting("employees.read", ScopeTier.DEPARTMENT)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.DEPARTMENT, True)
+
+
+def test_a8_duplicate_membership_is_one():
+    role = _role_granting("employees.read", ScopeTier.TEAM)
+    user = UserFactory()
+    user.roles.add(role, role)
+    EmployeeFactory(user=user)
+
+    assert user.roles.count() == 1
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.TEAM, True)
+
+
+def test_a9_inactive_role_contributes_nothing():
+    r1 = _role_granting("employees.read", ScopeTier.TEAM, active=True)
+    r2 = _role_granting("employees.read", ScopeTier.ALL, active=False)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.TEAM, True)
+
+
+def test_a10_all_roles_inactive_falls_back():
+    role = _role_granting("employees.write", ScopeTier.ALL, active=False)
+    user = UserFactory()
+    user.roles.add(role)
+    EmployeeFactory(user=user)
+
+    # employees.write is outside the baseline, so this is a clean deny.
+    assert user_has_permission(user, "employees.write") is False
+    assert "employees.write" not in user_effective_permissions(user)
+
+
+def test_a11_self_vs_broader():
+    r1 = _role_granting("ess.profile.read", ScopeTier.SELF)
+    r2 = _role_granting("ess.profile.read", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "ess.profile.read") == (ScopeTier.ALL, True)
+
+
+def test_a12_narrowest_only():
+    role = _role_granting("audit.read", ScopeTier.SELF)
+    user = UserFactory()
+    user.roles.add(role)
+    EmployeeFactory(user=user)
+
+    assert _resolve_effective_scope(user, "audit.read") == (ScopeTier.SELF, True)
+
+
+# --- multi-role RBAC (docs/MULTI-ROLE-TESTS.md §B): override layer over many roles ---
+
+
+def test_b1_deny_beats_every_role():
+    r1 = _role_granting("payroll.read", ScopeTier.ALL)
+    r2 = _role_granting("payroll.read", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="payroll.read"),
+        scope_tier=ScopeTier.ALL,
+        is_granted=False,
+    )
+
+    assert user_has_permission(user, "payroll.read") is False
+    assert "payroll.read" not in user_effective_permissions(user)
+    assert _ids(resolve_employee_scope(user, "payroll.read")) == set()
+
+
+def test_b2_deny_beats_baseline():
+    user = UserFactory(role=None)
+    EmployeeFactory(user=user)
+    assert user_has_permission(user, "ess.profile.read") is True
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="ess.profile.read"),
+        scope_tier=ScopeTier.SELF,
+        is_granted=False,
+    )
+    # The resolver memoizes per user instance for one request; a fresh
+    # instance (like the next request's) sees the new override.
+    user._scope_resolution_cache = {}
+
+    assert user_has_permission(user, "ess.profile.read") is False
+
+
+def test_b3_grant_adds_a_code_no_role_has():
+    role = _role_granting("payroll.read", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(role)
+    EmployeeFactory(user=user)
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="org.manage"),
+        scope_tier=ScopeTier.DEPARTMENT,
+        is_granted=True,
+    )
+
+    assert _resolve_effective_scope(user, "org.manage") == (ScopeTier.DEPARTMENT, True)
+
+
+def test_b4_grant_narrower_than_roles_still_wins():
+    r1 = _role_granting("employees.read", ScopeTier.ALL)
+    r2 = _role_granting("employees.read", ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(r1, r2)
+    EmployeeFactory(user=user)
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="employees.read"),
+        scope_tier=ScopeTier.TEAM,
+        is_granted=True,
+    )
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.TEAM, True)
+
+
+def test_b5_grant_broader_than_roles():
+    role = _role_granting("employees.read", ScopeTier.TEAM)
+    user = UserFactory()
+    user.roles.add(role)
+    EmployeeFactory(user=user)
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="employees.read"),
+        scope_tier=ScopeTier.ALL,
+        is_granted=True,
+    )
+
+    assert _resolve_effective_scope(user, "employees.read") == (ScopeTier.ALL, True)
+
+
+def test_b6_override_source_labels():
+    user = UserFactory(role=None)
+    EmployeeFactory(user=user)
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="org.manage"),
+        scope_tier=ScopeTier.ALL,
+        is_granted=True,
+    )
+    UserPermissionOverrideFactory(
+        user=user,
+        permission=PermissionFactory(code="payroll.read"),
+        scope_tier=ScopeTier.SELF,
+        is_granted=False,
+    )
+
+    assert explain_permission(user, "org.manage")["source"] == "override"
+    assert explain_permission(user, "payroll.read")["source"] == "override (deny)"
+
+
+# --- multi-role RBAC (docs/MULTI-ROLE-TESTS.md §C): scope queryset ---
+
+
+def test_c1_two_roles_scope_is_broadest():
+    r_team = _role_granting("employees.read", ScopeTier.TEAM)
+    r_dept = _role_granting("employees.read", ScopeTier.DEPARTMENT)
+    department = DepartmentFactory()
+    other_department = DepartmentFactory()
+    user = UserFactory()
+    user.roles.add(r_team, r_dept)
+    caller = EmployeeFactory(user=user, department=department)
+    peer = EmployeeFactory(department=department)
+    outsider = EmployeeFactory(department=other_department)
+
+    assert _ids(resolve_employee_scope(user, "employees.read")) == {caller.pk, peer.pk}
+    assert outsider.pk not in _ids(resolve_employee_scope(user, "employees.read"))
+
+
+def test_c2_any_role_at_all_sees_everyone_without_own_record():
+    r1 = _role_granting("employees.read", ScopeTier.TEAM)
+    r2 = _role_granting("employees.read", ScopeTier.ALL)
+    user = UserFactory()  # no EmployeeFactory
+    user.roles.add(r1, r2)
+    others = [EmployeeFactory() for _ in range(2)]
+
+    assert _ids(resolve_employee_scope(user, "employees.read")) == {e.pk for e in others}
+
+
+def test_c3_no_grant_is_none():
+    user = UserFactory(role=None)
+    EmployeeFactory(user=user)
+    PermissionFactory(code="employees.write")
+
+    assert _ids(resolve_employee_scope(user, "employees.write")) == set()
+
+
+def test_c4_management_scope_uses_broadest_union_tier():
+    r_team = _role_granting("employees.read", ScopeTier.TEAM)
+    r_dept = _role_granting("employees.read", ScopeTier.DEPARTMENT)
+    department = DepartmentFactory()
+    user = UserFactory()
+    user.roles.add(r_team, r_dept)
+    caller = EmployeeFactory(user=user, department=department)
+    peer = EmployeeFactory(department=department)
+
+    scope = resolve_management_scope(user)
+
+    assert scope["kind"] == "team"
+    assert set(scope["employeeIds"]) == {str(caller.pk), str(peer.pk)}
