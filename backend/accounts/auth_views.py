@@ -37,7 +37,7 @@ from accounts.serializers import (
 )
 from accounts.services import revoke_all_sessions
 from audit.service import write_audit
-from core.scope import resolve_management_scope, user_effective_permissions
+from core.scope import primary_archetype, resolve_management_scope, user_effective_permissions
 
 User = get_user_model()
 
@@ -185,8 +185,13 @@ class MeView(APIView):
 
     def get(self, request):
         user = request.user
-        role = user.role
-        roles = [{"name": role.name, "archetype": role.archetype}] if role else []
+        # Multi-role (docs/MULTI-ROLE-TESTS.md D2): `roles` is the sorted
+        # list of ACTIVE role names, `archetype` the single deterministic
+        # primary (most-privileged active role; employee-if-employee-record
+        # when holding none), `permissions` the flat effective set.
+        roles = sorted(
+            user.roles.filter(is_active=True).values_list("name", flat=True)
+        )
 
         return Response(
             {
@@ -197,6 +202,7 @@ class MeView(APIView):
                     "firstName": user.first_name,
                     "lastName": user.last_name,
                     "roles": roles,
+                    "archetype": primary_archetype(user),
                     "permissions": sorted(user_effective_permissions(user)),
                     "scope": resolve_management_scope(user),
                     "mustChangePassword": user.must_change_password,
