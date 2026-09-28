@@ -12,17 +12,11 @@ export default function NamingCodesPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Naming / Codes"
-        subtitle="Code conventions for every master (defaults — no backend yet, not saved)."
-      />
+      <PageHeader title="Naming / Codes" />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
         <div className="px-5 py-3 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-900">Prefix & sequence conventions</h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Examples: IN-LE-01, BU-PRD, DEPT-ENG.
-          </p>
         </div>
         <div className="px-5 py-4 space-y-4">
           {namingCodeDefaults.map((f) => (

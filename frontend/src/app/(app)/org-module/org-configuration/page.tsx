@@ -12,17 +12,11 @@ export default function OrgConfigurationPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Org Configuration"
-        subtitle="Top-level hierarchy configuration (defaults — no backend yet, not saved)."
-      />
+      <PageHeader title="Organization Configuration" />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
         <div className="px-5 py-3 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-900">Hierarchy configuration</h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Legal entity → BU → location / department → team → position → employee
-          </p>
         </div>
         <div className="px-5 py-4 space-y-4">
           {orgConfigurationDefaults.map((f) => (
@@ -65,7 +59,7 @@ export default function OrgConfigurationPage() {
               type="button"
               onClick={() => {
                 // eslint-disable-next-line no-console
-                console.log('[org-module stub] Org Configuration saved (no persistence)');
+                console.log('[org-module stub] Organization Configuration saved (no persistence)');
                 setSaved(true);
               }}
               className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"

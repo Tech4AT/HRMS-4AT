@@ -36,7 +36,6 @@ export default function PositionChangesPage() {
     <OrgChangeSection
       changeType="position_change"
       title="Position Changes"
-      subtitle="Moves between approved seats with effective dates (live from the org-changes log)."
       logLabel="Log position change"
       toField="position_id"
       toLabel="To (position)"

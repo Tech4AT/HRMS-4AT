@@ -36,7 +36,6 @@ export default function DeptTransfersPage() {
     <OrgChangeSection
       changeType="dept_transfer"
       title="Department Transfers"
-      subtitle="Moves between departments with effective dates (live from the org-changes log)."
       logLabel="Log transfer"
       toField="department_id"
       toLabel="To (department)"

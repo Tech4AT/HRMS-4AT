@@ -50,10 +50,7 @@ export default function NewJoinersPage() {
 
   return (
     <div>
-      <PageHeader
-        title="New Joiners"
-        subtitle="Day-one joiners moving into onboarding (live onboarding records)."
-      />
+      <PageHeader title="New Joiners" />
 
       {loadFailed ? (
         <div className="mb-4 flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">

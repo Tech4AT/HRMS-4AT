@@ -98,10 +98,7 @@ export default function OnboardingPage() {
   return (
     <div>
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <PageHeader
-          title="Onboarding"
-          subtitle="New-joiner progress against live checklists (task updates save through the real endpoints)."
-        />
+        <PageHeader title="Onboarding" />
       </div>
 
       {loadFailed ? (

@@ -71,7 +71,6 @@ export default function PositionsPage() {
     () => (
       <MasterTable<PositionRow>
         title="Positions"
-        subtitle="Approved seats from the positions registry — a seat exists even when vacant (live reads; add/edit not yet wired)."
         rows={rows}
         fields={[]}
         addLabel="Add position"

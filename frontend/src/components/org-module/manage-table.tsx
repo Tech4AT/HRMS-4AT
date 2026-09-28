@@ -172,7 +172,7 @@ export function ManageTable<T extends { id: string }>({
   onDeactivate,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   columns: ManageColumn<T>[];
   rows: T[];
   fields: ManageField[];
@@ -240,7 +240,7 @@ export function ManageTable<T extends { id: string }>({
   if (loading) {
     return (
       <div>
-        <PageHeader title={title} subtitle="Loading…" />
+        <PageHeader title={title} />
         <div className="bg-white border border-slate-200 rounded-xl p-5 animate-pulse">
           <div className="h-4 w-1/3 bg-slate-100 rounded" />
           <div className="mt-3 space-y-2">

@@ -25,7 +25,7 @@ export interface IdOption {
 interface OrgChangeSectionProps {
   changeType: OrgChangeType;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   logLabel: string;
   /** Payload key carrying the "to" id, e.g. department_id. */
   toField: string;

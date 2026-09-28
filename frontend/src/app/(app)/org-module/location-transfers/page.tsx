@@ -36,7 +36,6 @@ export default function LocationTransfersPage() {
     <OrgChangeSection
       changeType="location_transfer"
       title="Location Transfers"
-      subtitle="Moves between locations with effective dates (live from the org-changes log)."
       logLabel="Log transfer"
       toField="location_id"
       toLabel="To (location)"

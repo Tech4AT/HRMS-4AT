@@ -29,7 +29,6 @@ export default function ManagerChangesPage() {
     <OrgChangeSection
       changeType="manager_change"
       title="Manager Changes"
-      subtitle="Reporting-line moves with effective dates (live from the org-changes log)."
       logLabel="Log manager change"
       toField="manager_id"
       toLabel="To (new manager)"
