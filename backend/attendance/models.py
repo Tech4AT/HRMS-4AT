@@ -196,6 +196,16 @@ class PolicySettings(models.Model):
         "leave.LeaveType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
 
+    # `comp_off_leave_type` (added post-Step-7, resolving the "how is a
+    # credited Comp Off applied" open decision): symmetric with
+    # `penalty_leave_type` above — one configurable leave type a credit lands
+    # in as real `LeaveBalance.allocated`, nullable until HR configures one
+    # (accrual is then computed and tallied, but nothing is actually credited
+    # until a type is set — see `comp_off.py`).
+    comp_off_leave_type = models.ForeignKey(
+        "leave.LeaveType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
     no_attendance_enabled = models.BooleanField(default=True)
     no_attendance_leave_days_deducted = models.DecimalField(
         max_digits=4, decimal_places=1, default=1
@@ -315,3 +325,25 @@ class PenalisationRecord(models.Model):
 
     def __str__(self):
         return f"{self.employee_id} @ {self.absent_date} ({self.status})"
+
+
+class CompOffAccrualState(models.Model):
+    """PLAN.md Step 7 — resolves the "when is Comp Off accrual evaluated"
+    open decision: at every check-out (`views.py`'s `check_out`), not on a
+    schedule — `overtime_minutes` is already computed right there (timing.py),
+    so there's no separate sweep to write. One row per employee holds the
+    running total of overtime minutes not yet converted into a Comp Off;
+    whenever it crosses `PolicySettings.
+    comp_off_accrual_overtime_hours_per_comp_off` (converted to minutes), one
+    Comp Off is credited per full threshold crossed and that many minutes are
+    subtracted — any remainder carries forward rather than resetting to 0, so
+    partial overtime is never silently lost. See `comp_off.py`."""
+
+    employee = models.OneToOneField(
+        "employees.Employee", on_delete=models.CASCADE, related_name="comp_off_accrual_state"
+    )
+    uncredited_overtime_minutes = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.employee_id} ({self.uncredited_overtime_minutes}m uncredited)"

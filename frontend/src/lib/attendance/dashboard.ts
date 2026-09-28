@@ -1,45 +1,50 @@
-/** Sample (frontend-only) data behind the Attendance & Leave Dashboard tab.
- *  There's no backend yet for team/org-wide attendance analytics (the real
- *  attendance API only covers the logged-in employee's own history - see
- *  lib/api/attendance.ts), so this derives a stable, realistic-looking
- *  snapshot from the shared sample roster (sample-employees.ts) instead. Real
- *  signals we do have - pending approvals, active penalisations - are pulled
- *  in separately by the dashboard component itself via `leaveApi`/
- *  `attendanceApi`/`penalisationApi`, not from here. */
+/** Real, scoped data behind the Attendance & Leave Dashboard tab (PLAN.md
+ *  Step 9). Aggregates the rows `teamAttendanceApi.getDaily()` returns (one
+ *  row per employee per day, already scoped server-side to the caller's
+ *  manageable roster) into the shapes the Dashboard/Leaderboard render.
+ *  Replaces the fully-synthetic per-employee-per-day generator that used to
+ *  live here (`sample-employees.ts`, now removed) - the date-utility
+ *  functions below (`toLocalISODate`, `lastNDays`, `periodDays`) are the only
+ *  parts of the old module that had nothing to do with the fake roster and
+ *  so didn't need replacing. */
 
-import { SAMPLE_EMPLOYEES, type SampleEmployee } from './sample-employees';
+import { isoToHM } from './view';
+import type { TeamAttendanceDayView } from '@/lib/api/teamAttendance';
 
-export type DailyStatus = 'present' | 'late' | 'on_leave' | 'wfh' | 'absent';
+export type DailyStatus = 'present' | 'late' | 'on_leave' | 'wfh' | 'absent' | 'day_off' | 'not_marked';
 
 export interface EmployeeDayStatus {
-  employee: SampleEmployee;
+  employeeId: string;
+  employeeName: string;
+  department: string | null;
   status: DailyStatus;
   checkIn?: string;
   leaveType?: string;
 }
 
-const LEAVE_TYPES_FOR_SAMPLE = ['Sick Leave', 'Annual Leave', 'Casual Leave'];
+/** Maps the real day-view's richer status/facts down to the Dashboard's
+ *  simpler display buckets. **Judgment calls, flagged as such, not dictated
+ *  by any existing UI** (the old sample data modelled none of this): a
+ *  holiday/weekend buckets as 'day_off' - a new bucket, excluded from
+ *  percentage-of-workforce KPIs rather than counted as an absence, since
+ *  nobody was expected to work; 'not_marked' (today only - a past day with no
+ *  record already resolves to 'absent' server-side) is its own bucket too,
+ *  rather than folded into 'absent', since the day isn't over yet; a WFH day
+ *  always buckets as 'wfh' even if also late, since WFH is the more salient
+ *  signal for an org-wide dashboard. */
+export function statusFor(row: TeamAttendanceDayView): EmployeeDayStatus {
+  const base = { employeeId: row.employee_id, employeeName: row.employee_name, department: row.department };
 
-function seeded(seed: string, mod: number): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return h % mod;
-}
+  if (row.is_holiday || row.is_weekend) return { ...base, status: 'day_off' };
+  if (row.status === 'on_leave') return { ...base, status: 'on_leave', leaveType: row.leave_type_name ?? undefined };
+  if (row.status === 'not_marked') return { ...base, status: 'not_marked' };
 
-/** Deterministic per-employee, per-day status - stable across renders and
- *  reloads (no randomness that would make the dashboard flicker), but varies
- *  day to day so a weekly trend looks like real attendance data. */
-export function statusFor(employee: SampleEmployee, dateStr: string): EmployeeDayStatus {
-  const roll = seeded(`${employee.id}-${dateStr}`, 100);
-  if (roll < 6) return { employee, status: 'on_leave', leaveType: LEAVE_TYPES_FOR_SAMPLE[seeded(`${employee.id}-${dateStr}-lt`, LEAVE_TYPES_FOR_SAMPLE.length)] };
-  if (roll < 10) return { employee, status: 'absent' };
-  if (roll < 18) return { employee, status: 'wfh' };
-  if (roll < 30) {
-    const totalMinutes = 9 * 60 + 30 + 10 + seeded(`${employee.id}-${dateStr}-late`, 45);
-    return { employee, status: 'late', checkIn: `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}` };
+  const checkIn = row.check_in ? isoToHM(row.check_in) : undefined;
+  if (row.status === 'work_from_home') return { ...base, status: 'wfh', checkIn };
+  if (row.status === 'present' || row.status === 'half_day') {
+    return { ...base, status: (row.late_minutes ?? 0) > 0 ? 'late' : 'present', checkIn };
   }
-  const onTimeMinutes = 9 * 60 + seeded(`${employee.id}-${dateStr}-in`, 25);
-  return { employee, status: 'present', checkIn: `${Math.floor(onTimeMinutes / 60)}:${String(onTimeMinutes % 60).padStart(2, '0')}` };
+  return { ...base, status: 'absent' };
 }
 
 export function toLocalISODate(d: Date): string {
@@ -63,33 +68,25 @@ export interface DayAttendanceAggregate {
   onLeave: number;
   wfh: number;
   absent: number;
+  dayOff: number;
+  notMarked: number;
   total: number;
 }
 
-export function aggregateForDay(dateStr: string, roster: SampleEmployee[] = SAMPLE_EMPLOYEES): DayAttendanceAggregate {
-  const rows = roster.map((e) => statusFor(e, dateStr));
+export function aggregateForDay(rows: TeamAttendanceDayView[], dateStr: string): DayAttendanceAggregate {
+  const statuses = rows.filter((r) => r.attendance_date === dateStr).map(statusFor);
+  const count = (s: DailyStatus) => statuses.filter((x) => x.status === s).length;
   return {
     date: dateStr,
-    present: rows.filter((r) => r.status === 'present').length,
-    late: rows.filter((r) => r.status === 'late').length,
-    onLeave: rows.filter((r) => r.status === 'on_leave').length,
-    wfh: rows.filter((r) => r.status === 'wfh').length,
-    absent: rows.filter((r) => r.status === 'absent').length,
-    total: roster.length,
+    present: count('present'),
+    late: count('late'),
+    onLeave: count('on_leave'),
+    wfh: count('wfh'),
+    absent: count('absent'),
+    dayOff: count('day_off'),
+    notMarked: count('not_marked'),
+    total: statuses.length,
   };
-}
-
-/** A day's hours worked/overtime for one employee - 0/0 if they weren't
- *  working that day (leave or absence). Deterministic, same caveats as
- *  {@link statusFor}. */
-export function dayHours(employeeId: string, dateStr: string, status: DailyStatus): { work: number; overtime: number } {
-  if (status === 'on_leave' || status === 'absent') return { work: 0, overtime: 0 };
-  const base = status === 'wfh' ? 7.5 : status === 'late' ? 7.6 : 8;
-  const variance = seeded(`${employeeId}-${dateStr}-wh`, 21) / 10;
-  const work = Math.round((base - 1 + variance) * 10) / 10;
-  const otRoll = seeded(`${employeeId}-${dateStr}-ot`, 100);
-  const overtime = otRoll < 35 ? Math.round((1 + seeded(`${employeeId}-${dateStr}-otv`, 20) / 10) * 10) / 10 : 0;
-  return { work, overtime };
 }
 
 export type Period = 'thisWeek' | 'lastWeek' | 'thisMonth';
@@ -116,7 +113,9 @@ export function periodDays(period: Period, from = new Date()): string[] {
 }
 
 export interface EmployeePeriodMetrics {
-  employee: SampleEmployee;
+  employeeId: string;
+  employeeName: string;
+  department: string | null;
   totalHours: number;
   overtimeHours: number;
   leaveDays: number;
@@ -124,31 +123,43 @@ export interface EmployeePeriodMetrics {
   presentDays: number;
 }
 
-/** Per-employee totals over an arbitrary set of days - the basis for both
- *  the org-wide averages on the dashboard's KPI cards and the leaderboard
- *  table (most hours worked, most overtime, most leave taken, ...). */
-export function metricsForPeriod(days: string[], roster: SampleEmployee[] = SAMPLE_EMPLOYEES): EmployeePeriodMetrics[] {
-  return roster.map((employee) => {
-    let totalHours = 0;
-    let overtimeHours = 0;
+/** Per-employee totals over whatever rows are passed in (already filtered to
+ *  the desired date range and, for the Leaderboard, department) - the basis
+ *  for both the org-wide averages on the dashboard's KPI cards and the
+ *  leaderboard table. */
+export function metricsForPeriod(rows: TeamAttendanceDayView[]): EmployeePeriodMetrics[] {
+  const byEmployee = new Map<string, TeamAttendanceDayView[]>();
+  for (const row of rows) {
+    const existing = byEmployee.get(row.employee_id);
+    if (existing) existing.push(row);
+    else byEmployee.set(row.employee_id, [row]);
+  }
+
+  return Array.from(byEmployee.values()).map((employeeRows) => {
+    const { employee_id: employeeId, employee_name: employeeName, department } = employeeRows[0];
+    let totalMinutes = 0;
+    let overtimeMinutes = 0;
     let leaveDays = 0;
     let lateCount = 0;
     let presentDays = 0;
-    for (const d of days) {
-      const s = statusFor(employee, d);
+
+    for (const row of employeeRows) {
+      const s = statusFor(row);
       if (s.status === 'on_leave') leaveDays += 1;
       if (s.status === 'late') lateCount += 1;
       if (s.status === 'present' || s.status === 'late' || s.status === 'wfh') {
         presentDays += 1;
-        const { work, overtime } = dayHours(employee.id, d, s.status);
-        totalHours += work;
-        overtimeHours += overtime;
+        totalMinutes += row.working_minutes ?? 0;
+        overtimeMinutes += row.overtime_minutes ?? 0;
       }
     }
+
     return {
-      employee,
-      totalHours: Math.round(totalHours * 10) / 10,
-      overtimeHours: Math.round(overtimeHours * 10) / 10,
+      employeeId,
+      employeeName,
+      department,
+      totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+      overtimeHours: Math.round((overtimeMinutes / 60) * 10) / 10,
       leaveDays,
       lateCount,
       presentDays,
@@ -156,11 +167,22 @@ export function metricsForPeriod(days: string[], roster: SampleEmployee[] = SAMP
   });
 }
 
-/** Org-wide per-day average (work or overtime hours) over a set of days -
- *  what the dashboard's summary KPI cards show. */
-export function avgHoursForPeriod(days: string[], kind: 'work' | 'overtime', roster: SampleEmployee[] = SAMPLE_EMPLOYEES): number {
-  if (days.length === 0 || roster.length === 0) return 0;
-  const metrics = metricsForPeriod(days, roster);
-  const sum = metrics.reduce((acc, m) => acc + (kind === 'work' ? m.totalHours : m.overtimeHours), 0);
-  return Math.round((sum / roster.length / days.length) * 10) / 10;
+/** Org-wide per-employee-per-day average (work or overtime hours) over
+ *  whatever rows are passed in - what the dashboard's summary KPI cards show.
+ *  `employeeCount`/`dayCount` are passed explicitly rather than re-derived
+ *  from `rows`, since an employee with zero rows for the period (shouldn't
+ *  happen, but not asserted here) would otherwise silently vanish from the
+ *  average's denominator. */
+export function avgHoursForPeriod(
+  rows: TeamAttendanceDayView[],
+  kind: 'work' | 'overtime',
+  employeeCount: number,
+  dayCount: number,
+): number {
+  if (employeeCount === 0 || dayCount === 0) return 0;
+  const sumMinutes = rows.reduce(
+    (acc, r) => acc + (kind === 'work' ? (r.working_minutes ?? 0) : (r.overtime_minutes ?? 0)),
+    0,
+  );
+  return Math.round((sumMinutes / 60 / employeeCount / dayCount) * 10) / 10;
 }

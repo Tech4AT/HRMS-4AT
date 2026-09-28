@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { SAMPLE_EMPLOYEES } from '@/lib/attendance/sample-employees';
+import { useEffect, useMemo, useState } from 'react';
+import { teamAttendanceApi, type TeamAttendanceDayView } from '@/lib/api/teamAttendance';
 import { PERIOD_LABEL, metricsForPeriod, periodDays, type EmployeePeriodMetrics, type Period } from '@/lib/attendance/dashboard';
 
 type MetricId = 'hours' | 'overtime' | 'leave' | 'late';
@@ -13,25 +13,53 @@ const METRICS: Record<MetricId, { label: string; unit: string; value: (m: Employ
   late: { label: 'Most Late Arrivals', unit: '', value: (m) => m.lateCount },
 };
 
-const DEPARTMENTS = ['All Departments', ...Array.from(new Set(SAMPLE_EMPLOYEES.map((e) => e.department)))];
+const ALL_DEPARTMENTS = 'All Departments';
 
 /** The dashboard's configurable leaderboard - ranks the team/org by whichever
- *  metric and time period is selected. Built on the same sample per-employee
- *  metrics as the rest of the dashboard (see lib/attendance/dashboard.ts). */
+ *  metric and time period is selected. Real, scoped data as of PLAN.md Step 9
+ *  (`teamAttendanceApi`) - fetches its own range independently of the rest of
+ *  the Dashboard, since the selected period can span up to a full month,
+ *  wider than the Dashboard's own fixed "last 7 days" fetch. */
 export function AttendanceLeaderboard() {
   const [metric, setMetric] = useState<MetricId>('hours');
   const [period, setPeriod] = useState<Period>('thisWeek');
-  const [department, setDepartment] = useState('All Departments');
+  const [department, setDepartment] = useState(ALL_DEPARTMENTS);
+  const [rows, setRows] = useState<TeamAttendanceDayView[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const days = useMemo(() => periodDays(period), [period]);
-  const roster = useMemo(
-    () => (department === 'All Departments' ? SAMPLE_EMPLOYEES : SAMPLE_EMPLOYEES.filter((e) => e.department === department)),
-    [department],
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    teamAttendanceApi
+      .getDaily(days[0], days[days.length - 1])
+      .then((loaded) => {
+        if (active) setRows(loaded);
+      })
+      .catch((e) => {
+        if (active) setLoadError(e instanceof Error ? e.message : 'Failed to load the leaderboard');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [days]);
+
+  const departments = useMemo(
+    () => [ALL_DEPARTMENTS, ...Array.from(new Set(rows.map((r) => r.department).filter((d): d is string => Boolean(d))))],
+    [rows],
   );
+
   const ranked = useMemo(() => {
-    const rows = metricsForPeriod(days, roster);
-    return [...rows].sort((a, b) => METRICS[metric].value(b) - METRICS[metric].value(a));
-  }, [days, roster, metric]);
+    const filtered = department === ALL_DEPARTMENTS ? rows : rows.filter((r) => r.department === department);
+    const metrics = metricsForPeriod(filtered);
+    return [...metrics].sort((a, b) => METRICS[metric].value(b) - METRICS[metric].value(a));
+  }, [rows, department, metric]);
 
   const config = METRICS[metric];
 
@@ -70,7 +98,7 @@ export function AttendanceLeaderboard() {
             onChange={(e) => setDepartment(e.target.value)}
             className="text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
           >
-            {DEPARTMENTS.map((d) => (
+            {departments.map((d) => (
               <option key={d}>{d}</option>
             ))}
           </select>
@@ -89,25 +117,38 @@ export function AttendanceLeaderboard() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {ranked.map((m, i) => (
-              <tr key={m.employee.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-5 py-3 text-sm font-semibold text-slate-400 whitespace-nowrap">{i + 1}</td>
-                <td className="px-5 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{m.employee.name}</td>
-                <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">{m.employee.department}</td>
-                <td className="px-5 py-3 text-sm font-semibold text-indigo-700 whitespace-nowrap">
-                  {config.value(m)}
-                  {config.unit ? ` ${config.unit}` : ''}
+            {loading ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">
+                  Loading…
                 </td>
-                <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">{m.presentDays}</td>
               </tr>
-            ))}
-            {ranked.length === 0 ? (
+            ) : loadError ? (
+              <tr>
+                <td colSpan={5} className="px-5 py-10 text-center text-sm text-red-600">
+                  {loadError}
+                </td>
+              </tr>
+            ) : ranked.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">
                   No employees match this filter.
                 </td>
               </tr>
-            ) : null}
+            ) : (
+              ranked.map((m, i) => (
+                <tr key={m.employeeId} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-5 py-3 text-sm font-semibold text-slate-400 whitespace-nowrap">{i + 1}</td>
+                  <td className="px-5 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{m.employeeName}</td>
+                  <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">{m.department ?? '—'}</td>
+                  <td className="px-5 py-3 text-sm font-semibold text-indigo-700 whitespace-nowrap">
+                    {config.value(m)}
+                    {config.unit ? ` ${config.unit}` : ''}
+                  </td>
+                  <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">{m.presentDays}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

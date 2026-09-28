@@ -78,6 +78,16 @@ class PolicySettingsSerializer(serializers.Serializer):
         pk_field=serializers.CharField(),
         allow_null=True,
     )
+    # Symmetric with penalty_leave_type_id, opposite direction: the leave
+    # type a credited Comp Off actually lands in (`comp_off.py`). Null means
+    # "not configured yet" — the accrual tally still runs, but nothing is
+    # ever credited until HR sets one.
+    comp_off_leave_type_id = serializers.PrimaryKeyRelatedField(
+        source="comp_off_leave_type",
+        queryset=LeaveType.objects.filter(status=LeaveTypeStatus.ACTIVE),
+        pk_field=serializers.CharField(),
+        allow_null=True,
+    )
     no_attendance = RuleConfigSerializer()
     late_arrival = RuleConfigSerializer()
     early_leaving = RuleConfigSerializer()
@@ -96,6 +106,9 @@ class PolicySettingsSerializer(serializers.Serializer):
             "absconding_threshold_days": instance.absconding_threshold_days,
             "penalty_leave_type_id": (
                 str(instance.penalty_leave_type_id) if instance.penalty_leave_type_id else None
+            ),
+            "comp_off_leave_type_id": (
+                str(instance.comp_off_leave_type_id) if instance.comp_off_leave_type_id else None
             ),
             "no_attendance": RuleConfigSerializer(
                 {
@@ -138,6 +151,7 @@ class PolicySettingsSerializer(serializers.Serializer):
         instance.regularisation_grace_days = validated_data["regularisation_grace_days"]
         instance.absconding_threshold_days = validated_data["absconding_threshold_days"]
         instance.penalty_leave_type = validated_data["penalty_leave_type"]
+        instance.comp_off_leave_type = validated_data["comp_off_leave_type"]
 
         na = validated_data["no_attendance"]
         instance.no_attendance_enabled = na["enabled"]

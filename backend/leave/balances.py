@@ -16,6 +16,8 @@ the frontend, not decided here."""
 
 from decimal import Decimal
 
+from django.db import transaction
+
 from audit.service import write_audit
 
 from .models import LeaveBalance
@@ -37,50 +39,65 @@ def get_or_seed_balance(
 
     `actor` is the user to credit in the audit trail — the caller's own user
     for the self-service read path, `None` (a system action, same convention
-    as `provision_logins`) for the scheduled `roll_leave_balances` command."""
-    existing = LeaveBalance.objects.filter(
-        employee=employee, leave_type=leave_type, financial_year=financial_year
-    ).first()
-    if existing is not None:
-        return existing, False
+    as `provision_logins`) for the scheduled `roll_leave_balances` command.
 
-    previous_year = str(int(financial_year) - 1)
-    previous = LeaveBalance.objects.filter(
-        employee=employee, leave_type=leave_type, financial_year=previous_year
-    ).first()
+    Locked (PLAN.md Step 12): two concurrent callers for the same
+    employee/type/year (the self-service read racing the scheduled command,
+    say) could otherwise both compute `carry_forward`/`lapsed` from the same
+    unlocked `previous` row and both write it — a lost update, same class of
+    bug as `views.py`'s balance mutations. `select_for_update()` on `previous`
+    serializes them; the final `get_or_create()` is already race-safe on its
+    own (the model's `UniqueConstraint` + Django's built-in retry-on-
+    `IntegrityError`), which is also what keeps the no-previous-year case
+    (nothing to lock yet) safe without needing a lock of its own."""
+    with transaction.atomic():
+        existing = (
+            LeaveBalance.objects.select_for_update()
+            .filter(employee=employee, leave_type=leave_type, financial_year=financial_year)
+            .first()
+        )
+        if existing is not None:
+            return existing, False
 
-    carry_forward = Decimal("0")
-    if previous is not None:
-        unused = max(previous.available, Decimal("0"))
-        carry_forward = min(unused, leave_type.carry_forward_limit)
-        lapsed = unused - carry_forward
-        if previous.lapsed != lapsed:
-            previous.lapsed = lapsed
-            previous.save(update_fields=["lapsed", "updated_at"])
+        previous_year = str(int(financial_year) - 1)
+        previous = (
+            LeaveBalance.objects.select_for_update()
+            .filter(employee=employee, leave_type=leave_type, financial_year=previous_year)
+            .first()
+        )
+
+        carry_forward = Decimal("0")
+        if previous is not None:
+            unused = max(previous.available, Decimal("0"))
+            carry_forward = min(unused, leave_type.carry_forward_limit)
+            lapsed = unused - carry_forward
+            if previous.lapsed != lapsed:
+                previous.lapsed = lapsed
+                previous.save(update_fields=["lapsed", "updated_at"])
+                write_audit(
+                    actor,
+                    "LeaveBalance.lapsed",
+                    "LeaveBalance",
+                    previous.pk,
+                    {"financial_year": previous_year, "lapsed": str(lapsed)},
+                )
+
+        balance, created = LeaveBalance.objects.get_or_create(
+            employee=employee,
+            leave_type=leave_type,
+            financial_year=financial_year,
+            defaults={"allocated": leave_type.annual_allocation, "carry_forward": carry_forward},
+        )
+        if created:
             write_audit(
                 actor,
-                "LeaveBalance.lapsed",
+                "LeaveBalance.seeded",
                 "LeaveBalance",
-                previous.pk,
-                {"financial_year": previous_year, "lapsed": str(lapsed)},
+                balance.pk,
+                {
+                    "financial_year": financial_year,
+                    "allocated": str(balance.allocated),
+                    "carry_forward": str(balance.carry_forward),
+                },
             )
-
-    balance, created = LeaveBalance.objects.get_or_create(
-        employee=employee,
-        leave_type=leave_type,
-        financial_year=financial_year,
-        defaults={"allocated": leave_type.annual_allocation, "carry_forward": carry_forward},
-    )
-    if created:
-        write_audit(
-            actor,
-            "LeaveBalance.seeded",
-            "LeaveBalance",
-            balance.pk,
-            {
-                "financial_year": financial_year,
-                "allocated": str(balance.allocated),
-                "carry_forward": str(balance.carry_forward),
-            },
-        )
-    return balance, created
+        return balance, created

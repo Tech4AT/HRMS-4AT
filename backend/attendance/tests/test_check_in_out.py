@@ -104,6 +104,57 @@ def test_check_out_response_includes_overtime_minutes_for_a_shifted_employee():
     assert data["overtime_minutes"] > 0  # worked ~10h against an 8h shift
 
 
+def test_check_out_credits_a_comp_off_when_configured():
+    from decimal import Decimal
+
+    from attendance.models import CompOffAccrualState, PolicySettings
+    from leave.models import LeaveBalance, LeaveType
+
+    client, employee = _client()
+    Shift.objects.create(
+        name="Day Shift", start_time=time(9, 0), end_time=time(17, 0)
+    ).employees.add(employee)
+    leave_type = LeaveType.objects.create(name="Comp Offs", annual_allocation=Decimal("0"))
+    PolicySettings.objects.update_or_create(
+        pk=1,
+        defaults={
+            "comp_off_leave_type": leave_type,
+            "comp_off_accrual_overtime_hours_per_comp_off": Decimal("2"),
+        },
+    )
+    client.post(CHECK_IN, {}, format="json")
+    record = AttendanceRecord.objects.get(employee=employee, attendance_date=timezone.localdate())
+    record.clock_in_time = timezone.now() - timezone.timedelta(
+        hours=10
+    )  # ~2h overtime vs an 8h shift
+    record.save(update_fields=["clock_in_time"])
+
+    client.post(CHECK_OUT, {}, format="json")
+
+    balance = LeaveBalance.objects.get(employee=employee, leave_type=leave_type)
+    assert balance.allocated == Decimal("1")
+    state = CompOffAccrualState.objects.get(employee=employee)
+    assert 0 <= state.uncredited_overtime_minutes < 10  # only the small runtime-jitter remainder
+
+
+def test_check_out_does_not_credit_a_comp_off_when_no_leave_type_configured():
+    from attendance.models import CompOffAccrualState
+
+    client, employee = _client()
+    Shift.objects.create(
+        name="Day Shift", start_time=time(9, 0), end_time=time(17, 0)
+    ).employees.add(employee)
+    client.post(CHECK_IN, {}, format="json")
+    record = AttendanceRecord.objects.get(employee=employee, attendance_date=timezone.localdate())
+    record.clock_in_time = timezone.now() - timezone.timedelta(hours=10)
+    record.save(update_fields=["clock_in_time"])
+
+    client.post(CHECK_OUT, {}, format="json")
+
+    # comp_off_leave_type is unset by default - no state row is even created.
+    assert not CompOffAccrualState.objects.filter(employee=employee).exists()
+
+
 def test_double_check_out_is_rejected():
     client, _ = _client()
     client.post(CHECK_IN, {}, format="json")

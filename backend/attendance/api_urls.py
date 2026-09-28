@@ -9,6 +9,7 @@ from rest_framework.routers import DefaultRouter
 
 from attendance.penalisation_views import MyPenalisationsView, PenalisationViewSet
 from attendance.settings_views import PolicySettingsView, ShiftViewSet
+from attendance.team_views import TeamDailyAttendanceView
 from attendance.views import AttendanceRequestViewSet, AttendanceViewSet
 
 router = DefaultRouter(trailing_slash=False)
@@ -33,6 +34,14 @@ urlpatterns = [
         "attendance/penalisations/mine",
         MyPenalisationsView.as_view(),
         name="attendance-my-penalisations",
+    ),
+    # The Dashboard's scoped multi-employee read (PLAN.md Step 9) — a plain
+    # APIView, not part of the AttendanceViewSet router below (a different
+    # renderer/permission shape entirely, not a self-service action).
+    path(
+        "attendance/team/daily",
+        TeamDailyAttendanceView.as_view(),
+        name="attendance-team-daily",
     ),
     *router.urls,
 ]

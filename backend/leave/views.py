@@ -29,6 +29,7 @@ pre-existing `/calendar` company page and Home's HolidaysWidget (PLAN.md §11 �
 their own UX is owned elsewhere, but this module's `/leave` prefix has to keep
 serving them from the same underlying data, not a second holiday list)."""
 
+from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import mixins, viewsets
@@ -234,64 +235,80 @@ class LeaveRequestViewSet(
             employee, leave_type, start_date, end_date, half_day_option
         )
         financial_year = str(start_date.year)
-        balance, _created = LeaveBalance.objects.get_or_create(
-            employee=employee,
-            leave_type=leave_type,
-            financial_year=financial_year,
-            defaults={"allocated": leave_type.annual_allocation},
-        )
-        conflicts.validate_sufficient_balance(balance, duration_days)
 
-        row = LeaveRequest.objects.create(
-            employee=employee,
-            leave_type=leave_type,
-            start_date=start_date,
-            end_date=end_date,
-            half_day_option=half_day_option,
-            reason=reason,
-            duration_days=duration_days,
-            financial_year=financial_year,
-        )
-        write_audit(
-            request.user, "LeaveRequest.created", "LeaveRequest", row.pk, {"after": leave_type.name}
-        )
-
-        if leave_type.requires_approval:
-            balance.pending += duration_days
-            balance.save(update_fields=["pending", "updated_at"])
-            # Plug into the approvals engine (docs/LEAVE-ATTENDANCE-INTEGRATION.md):
-            # raise a request routed to the caller's manager. The decision comes
-            # back via request_decided (handlers.py), which applies the effect.
-            approval = approvals.create_request(
-                request.user,
-                "leave",
-                {
-                    "leave_request_id": row.pk,
-                    "leave_type": leave_type.name,
-                    "reason": reason,
-                    "start_date": str(start_date),
-                    "end_date": str(end_date),
-                    "duration_days": str(duration_days),
-                },
+        # PLAN.md Step 12's concurrency check: two simultaneous requests
+        # against the same balance (read, validate, increment, save with no
+        # locking) could both read the same `pending`/`used` and both pass
+        # `validate_sufficient_balance`, then the second `save()` silently
+        # overwrites the first's increment — a lost update that can also let
+        # an employee over-draw their balance via a race, not just a
+        # bookkeeping glitch. `select_for_update()` inside one transaction
+        # serializes concurrent requests against the same row: the second
+        # request blocks until the first commits, then sees its effect.
+        with transaction.atomic():
+            balance, _created = LeaveBalance.objects.get_or_create(
+                employee=employee,
+                leave_type=leave_type,
+                financial_year=financial_year,
+                defaults={"allocated": leave_type.annual_allocation},
             )
-            row.approval_request = approval
-            row.save(update_fields=["approval_request"])
-        else:
-            # No human decision is being made — nothing for the engine to
-            # route (same reasoning as Penalisation's exemption, PLAN.md
-            # Step 1.3). Approve and deduct immediately.
-            row.status = LeaveRequestStatus.APPROVED
-            row.decided_at = timezone.now()
-            row.save(update_fields=["status", "decided_at", "updated_at"])
-            balance.used += duration_days
-            balance.save(update_fields=["used", "updated_at"])
+            balance = LeaveBalance.objects.select_for_update().get(pk=balance.pk)
+            conflicts.validate_sufficient_balance(balance, duration_days)
+
+            row = LeaveRequest.objects.create(
+                employee=employee,
+                leave_type=leave_type,
+                start_date=start_date,
+                end_date=end_date,
+                half_day_option=half_day_option,
+                reason=reason,
+                duration_days=duration_days,
+                financial_year=financial_year,
+            )
             write_audit(
                 request.user,
-                "LeaveRequest.auto_approved",
+                "LeaveRequest.created",
                 "LeaveRequest",
                 row.pk,
-                {"reason": "leave_type.requires_approval is False"},
+                {"after": leave_type.name},
             )
+
+            if leave_type.requires_approval:
+                balance.pending += duration_days
+                balance.save(update_fields=["pending", "updated_at"])
+                # Plug into the approvals engine (docs/LEAVE-ATTENDANCE-INTEGRATION.md):
+                # raise a request routed to the caller's manager. The decision comes
+                # back via request_decided (handlers.py), which applies the effect.
+                approval = approvals.create_request(
+                    request.user,
+                    "leave",
+                    {
+                        "leave_request_id": row.pk,
+                        "leave_type": leave_type.name,
+                        "reason": reason,
+                        "start_date": str(start_date),
+                        "end_date": str(end_date),
+                        "duration_days": str(duration_days),
+                    },
+                )
+                row.approval_request = approval
+                row.save(update_fields=["approval_request"])
+            else:
+                # No human decision is being made — nothing for the engine to
+                # route (same reasoning as Penalisation's exemption, PLAN.md
+                # Step 1.3). Approve and deduct immediately.
+                row.status = LeaveRequestStatus.APPROVED
+                row.decided_at = timezone.now()
+                row.save(update_fields=["status", "decided_at", "updated_at"])
+                balance.used += duration_days
+                balance.save(update_fields=["used", "updated_at"])
+                write_audit(
+                    request.user,
+                    "LeaveRequest.auto_approved",
+                    "LeaveRequest",
+                    row.pk,
+                    {"reason": "leave_type.requires_approval is False"},
+                )
 
         return Response({"success": True, "data": LeaveRequestSerializer(row).data}, status=201)
 
