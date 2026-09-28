@@ -80,7 +80,7 @@ export function RolesTab() {
       const [r, p, u] = await Promise.all([
         adminApi.listRoles(),
         adminApi.listPermissions(),
-        adminApi.listUsers({ pageSize: 500 }),
+        adminApi.listUsers({ pageSize: 1000 }),
       ]);
       setRoles(r.results);
       setPermissions(p.results);
