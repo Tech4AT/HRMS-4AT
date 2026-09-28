@@ -56,16 +56,23 @@ export interface RoleGrant {
 export interface Role {
   id: number;
   name: string;
+  description: string;
   archetype: Archetype;
   isActive: boolean;
   userCount: number;
+  /** Membership list (user ids) — reflects current M2M membership. */
+  users: number[];
   permissions: RoleGrant[];
 }
 
 export interface Permission {
   id: number;
   code: string;
+  /** Short row text (from the module's rbac.py; may be blank on old rows). */
+  label: string;
   description: string;
+  /** Feature area for grouping (from the module's rbac.py). */
+  group: string;
 }
 
 export interface AdminUser {
@@ -73,8 +80,11 @@ export interface AdminUser {
   email: string;
   firstName: string;
   lastName: string;
-  role: number | null;
-  roleName: string | null;
+  /** Every role membership (ordered by name). A user may hold zero, one, or many. */
+  roles: { id: number; name: string }[];
+  /** Size of the user's true effective permission set (union across active
+   * roles + overrides + baseline − denies), as computed by the backend. */
+  permissionCount: number;
   employeeCode: string | null;
   isActive: boolean;
 }
@@ -156,9 +166,12 @@ export const qs = (params: Record<string, string | number | undefined>) => {
 export const adminApi = {
   // roles
   listRoles: () => request<Page<Role>>(`roles/${qs({ pageSize: 100 })}`),
-  createRole: (body: { name: string; archetype: Archetype }) =>
+  createRole: (body: { name: string; description?: string; archetype: Archetype }) =>
     request<Role>('roles/', { method: 'POST', body }),
-  updateRole: (id: number, body: Partial<{ name: string; archetype: Archetype; isActive: boolean }>) =>
+  updateRole: (
+    id: number,
+    body: Partial<{ name: string; description: string; archetype: Archetype; isActive: boolean }>,
+  ) =>
     request<Role>(`roles/${id}/`, { method: 'PATCH', body }),
   deleteRole: (id: number) => request<void>(`roles/${id}/`, { method: 'DELETE' }),
   listPermissions: () => request<Page<Permission>>(`permissions/${qs({ pageSize: 100 })}`),
@@ -173,8 +186,12 @@ export const adminApi = {
   // people
   listUsers: (p: { search?: string; page?: number; pageSize?: number }) =>
     request<Page<AdminUser>>(`users/${qs(p)}`),
-  updateUser: (id: number, body: Partial<{ role: number; isActive: boolean }>) =>
+  updateUser: (id: number, body: Partial<{ roleIds: number[]; isActive: boolean }>) =>
     request<AdminUser>(`users/${id}/`, { method: 'PATCH', body }),
+  addUsersToRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/add-users/`, { method: 'POST', body: { userIds } }),
+  removeUsersFromRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/remove-users/`, { method: 'POST', body: { userIds } }),
   resetPassword: (id: number) =>
     request<{ temporaryPassword: string }>(`users/${id}/reset-password/`, { method: 'POST', body: {} }),
   revokeSessions: (id: number) =>
@@ -183,7 +200,7 @@ export const adminApi = {
     request<AccessPreview>(`users/${id}/access-preview/${qs({ permission })}`),
 
   // personal exceptions
-  listExceptions: (p: { user?: number; page?: number; pageSize?: number }) =>
+  listExceptions: (p: { user?: number; permission?: number; page?: number; pageSize?: number }) =>
     request<Page<Exception>>(`user-permission-overrides/${qs(p)}`),
   addException: (body: { user: number; permission: number; scopeTier: ScopeTier; isGranted: boolean }) =>
     request<Exception>('user-permission-overrides/', { method: 'POST', body }),

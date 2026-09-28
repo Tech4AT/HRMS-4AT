@@ -190,3 +190,116 @@ export function createBackendProxyRoute(
     DELETE: make('DELETE'),
   };
 }
+
+/**
+ * Same auth/refresh handling as {@link proxyToBackend}, but for a multipart
+ * file upload — the body is a `FormData`, forwarded as-is (never JSON), and
+ * the response is still the ordinary JSON envelope.
+ */
+export async function proxyFormDataToBackend(
+  req: NextRequest,
+  path: string,
+  formData: FormData,
+  method: 'POST' | 'PUT' | 'PATCH' = 'POST',
+): Promise<ProxyResult> {
+  let accessToken = req.cookies.get('accessToken')?.value;
+  const refreshToken = req.cookies.get('refreshToken')?.value;
+  let rotated: Rotated | undefined;
+
+  if (!accessToken && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    accessToken = r.accessToken;
+    rotated = r;
+  }
+  if (!accessToken) {
+    return { status: 401, body: null, sessionExpired: true };
+  }
+
+  // No Content-Type header here — fetch sets the multipart boundary itself
+  // when the body is a FormData instance.
+  const send = (token: string) =>
+    fetch(`${BACKEND_API_URL}${path}`, {
+      method,
+      body: formData,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  let res = await send(accessToken);
+
+  if (res.status === 401 && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    rotated = r;
+    res = await send(r.accessToken);
+    if (res.status === 401) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+  }
+
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body, rotated };
+}
+
+export type BinaryProxyResult = ProxyResult & {
+  arrayBuffer?: ArrayBuffer;
+  contentType?: string | null;
+  contentDisposition?: string | null;
+};
+
+/**
+ * Same auth/refresh handling as {@link proxyToBackend}, but for a response
+ * whose success case is raw bytes (a PDF, an image, a ZIP) rather than the
+ * JSON envelope — `res.json()` would fail on that body, so this reads it as
+ * an ArrayBuffer instead and carries the content headers through.
+ */
+export async function proxyBinaryFromBackend(
+  req: NextRequest,
+  path: string,
+): Promise<BinaryProxyResult> {
+  let accessToken = req.cookies.get('accessToken')?.value;
+  const refreshToken = req.cookies.get('refreshToken')?.value;
+  let rotated: Rotated | undefined;
+
+  if (!accessToken && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    accessToken = r.accessToken;
+    rotated = r;
+  }
+  if (!accessToken) {
+    return { status: 401, body: null, sessionExpired: true };
+  }
+
+  const send = (token: string) =>
+    fetch(`${BACKEND_API_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  let res = await send(accessToken);
+
+  if (res.status === 401 && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    rotated = r;
+    res = await send(r.accessToken);
+    if (res.status === 401) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+  }
+
+  if (res.status !== 200) {
+    const body = await res.json().catch(() => null);
+    return { status: res.status, body, rotated };
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  return {
+    status: res.status,
+    body: null,
+    rotated,
+    arrayBuffer,
+    contentType: res.headers.get('Content-Type'),
+    contentDisposition: res.headers.get('Content-Disposition'),
+  };
+}

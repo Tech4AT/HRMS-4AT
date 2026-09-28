@@ -15,17 +15,22 @@ export interface User {
   role: string;
   permissions: string[];
   scope: ManagementScope;
+  /** True when an admin issued a temporary password — the user must change
+   * it before using the app (T06). Surfaced as `mustChangePassword` by the
+   * backend login response and GET /users/me. */
+  mustChangePassword: boolean;
 }
 
 export interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
   hasOrgScope: () => boolean;
   updateProfile: (updates: { firstName: string; lastName: string }) => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const checkAuth = async () => {
+  const checkAuth = async (): Promise<User | null> => {
     try {
       const response = await fetch('/api/auth/me', {
         credentials: 'include',
@@ -47,17 +52,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const data = await response.json();
         setUser(data.data);
+        return data.data as User;
       } else {
         setUser(null);
+        return null;
       }
     } catch (error) {
       setUser(null);
+      return null;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
       const response = await fetch('/api/auth/login', {
@@ -77,8 +85,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await response.json();
       setUser(data.data.user);
 
-      // Fetch full user data with real role and permissions
-      await checkAuth();
+      // Fetch full user data with real role and permissions; the fresh /me
+      // value carries mustChangePassword (T06), falling back to login's.
+      const me = await checkAuth();
+      const flag =
+        me?.mustChangePassword ?? data?.data?.user?.mustChangePassword ?? false;
+      return flag === true;
     } finally {
       setIsLoading(false);
     }
@@ -132,6 +144,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hasPermission,
         hasOrgScope,
         updateProfile,
+        refreshUser: async () => {
+          await checkAuth();
+        },
       }}
     >
       {children}

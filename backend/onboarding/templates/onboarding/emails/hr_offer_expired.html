@@ -1,0 +1,13 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Offer expired — {{ employee_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">{{ employee_name }}'s offer expired</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  <strong>{{ employee_name }}</strong> ({{ employee_code }}) didn't respond before the offer's signing deadline.
+  It's now marked <strong>Expired</strong> and the candidate can no longer sign it. Resend or extend it from their
+  onboarding record if you'd like to give them more time.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  — {{ company_name }} HRMS
+</p>
+{% endblock %}

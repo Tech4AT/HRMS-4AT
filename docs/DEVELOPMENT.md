@@ -6,7 +6,8 @@
 4AT-HRMS/
 ├── docs/       — this documentation
 ├── frontend/   — Next.js app (unchanged from the original HRMS-Frontend repo)
-└── backend/    — Django + DRF backend (not yet implemented, see docs/TASKS.md)
+└── backend/    — Django + DRF backend (implemented on the RBAC branch,
+                see docs/IMPLEMENTATION-STATUS.md)
 ```
 
 ## Frontend
@@ -39,10 +40,10 @@ npm run dev                  # runs on http://localhost:3001
   to anything other than `true`) once Phase 1's real auth endpoints are live — see
   `src/lib/api/mock-auth.ts`.
 
-## Backend (once implemented)
+## Backend (implemented — see IMPLEMENTATION-STATUS.md)
 
-Not built yet — see [TASKS.md](TASKS.md) for Phase 0 (scaffolding). Once scaffolded,
-the expected local workflow (per [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)):
+Built on the RBAC branch. The local workflow (per
+[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)):
 
 ```bash
 cd backend

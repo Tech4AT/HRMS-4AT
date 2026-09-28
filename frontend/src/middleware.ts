@@ -7,8 +7,9 @@ export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   const publicRoutes = ['/login'];
+  const publicPrefixes = ['/set-password/'];
 
-  if (publicRoutes.includes(pathname)) {
+  if (publicRoutes.includes(pathname) || publicPrefixes.some((p) => pathname.startsWith(p))) {
     if (hasSession && pathname === '/login') {
       return NextResponse.redirect(new URL('/', request.url));
     }

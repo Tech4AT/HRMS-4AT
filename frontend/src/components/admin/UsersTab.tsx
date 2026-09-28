@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth/useAuth';
 import {
   adminApi,
@@ -14,11 +14,29 @@ import {
   type Role,
   type ScopeTier,
 } from '@/lib/admin/api';
-import { Badge, Button, ConfirmModal, Drawer, Notice, Pager, SectionTitle, Select, errorText } from './ui';
+import { Button, ConfirmModal, Drawer, Notice, Pager, SectionTitle, Select, errorText } from './ui';
+import { PermissionPicker } from './PermissionPicker';
 
 const PAGE_SIZE = 20;
 
-export function PeopleTab() {
+const AVATAR_COLORS = [
+  'bg-purple-200 text-purple-800',
+  'bg-blue-200 text-blue-800',
+  'bg-green-200 text-green-800',
+  'bg-amber-200 text-amber-800',
+  'bg-pink-200 text-pink-800',
+  'bg-teal-200 text-teal-800',
+];
+
+function initialsOf(u: AdminUser) {
+  return `${u.firstName?.[0] ?? ''}${u.lastName?.[0] ?? ''}`.toUpperCase() || u.email[0]?.toUpperCase() || '?';
+}
+
+function displayName(u: AdminUser) {
+  return `${u.firstName} ${u.lastName}`.trim() || u.email;
+}
+
+export function UsersTab() {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(1);
@@ -28,6 +46,8 @@ export function PeopleTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [menuId, setMenuId] = useState<number | null>(null);
+  const [exceptionsId, setExceptionsId] = useState<number | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -63,53 +83,128 @@ export function PeopleTab() {
   }, [load]);
 
   const selected = data?.results.find((u) => u.id === selectedId) ?? null;
+  const exceptionsUser = data?.results.find((u) => u.id === exceptionsId) ?? null;
+
+  // Permission counts come straight from the backend (`permissionCount` =
+  // the user's true effective set: union across active roles + overrides +
+  // baseline − denies), so a multi-role user's count always matches the
+  // backend instead of guessing from one role's grants.
+  const totalPermissions = permissions.length;
 
   const replaceUser = (updated: AdminUser) =>
     setData((d) => (d ? { ...d, results: d.results.map((u) => (u.id === updated.id ? updated : u)) } : d));
 
   return (
     <div>
-      <p className="text-sm text-gray-600 max-w-2xl mb-4">
-        Find a person to change their role, manage their account, give or take away a specific permission, or check exactly what they can reach.
-      </p>
-
-      <input
-        type="search"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name or email…"
-        aria-label="Search people"
-        className="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg mb-4"
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-900">Users</h2>
+          <p className="text-sm text-gray-600 max-w-2xl mt-1">
+            Everyone with access. Change a person&apos;s roles or manage their personal
+            exceptions from the Actions menu on their row.
+          </p>
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or employee number"
+          aria-label="Search users"
+          className="w-64 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        />
+      </div>
 
       {error && <Notice tone="error">{error}</Notice>}
-      {loading && !data && <p className="text-sm text-gray-500">Loading people…</p>}
+      {loading && !data && <p className="text-sm text-gray-500">Loading users…</p>}
 
       {data && (
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
+          <table className="w-full text-sm min-w-[40rem]">
             <thead className="bg-gray-50 text-gray-600 text-left">
               <tr>
-                <th className="px-4 py-3 font-semibold">Person</th>
-                <th className="px-4 py-3 font-semibold hidden md:table-cell">Email</th>
-                <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Account</th>
+                <th className="px-4 py-3 font-semibold">Users</th>
+                <th className="px-4 py-3 font-semibold">Roles</th>
+                <th className="px-4 py-3 font-semibold">Permissions</th>
+                <th className="px-4 py-3 font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {data.results.map((u) => (
-                <tr key={u.id} onClick={() => setSelectedId(u.id)} className="border-t border-gray-100 hover:bg-purple-50 cursor-pointer">
-                  <td className="px-4 py-3 font-semibold text-gray-900">
-                    <button className="text-left hover:underline" onClick={() => setSelectedId(u.id)}>
-                      {`${u.firstName} ${u.lastName}`.trim() || u.email}
-                    </button>
-                    {u.employeeCode && <span className="ml-2 text-xs text-gray-400 font-normal">{u.employeeCode}</span>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{u.email}</td>
-                  <td className="px-4 py-3 text-gray-700">{u.roleName ?? <span className="text-gray-400">No role</span>}</td>
-                  <td className="px-4 py-3">{u.isActive ? <Badge tone="green">Active</Badge> : <Badge tone="red">Deactivated</Badge>}</td>
-                </tr>
-              ))}
+              {data.results.map((u, i) => {
+                const roleNames = u.roles.map((r) => r.name);
+                return (
+                  <tr key={u.id} className="border-t border-gray-100 hover:bg-purple-50">
+                    <td className="px-4 py-3">
+                      <button className="flex items-center gap-3 text-left" onClick={() => setSelectedId(u.id)}>
+                        <span
+                          aria-hidden="true"
+                          className={`w-9 h-9 rounded-full grid place-items-center text-xs font-bold shrink-0 ${AVATAR_COLORS[i % AVATAR_COLORS.length]}`}
+                        >
+                          {initialsOf(u)}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block font-semibold text-gray-900 truncate hover:underline">
+                            {displayName(u)}
+                          </span>
+                          <span className="block text-xs text-gray-500 truncate">
+                            {u.employeeCode ?? u.email}
+                          </span>
+                        </span>
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">{roleNames.length ? roleNames.join(', ') : <span className="text-gray-400">No roles</span>}</td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {u.permissionCount} / {totalPermissions}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="relative">
+                        <Button
+                          aria-label={`Actions for ${displayName(u)}`}
+                          aria-haspopup="menu"
+                          aria-expanded={menuId === u.id}
+                          onClick={() => setMenuId(menuId === u.id ? null : u.id)}
+                        >
+                          ⋮
+                        </Button>
+                        {menuId === u.id && (
+                          <>
+                            <button
+                              aria-label="Close menu"
+                              className="fixed inset-0 z-10 cursor-default"
+                              onClick={() => setMenuId(null)}
+                              onKeyDown={(e) => e.key === 'Escape' && setMenuId(null)}
+                            />
+                            <div
+                              role="menu"
+                              className="absolute right-0 z-20 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                            >
+                              <button
+                                role="menuitem"
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                onClick={() => {
+                                  setMenuId(null);
+                                  setSelectedId(u.id);
+                                }}
+                              >
+                                Change roles
+                              </button>
+                              <button
+                                role="menuitem"
+                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                onClick={() => {
+                                  setMenuId(null);
+                                  setExceptionsId(u.id);
+                                }}
+                              >
+                                Manage exceptions
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {data.results.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-gray-500">
@@ -122,6 +217,10 @@ export function PeopleTab() {
         </div>
       )}
       {data && <Pager page={data.page} pageSize={data.pageSize} total={data.total} onPage={setPage} />}
+      <p className="text-xs text-gray-500 mt-3">
+        Permission counts show what each person effectively holds across all their roles;
+        personal exceptions can add or remove individual permissions on top.
+      </p>
 
       {selected && (
         <PersonPanel
@@ -132,6 +231,16 @@ export function PeopleTab() {
           onChanged={replaceUser}
           onClose={() => setSelectedId(null)}
         />
+      )}
+
+      {exceptionsUser && (
+        <Drawer
+          title={`Exceptions — ${displayName(exceptionsUser)}`}
+          subtitle={exceptionsUser.email}
+          onClose={() => setExceptionsId(null)}
+        >
+          <ExceptionsSection person={exceptionsUser} permissions={permissions} onChanged={load} />
+        </Drawer>
       )}
     </div>
   );
@@ -156,7 +265,7 @@ function PersonPanel({
   const isMe = me?.email.toLowerCase() === person.email.toLowerCase();
   const name = `${person.firstName} ${person.lastName}`.trim() || person.email;
 
-  const [roleId, setRoleId] = useState<number | ''>(person.role ?? '');
+  const [roleIds, setRoleIds] = useState<number[]>(person.roles.map((r) => r.id));
   const [confirm, setConfirm] = useState<Action | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -164,7 +273,13 @@ function PersonPanel({
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [version, setVersion] = useState(0); // bump to refresh the reach preview
 
-  const chosenRole = roles.find((r) => r.id === roleId);
+  const currentIds = useMemo(() => person.roles.map((r) => r.id).sort((a, b) => a - b), [person]);
+  const chosenIds = useMemo(() => [...roleIds].sort((a, b) => a - b), [roleIds]);
+  const rolesChanged =
+    chosenIds.length !== currentIds.length || chosenIds.some((id, i) => id !== currentIds[i]);
+
+  const toggleRole = (id: number) =>
+    setRoleIds((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]));
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -187,26 +302,31 @@ function PersonPanel({
   return (
     <Drawer title={name} subtitle={person.email} onClose={onClose}>
       <section className="space-y-3">
-        <SectionTitle>Role</SectionTitle>
-        <Select
-          aria-label="Role"
-          value={roleId}
-          onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : '')}
-          disabled={isMe}
-        >
-          {person.role === null && <option value="">No role</option>}
-          {roles
-            .filter((r) => r.isActive || r.id === person.role)
-            .map((r) => (
-              <option key={r.id} value={r.id}>
+        <SectionTitle>Roles</SectionTitle>
+        <div className="space-y-1.5 max-h-56 overflow-y-auto border border-gray-200 rounded-lg p-2">
+          {roles.map((r) => (
+            <label
+              key={r.id}
+              className={`flex items-center gap-2 px-2 py-1.5 rounded text-sm cursor-pointer hover:bg-gray-50 ${isMe ? 'opacity-60' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={roleIds.includes(r.id)}
+                onChange={() => toggleRole(r.id)}
+                disabled={isMe}
+                aria-label={r.name}
+              />
+              <span className="text-gray-900">
                 {r.name}
                 {r.isActive ? '' : ' (inactive)'}
-              </option>
-            ))}
-        </Select>
-        {isMe && <p className="text-xs text-gray-500">You cannot change your own role. Ask another administrator.</p>}
-        <Button variant="primary" disabled={isMe || busy || roleId === '' || roleId === person.role} onClick={() => setConfirm('role')}>
-          Change role
+              </span>
+            </label>
+          ))}
+          {roles.length === 0 && <p className="text-sm text-gray-500 px-2 py-1">No roles yet.</p>}
+        </div>
+        {isMe && <p className="text-xs text-gray-500">You cannot change your own roles. Ask another administrator.</p>}
+        <Button variant="primary" disabled={isMe || busy || !rolesChanged} onClick={() => setConfirm('role')}>
+          Change roles
         </Button>
         {message && <Notice tone="success">{message}</Notice>}
       </section>
@@ -240,22 +360,33 @@ function PersonPanel({
       <ExceptionsSection person={person} permissions={permissions} onChanged={() => setVersion((v) => v + 1)} />
       <PreviewSection person={person} permissions={permissions} version={version} />
 
-      {confirm === 'role' && chosenRole && (
+      {confirm === 'role' && (
         <ConfirmModal
-          title={`Change ${name}'s role?`}
+          title={`Change ${name}'s roles?`}
           body={
             <p>
-              From <strong>{person.roleName ?? 'no role'}</strong> to <strong>{chosenRole.name}</strong>. What they can do changes immediately, even if they are signed in.
+              From <strong>{person.roles.map((r) => r.name).join(', ') || 'no roles'}</strong> to{' '}
+              <strong>
+                {roles
+                  .filter((r) => chosenIds.includes(r.id))
+                  .map((r) => r.name)
+                  .join(', ') || 'no roles'}
+              </strong>
+              . What they can do changes immediately, even if they are signed in.
             </p>
           }
-          confirmLabel="Change role"
+          confirmLabel="Change roles"
           busy={busy}
           error={actionError}
           onCancel={close}
           onConfirm={() =>
             run(async () => {
-              onChanged(await adminApi.updateUser(person.id, { role: chosenRole.id }));
-              setMessage(`Role changed to ${chosenRole.name}.`);
+              const updated = await adminApi.updateUser(person.id, { roleIds: chosenIds });
+              onChanged(updated);
+              setRoleIds(updated.roles.map((r) => r.id));
+              setMessage(
+                `Roles updated (${chosenIds.length === 0 ? 'no roles' : `${chosenIds.length} role${chosenIds.length === 1 ? '' : 's'}`}).`,
+              );
               setVersion((v) => v + 1);
             })
           }
@@ -331,7 +462,7 @@ function PersonPanel({
   );
 }
 
-function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUser; permissions: Permission[]; onChanged: () => void }) {
+export function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUser; permissions: Permission[]; onChanged: () => void }) {
   const [items, setItems] = useState<Exception[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -378,7 +509,7 @@ function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUs
       </SectionTitle>
       {loading && <p className="text-sm text-gray-500">Loading…</p>}
       {error && <Notice tone="error">{error}</Notice>}
-      {!loading && items.length === 0 && <p className="text-sm text-gray-500">None. This person has exactly what their role gives them.</p>}
+      {!loading && items.length === 0 && <p className="text-sm text-gray-500">None. This person has exactly what their roles give them.</p>}
       {items.length > 0 && (
         <ul className="border border-gray-200 rounded-xl divide-y divide-gray-100">
           {items.map((i) => (
@@ -398,14 +529,12 @@ function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUs
       {available.length > 0 && (
         <div className="border border-dashed border-gray-300 rounded-xl p-3 space-y-2">
           <p className="text-sm font-semibold text-gray-700">Add an exception</p>
-          <Select aria-label="Permission" value={permissionId} onChange={(e) => setPermissionId(e.target.value ? Number(e.target.value) : '')}>
-            <option value="">Choose a permission…</option>
-            {available.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.description || p.code}
-              </option>
-            ))}
-          </Select>
+          <PermissionPicker
+            permissions={available}
+            value={permissionId}
+            onChange={(v) => setPermissionId(v as number | '')}
+            label="Permission"
+          />
           <div className="flex gap-2">
             <Select aria-label="Effect" value={effect} onChange={(e) => setEffect(e.target.value as 'allow' | 'deny')}>
               <option value="allow">Allow</option>
@@ -440,8 +569,9 @@ function ExceptionsSection({ person, permissions, onChanged }: { person: AdminUs
 }
 
 const SOURCE_TEXT: Record<string, string> = {
-  role: 'their role',
+  role: 'their roles',
   override: 'a personal exception',
+  'baseline (employee)': 'their standard employee access',
 };
 
 const NO_ACCESS_TEXT: Record<string, string> = {
@@ -480,13 +610,13 @@ function PreviewSection({ person, permissions, version }: { person: AdminUser; p
   return (
     <section className="space-y-3">
       <SectionTitle hint="The result of the rules as they stand right now, using the same logic the system enforces.">What can this person reach?</SectionTitle>
-      <Select aria-label="Permission to preview" value={code} onChange={(e) => setCode(e.target.value)}>
-        {permissions.map((p) => (
-          <option key={p.id} value={p.code}>
-            {p.description || p.code}
-          </option>
-        ))}
-      </Select>
+      <PermissionPicker
+        permissions={permissions}
+        value={code}
+        onChange={(v) => setCode(v as string)}
+        label="Permission to preview"
+        valueKey="code"
+      />
       {error && <Notice tone="error">{error}</Notice>}
       {preview && (
         <div className="space-y-2">

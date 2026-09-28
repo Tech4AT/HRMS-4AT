@@ -11,6 +11,7 @@ from accounts.factories import RoleFactory, UserFactory
 from accounts.models import FailedLoginAttempt
 from audit.models import AuditLog
 from core.enums import RoleArchetype, ScopeTier
+from core.scope import baseline_self_permissions
 from employees.factories import EmployeeFactory
 
 pytestmark = pytest.mark.django_db
@@ -108,7 +109,8 @@ def test_me_matches_contract_shape_for_org_scope_role():
 
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["roles"] == [{"name": "Test HR Admin", "archetype": "superadmin"}]
+    assert data["roles"] == ["Test HR Admin"]
+    assert data["archetype"] == "superadmin"
     assert "employees.read" in data["permissions"]
     assert data["scope"] == {"kind": "org"}
 
@@ -141,7 +143,8 @@ def test_me_scope_is_self_with_no_role():
     resp = client.get("/api/v1/users/me")
 
     assert resp.json()["data"]["scope"] == {"kind": "self"}
-    assert resp.json()["data"]["permissions"] == []
+    # Role-less but still an employee: holds exactly the self-service baseline.
+    assert set(resp.json()["data"]["permissions"]) == baseline_self_permissions()
 
 
 def test_me_patch_updates_name_only():
@@ -403,3 +406,42 @@ def test_select_for_update_serializes_concurrent_account_lookups():
     # lock weren't real, B would acquire immediately after b_may_start.set(),
     # well before A's 0.3s hold finishes.
     assert timings["b_acquired"] >= timings["a_released"] - 0.05
+
+
+# --- multi-role RBAC (docs/MULTI-ROLE-TESTS.md §D): /users/me ---
+
+
+def test_d3_archetype_precedence_manager_plus_admin_is_admin():
+    from accounts.factories import PermissionFactory, RolePermissionFactory
+
+    manager_role = RoleFactory(name="D3 Manager", archetype=RoleArchetype.EMPLOYEE)
+    admin_role = RoleFactory(name="D3 Admin", archetype=RoleArchetype.ADMIN)
+    permission = PermissionFactory(code="employees.read")
+    RolePermissionFactory(role=manager_role, permission=permission, scope_tier=ScopeTier.TEAM)
+    RolePermissionFactory(role=admin_role, permission=permission, scope_tier=ScopeTier.ALL)
+    user = UserFactory()
+    user.roles.add(manager_role, admin_role)
+    EmployeeFactory(user=user)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    data = client.get("/api/v1/users/me").json()["data"]
+
+    assert data["archetype"] == "admin"
+    assert sorted(data["roles"]) == ["D3 Admin", "D3 Manager"]
+    assert "employees.read" in data["permissions"]
+    assert data["scope"] == {"kind": "org"}
+
+
+def test_d4_zero_roles_employee_me_is_baseline():
+    user = UserFactory(role=None)
+    EmployeeFactory(user=user)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    data = client.get("/api/v1/users/me").json()["data"]
+
+    assert data["archetype"] == "employee"
+    assert data["roles"] == []
+    assert set(data["permissions"]) == baseline_self_permissions()
+    assert data["scope"] == {"kind": "self"}

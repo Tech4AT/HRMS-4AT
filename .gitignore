@@ -68,3 +68,21 @@ docs/*.xlsx
 
 # God-agent orchestration playbook — local workflow aid, not project state
 docs/GOD-AGENT-ORCHESTRATION.md
+
+# Local dev environment (Docker) — kept locally for the maintainer's dev stack,
+# not shared. Peers run each module natively (manage.py / next dev), so these
+# are intentionally untracked. CI runs pytest directly and does not use Docker.
+/.dockerignore
+/Dockerfile
+/docker-compose.yml
+/docker-entrypoint.sh
+/backend/.dockerignore
+/backend/Dockerfile
+/backend/docker-compose.yml
+/backend/docker-entrypoint.sh
+/frontend/.dockerignore
+/frontend/Dockerfile
+
+# Local DB dumps (data reproducible from roster.xlsx at startup)
+hrms_dump.sql
+*.sql

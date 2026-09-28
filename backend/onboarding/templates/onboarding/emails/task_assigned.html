@@ -1,0 +1,18 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Onboarding task — {{ task_title }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Hi {{ first_name }}, you have an onboarding task</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  HR has assigned you a step in <strong>{{ employee_name }}</strong>'s ({{ employee_code }}) onboarding. They join on
+  <strong>{{ joining_date }}</strong>.
+</p>
+<div style="background-color:#f9fafb; border:1px solid #eef0f3; border-radius:12px; padding:16px 20px; margin:0 0 20px 0;">
+  <p style="margin:0 0 6px 0; font-size:16px; font-weight:700; color:#111827;">{{ task_title }}</p>
+  {% if task_description %}<p style="margin:0 0 6px 0; font-size:14px; color:#374151; line-height:22px;">{{ task_description }}</p>{% endif %}
+  <p style="margin:0; font-size:13px; color:#6b7280;">{% if due_date %}Due {{ due_date }}{% else %}No due date{% endif %}</p>
+</div>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  Sign in to the HRMS portal and open <strong>Onboarding tasks</strong> in the menu to mark it done.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">— {{ company_name }} HRMS</p>
+{% endblock %}

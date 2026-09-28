@@ -26,8 +26,13 @@ from employees.models import (
     Department,
     Designation,
     Employee,
+    Grade,
+    JobFamily,
     LegalEntity,
+    Level,
     Location,
+    Position,
+    Team,
 )
 
 User = get_user_model()
@@ -78,6 +83,91 @@ class CostCenterSerializer(_NamedEntitySerializer):
         fields = ["id", "name", "code"]
 
 
+class TeamSerializer(_NamedEntitySerializer):
+    """{id, name, department_id, lead_id} — the read list shape for teams."""
+
+    department_id = serializers.SerializerMethodField()
+    lead_id = serializers.SerializerMethodField()
+
+    class Meta(_NamedEntitySerializer.Meta):
+        model = Team
+        fields = ["id", "name", "department_id", "lead_id"]
+
+    def get_department_id(self, obj):
+        return str(obj.department_id) if obj.department_id else None
+
+    def get_lead_id(self, obj):
+        return str(obj.lead_id) if obj.lead_id else None
+
+
+class JobFamilySerializer(_NamedEntitySerializer):
+    class Meta(_NamedEntitySerializer.Meta):
+        model = JobFamily
+
+
+class LevelSerializer(_NamedEntitySerializer):
+    class Meta(_NamedEntitySerializer.Meta):
+        model = Level
+
+
+class GradeSerializer(_NamedEntitySerializer):
+    class Meta(_NamedEntitySerializer.Meta):
+        model = Grade
+
+
+class PositionSerializer(serializers.ModelSerializer):
+    """Read shape for positions: snake_case string ids, like EmployeeSerializer."""
+
+    id = serializers.SerializerMethodField()
+    department_id = serializers.SerializerMethodField()
+    job_title_id = serializers.SerializerMethodField()
+    level_id = serializers.SerializerMethodField()
+    grade_id = serializers.SerializerMethodField()
+    business_unit_id = serializers.SerializerMethodField()
+    reports_to_id = serializers.SerializerMethodField()
+    incumbent_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Position
+        fields = [
+            "id",
+            "name",
+            "department_id",
+            "job_title_id",
+            "level_id",
+            "grade_id",
+            "business_unit_id",
+            "reports_to_id",
+            "status",
+            "incumbent_id",
+            "is_active",
+        ]
+
+    def get_id(self, obj):
+        return str(obj.pk)
+
+    def get_department_id(self, obj):
+        return str(obj.department_id) if obj.department_id else None
+
+    def get_job_title_id(self, obj):
+        return str(obj.job_title_id) if obj.job_title_id else None
+
+    def get_level_id(self, obj):
+        return str(obj.level_id) if obj.level_id else None
+
+    def get_grade_id(self, obj):
+        return str(obj.grade_id) if obj.grade_id else None
+
+    def get_business_unit_id(self, obj):
+        return str(obj.business_unit_id) if obj.business_unit_id else None
+
+    def get_reports_to_id(self, obj):
+        return str(obj.reports_to_id) if obj.reports_to_id else None
+
+    def get_incumbent_id(self, obj):
+        return str(obj.incumbent_id) if obj.incumbent_id else None
+
+
 class EmployeeSerializer(serializers.ModelSerializer):
     """Matches employees/page.tsx's `Employee` interface field-for-field:
     first_name/last_name (not full_name), work_email (not email), and
@@ -96,6 +186,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     legal_entity_id = serializers.SerializerMethodField()
     business_unit_id = serializers.SerializerMethodField()
     cost_center_id = serializers.SerializerMethodField()
+    position_id = serializers.SerializerMethodField()
+    level_id = serializers.SerializerMethodField()
+    grade_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -112,6 +205,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "legal_entity_id",
             "business_unit_id",
             "cost_center_id",
+            "position_id",
+            "level_id",
+            "grade_id",
             "status",
             "employment_type",
             "date_of_joining",
@@ -142,6 +238,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def get_cost_center_id(self, obj):
         return str(obj.cost_center_id) if obj.cost_center_id else None
 
+    def get_position_id(self, obj):
+        return str(obj.position_id) if obj.position_id else None
+
+    def get_level_id(self, obj):
+        return str(obj.level_id) if obj.level_id else None
+
+    def get_grade_id(self, obj):
+        return str(obj.grade_id) if obj.grade_id else None
+
 
 def _reference(model, source):
     return serializers.PrimaryKeyRelatedField(
@@ -169,6 +274,9 @@ class EmployeeWriteSerializer(serializers.Serializer):
     manager_id = _reference(Employee, "manager")
     business_unit_id = _reference(BusinessUnit, "business_unit")
     cost_center_id = _reference(CostCenter, "cost_center")
+    position_id = _reference(Position, "position")
+    level_id = _reference(Level, "level")
+    grade_id = _reference(Grade, "grade")
     employment_type = serializers.ChoiceField(choices=EmploymentType.choices, required=False)
     date_of_joining = serializers.DateField(required=False, allow_null=True)
     date_of_exit = serializers.DateField(required=False, allow_null=True)
@@ -240,12 +348,14 @@ class EmployeeWriteSerializer(serializers.Serializer):
             email=email,
             first_name=validated["first_name"],
             last_name=validated.get("last_name", ""),
-            role=Role.objects.filter(name="Employee").first(),
         )
         user.set_unusable_password()
         status = validated.get("status", EmployeeStatus.ACTIVE)
         user.is_active = status != EmployeeStatus.EXITED
         user.save()
+        employee_role = Role.objects.filter(name="Employee").first()
+        if employee_role is not None:
+            user.roles.add(employee_role)
         exit_date = validated.get("date_of_exit")
         if status == EmployeeStatus.EXITED and exit_date is None:
             exit_date = date.today()
@@ -260,6 +370,9 @@ class EmployeeWriteSerializer(serializers.Serializer):
             legal_entity=validated.get("legal_entity"),
             business_unit=validated.get("business_unit"),
             cost_center=validated.get("cost_center"),
+            position=validated.get("position"),
+            level=validated.get("level"),
+            grade=validated.get("grade"),
             manager=validated.get("manager"),
             date_of_joining=validated.get("date_of_joining"),
             date_of_exit=exit_date,
@@ -285,6 +398,9 @@ class EmployeeWriteSerializer(serializers.Serializer):
             "legal_entity",
             "business_unit",
             "cost_center",
+            "position",
+            "level",
+            "grade",
             "manager",
             "employment_type",
             "date_of_joining",
@@ -442,3 +558,135 @@ LocationAdminSerializer = _org_serializer(Location)
 LegalEntityAdminSerializer = _org_serializer(LegalEntity)
 BusinessUnitAdminSerializer = _org_serializer(BusinessUnit)
 CostCenterAdminSerializer = _org_serializer(CostCenter, extra_fields=["code"])
+
+
+class TeamAdminSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True, default=None)
+    lead_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Team
+        fields = [
+            "id",
+            "name",
+            "is_active",
+            "department",
+            "department_name",
+            "lead",
+            "lead_name",
+            "created_at",
+        ]
+        read_only_fields = ["id", "department_name", "lead_name", "created_at"]
+
+    def get_lead_name(self, obj):
+        lead = getattr(obj, "lead", None)
+        if lead is None:
+            return None
+        user = getattr(lead, "user", None)
+        if user is None:
+            return lead.employee_code
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.get_username()
+
+
+class _JobArchAdminSerializer(_OrgUnitSerializer):
+    """Level/Grade admin rows also report how many approved seats point at them."""
+
+    position_count = serializers.IntegerField(read_only=True, default=0)
+
+
+class LevelAdminSerializer(_JobArchAdminSerializer):
+    class Meta(_OrgUnitSerializer.Meta):
+        model = Level
+        fields = [*_OrgUnitSerializer.Meta.fields, "position_count"]
+        read_only_fields = [*_OrgUnitSerializer.Meta.read_only_fields, "position_count"]
+
+
+class GradeAdminSerializer(_JobArchAdminSerializer):
+    class Meta(_OrgUnitSerializer.Meta):
+        model = Grade
+        fields = [*_OrgUnitSerializer.Meta.fields, "position_count"]
+        read_only_fields = [*_OrgUnitSerializer.Meta.read_only_fields, "position_count"]
+
+
+class JobFamilyAdminSerializer(serializers.ModelSerializer):
+    """Job families are referenced by nothing, so there is no count to report."""
+
+    class Meta:
+        model = JobFamily
+        fields = ["id", "name", "is_active", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class PositionAdminSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True, default=None)
+    job_title_name = serializers.CharField(source="job_title.name", read_only=True, default=None)
+    level_name = serializers.CharField(source="level.name", read_only=True, default=None)
+    grade_name = serializers.CharField(source="grade.name", read_only=True, default=None)
+    business_unit_name = serializers.CharField(
+        source="business_unit.name", read_only=True, default=None
+    )
+    reports_to_name = serializers.CharField(source="reports_to.name", read_only=True, default=None)
+    incumbent_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Position
+        fields = [
+            "id",
+            "name",
+            "status",
+            "is_active",
+            "department",
+            "department_name",
+            "job_title",
+            "job_title_name",
+            "level",
+            "level_name",
+            "grade",
+            "grade_name",
+            "business_unit",
+            "business_unit_name",
+            "reports_to",
+            "reports_to_name",
+            "incumbent",
+            "incumbent_name",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "department_name",
+            "job_title_name",
+            "level_name",
+            "grade_name",
+            "business_unit_name",
+            "reports_to_name",
+            "incumbent_name",
+            "created_at",
+        ]
+
+    def get_incumbent_name(self, obj):
+        incumbent = getattr(obj, "incumbent", None)
+        if incumbent is None:
+            return None
+        user = getattr(incumbent, "user", None)
+        if user is None:
+            return incumbent.employee_code
+        full = f"{user.first_name} {user.last_name}".strip()
+        return full or user.get_username()
+
+    def validate(self, attrs):
+        reports_to = attrs.get("reports_to")
+        if reports_to is not None and self.instance is not None:
+            if reports_to.pk == self.instance.pk:
+                raise serializers.ValidationError(
+                    {"reports_to": "A position cannot report to itself."}
+                )
+            cursor, seen = reports_to, set()
+            while cursor is not None and cursor.pk not in seen:
+                if cursor.pk == self.instance.pk:
+                    raise serializers.ValidationError(
+                        {"reports_to": "A position cannot report to its own subordinate."}
+                    )
+                seen.add(cursor.pk)
+                cursor = cursor.reports_to
+        return attrs

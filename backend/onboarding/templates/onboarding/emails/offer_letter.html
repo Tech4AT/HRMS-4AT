@@ -1,0 +1,32 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Your Offer Letter — {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">{% if resend %}Reminder: your{% else %}Your{% endif %} offer letter is ready, {{ first_name }}</h1>
+<p style="margin:0 0 20px 0; font-size:14px; color:#6b7280;">Also attached to this email as a PDF.</p>
+
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  We're pleased to confirm your offer for <strong>{{ designation }}</strong>{% if department %} in {{ department }}{% endif %},
+  joining on <strong>{{ joining_date }}</strong>. Please review it in full — it covers your role, compensation, and
+  the terms of employment — then sign it electronically using the secure link below.
+</p>
+
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
+  <tr>
+    <td style="border-radius:10px; background-color:#7c3aed;">
+      <a href="{{ signing_url }}" style="display:inline-block; padding:13px 28px; font-size:14px; font-weight:700; color:#ffffff; text-decoration:none;">Review &amp; Sign Offer</a>
+    </td>
+  </tr>
+</table>
+
+<div style="background-color:#faf5ff; border:1px solid #ecd9ff; border-radius:12px; padding:18px 20px; margin:0 0 24px 0;">
+  <p style="margin:0; font-size:14px; color:#6b21a8; line-height:22px;">
+    <strong>This link is unique to you{% if expires_at %} and expires on {{ expires_at }}{% endif %}.</strong>
+    Please don't forward it. If you have any questions before deciding, just reply to this email.
+  </p>
+</div>
+
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  We're genuinely looking forward to having you on the team,<br>
+  <strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

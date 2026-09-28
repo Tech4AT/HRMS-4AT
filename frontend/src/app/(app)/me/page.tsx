@@ -26,6 +26,24 @@ const ExpenseIcon = () => (
   </svg>
 );
 
+const DocumentsIcon = () => (
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zm-3-7H9v-2h6v2zm2 4H9v-2h8v2z" />
+  </svg>
+);
+
+const PolicyIcon = () => (
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 4l5 2.18V11c0 3.47-2.34 6.71-5 7.93-2.66-1.22-5-4.46-5-7.93V7.18L12 5zm-1 8l-2-2-1.4 1.4L11 15.8l5-5-1.4-1.4L11 13z" />
+  </svg>
+);
+
+const ExitIcon = () => (
+  <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+    <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+  </svg>
+);
+
 export default function MePage() {
   const router = useRouter();
 
@@ -61,6 +79,30 @@ export default function MePage() {
       icon: ExpenseIcon,
       path: '/me/expenses',
       color: 'from-orange-500 to-orange-600'
+    },
+    {
+      id: 'documents',
+      title: 'My Documents',
+      description: 'View and download your employment documents',
+      icon: DocumentsIcon,
+      path: '/me/documents',
+      color: 'from-teal-500 to-teal-600'
+    },
+    {
+      id: 'policies',
+      title: 'Policies',
+      description: 'Review and acknowledge company policies',
+      icon: PolicyIcon,
+      path: '/me/policies',
+      color: 'from-cyan-500 to-cyan-600'
+    },
+    {
+      id: 'exit',
+      title: 'My Exit',
+      description: 'Submit or manage your resignation',
+      icon: ExitIcon,
+      path: '/me/exit',
+      color: 'from-red-500 to-red-600'
     }
   ];
 

@@ -1,0 +1,24 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Welcome to Day 1 — {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">It's your first day, {{ first_name }}! 🚀</h1>
+<p style="margin:0 0 20px 0; font-size:14px; color:#6b7280;">Your account is now active.</p>
+
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  You can now sign in with your work email (<strong>{{ work_email }}</strong>) and the temporary password you were
+  given. We've put together a short onboarding checklist to help you get oriented over your first few weeks —
+  induction, meeting your manager and buddy, and a few policy sign-offs.
+</p>
+
+<div style="background-color:#eff6ff; border:1px solid #dbeafe; border-radius:12px; padding:18px 20px; margin:0 0 24px 0;">
+  <p style="margin:0; font-size:14px; color:#1e40af; line-height:22px;">
+    Find your checklist under <strong>Me → My Onboarding</strong> once you're signed in. Nothing to rush — we'll
+    remind you if anything's still open as the days go on.
+  </p>
+</div>
+
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Welcome to the team,<br>
+  <strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

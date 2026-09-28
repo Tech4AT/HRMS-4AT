@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useAuth } from '@/lib/auth/useAuth';
+import { orgApi } from '@/lib/api/org';
 
 /* ------------------------------ data ------------------------------ */
 
@@ -122,67 +124,59 @@ export default function OrgPage() {
     if (t === 'directory' || t === 'chart' || t === 'documents') setTab(t);
   }, [searchParams]);
 
+  const mountedRef = useRef(true);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const [rawEmployees, departments, businessUnits, locations, costCenters, designations, profile] =
-          await Promise.all([
-            fetchJson<RawEmployee[]>('/api/employees'),
-            fetchJson<NamedEntity[]>('/api/departments'),
-            fetchJson<NamedEntity[]>('/api/business-units'),
-            fetchJson<NamedEntity[]>('/api/locations'),
-            fetchJson<NamedEntity[]>('/api/cost-centers'),
-            fetchJson<NamedEntity[]>('/api/designations'),
-            fetchJson<{ id: string }>('/api/ess/profile'),
-          ]);
-        if (cancelled) return;
-        const deptMap = toNameMap(departments);
-        const buMap = toNameMap(businessUnits);
-        const locMap = toNameMap(locations);
-        const ccMap = toNameMap(costCenters);
-        const desigMap = toNameMap(designations);
-        setEmployees(rawEmployees.map((e) => toEmployee(e, deptMap, buMap, locMap, ccMap, desigMap)));
-        setMeId(profile.id);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load organisation data');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
   }, []);
 
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [rawEmployees, departments, businessUnits, locations, costCenters, designations] =
+        await Promise.all([
+          fetchJson<RawEmployee[]>('/api/org-directory'),
+          fetchJson<NamedEntity[]>('/api/departments'),
+          fetchJson<NamedEntity[]>('/api/business-units'),
+          fetchJson<NamedEntity[]>('/api/locations'),
+          fetchJson<NamedEntity[]>('/api/cost-centers'),
+          fetchJson<NamedEntity[]>('/api/designations'),
+        ]);
+      if (!mountedRef.current) return;
+      const deptMap = toNameMap(departments);
+      const buMap = toNameMap(businessUnits);
+      const locMap = toNameMap(locations);
+      const ccMap = toNameMap(costCenters);
+      const desigMap = toNameMap(designations);
+      setEmployees(rawEmployees.map((e) => toEmployee(e, deptMap, buMap, locMap, ccMap, desigMap)));
+      // Best-effort: only marks "you" on the chart. An account without an
+      // employee record (e.g. superadmin) has no profile — that must not
+      // blank the directory/chart for everyone else.
+      fetchJson<{ id: string }>('/api/ess/profile')
+        .then((profile) => {
+          if (mountedRef.current) setMeId(profile.id);
+        })
+        .catch(() => {});
+    } catch (e) {
+      if (mountedRef.current)
+        setError(e instanceof Error ? e.message : 'Failed to load organisation data');
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter']">
-      <div className="bg-white border-b border-gray-200 px-4 sm:px-8">
-        <div className="flex gap-6">
-          {(
-            [
-              ['directory', 'Employee Directory'],
-              ['chart', 'Organisation Chart'],
-              ['documents', 'Organization Documents'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`px-1 py-3 border-b-2 font-semibold text-sm transition-colors ${
-                tab === id
-                  ? 'border-purple-600 text-purple-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
+      {/* Section tabs come from the uniform sub-nav in the app layout, driven by
+          the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
           <Documents />
@@ -191,7 +185,7 @@ export default function OrgPage() {
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : tab === 'directory' ? (
-          <Directory employees={employees} />
+          <Directory employees={employees} onChanged={reload} />
         ) : (
           <OrgChart employees={employees} meId={meId} />
         )}
@@ -385,7 +379,9 @@ function Documents() {
 
 /* ------------------------------ directory ------------------------------ */
 
-function Directory({ employees }: { employees: Employee[] }) {
+function Directory({ employees, onChanged }: { employees: Employee[]; onChanged: () => void }) {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('org.manage') || hasPermission('employees.write');
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     businessUnit: '',
     department: '',
@@ -393,6 +389,8 @@ function Directory({ employees }: { employees: Employee[] }) {
     costCenter: '',
   });
   const [search, setSearch] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState<'list' | 'gallery'>('list');
 
   const hasActiveFilter = Object.values(filters).some(Boolean) || search.trim() !== '';
 
@@ -416,6 +414,35 @@ function Directory({ employees }: { employees: Employee[] }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-lg font-bold text-slate-900">Employee Directory</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div role="group" aria-label="Change view" className="flex rounded-xl border border-gray-200 bg-gray-50 p-0.5">
+            {(['list', 'gallery'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                  view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                {v === 'list' ? 'List' : 'Gallery'}
+              </button>
+            ))}
+          </div>
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              Add employee
+            </button>
+          ) : null}
+        </div>
+      </div>
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
         <div className="flex flex-wrap items-end gap-3">
           {filterKeys.map((key) => (
@@ -467,6 +494,31 @@ function Directory({ employees }: { employees: Employee[] }) {
         </div>
         {rows.length === 0 ? (
           <p className="px-5 py-12 text-center text-sm text-gray-500">No employees match these filters.</p>
+        ) : view === 'gallery' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+            {rows.map((e) => (
+              <div key={e.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-shadow">
+                <div className="flex items-center gap-3 mb-1">
+                  <span
+                    className={`w-10 h-10 rounded-full bg-gradient-to-br ${e.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}
+                  >
+                    {e.initials}
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-gray-900 truncate">{e.name}</h3>
+                    <p className="text-indigo-600 text-sm font-semibold truncate">{e.title}</p>
+                  </div>
+                </div>
+                <div className="space-y-1 text-sm mt-2">
+                  <p className="text-gray-600">{e.department}</p>
+                  <p className="text-gray-500">{e.location}</p>
+                  {e.email ? (
+                    <p className="text-blue-600 truncate">{e.email}</p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -506,6 +558,269 @@ function Directory({ employees }: { employees: Employee[] }) {
           </div>
         )}
       </div>
+
+      {showAdd ? (
+        <AddEmployeeModal
+          employees={employees}
+          onClose={() => setShowAdd(false)}
+          onCreated={() => {
+            setShowAdd(false);
+            onChanged();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------ add employee ------------------------------ */
+
+const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern'];
+
+/**
+ * Creates a real Employee row (POST /api/employees). The manager select sets
+ * the reports-to link, so the new person appears under their manager in the
+ * chart as soon as the directory refetches — no manual DB reload.
+ */
+function AddEmployeeModal({
+  employees,
+  onClose,
+  onCreated,
+}: {
+  employees: Employee[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [departments, setDepartments] = useState<NamedEntity[]>([]);
+  const [designations, setDesignations] = useState<NamedEntity[]>([]);
+  const [locations, setLocations] = useState<NamedEntity[]>([]);
+
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [workEmail, setWorkEmail] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [designationId, setDesignationId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [managerId, setManagerId] = useState('');
+  const [employmentType, setEmploymentType] = useState('full_time');
+  const [dateOfJoining, setDateOfJoining] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [depts, desigs, locs] = await Promise.all([
+          fetchJson<NamedEntity[]>('/api/departments'),
+          fetchJson<NamedEntity[]>('/api/designations'),
+          fetchJson<NamedEntity[]>('/api/locations'),
+        ]);
+        if (!cancelled) {
+          setDepartments(depts);
+          setDesignations(desigs);
+          setLocations(locs);
+        }
+      } catch {
+        /* options stay empty; the form still submits */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!firstName.trim() || !workEmail.trim() || !employeeCode.trim()) {
+      setFormError('First name, work email and employee code are required.');
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await orgApi.createEmployee({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        work_email: workEmail.trim(),
+        employee_code: employeeCode.trim(),
+        department_id: departmentId || null,
+        designation_id: designationId || null,
+        location_id: locationId || null,
+        manager_id: managerId || null,
+        employment_type: employmentType,
+        date_of_joining: dateOfJoining || null,
+      });
+      onCreated();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not add the employee.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass =
+    'mt-1 block w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-purple-400';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add employee"
+    >
+      <form
+        onSubmit={submit}
+        onClick={(ev) => ev.stopPropagation()}
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white rounded-2xl border border-gray-200 shadow-lg p-5"
+      >
+        <h3 className="text-base font-bold text-slate-900">Add employee</h3>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Saved to the employee directory — the new person shows in the directory and under their
+          manager in the chart.
+        </p>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">First name *</span>
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Last name</span>
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Work email *</span>
+            <input
+              type="email"
+              value={workEmail}
+              onChange={(e) => setWorkEmail(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Employee code *</span>
+            <input
+              type="text"
+              value={employeeCode}
+              onChange={(e) => setEmployeeCode(e.target.value)}
+              placeholder="e.g. EMP-0147"
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Department</span>
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Designation</span>
+            <select
+              value={designationId}
+              onChange={(e) => setDesignationId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {designations.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Location</span>
+            <select
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Manager (reports to)</span>
+            <select
+              value={managerId}
+              onChange={(e) => setManagerId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">No manager (top of org)</option>
+              {employees.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} — {m.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Employment type</span>
+            <select
+              value={employmentType}
+              onChange={(e) => setEmploymentType(e.target.value)}
+              className={inputClass}
+            >
+              {EMPLOYMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Date of joining</span>
+            <input
+              type="date"
+              value={dateOfJoining}
+              onChange={(e) => setDateOfJoining(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
+        {formError ? <p className="mt-3 text-xs text-rose-700">{formError}</p> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60"
+          >
+            {saving ? 'Adding…' : 'Add employee'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -531,6 +846,26 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const [deptFocus, setDeptFocus] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [zoom, setZoom] = useState(1);
+  const chartScrollRef = useRef<HTMLDivElement>(null);
+
+  const zoomIn = () => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10));
+  const zoomOut = () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10));
+  const zoomReset = () => setZoom(1);
+
+  // Ctrl+wheel zooms (native non-passive listener so preventDefault works).
+  useEffect(() => {
+    const el = chartScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else if (e.deltaY > 0) zoomOut();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -633,6 +968,38 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Zoom controls */}
+          <div
+            className="inline-flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white"
+            role="group"
+            aria-label="Chart zoom"
+          >
+            <button
+              onClick={zoomOut}
+              disabled={zoom <= 0.4}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+              title="Zoom out"
+              aria-label="Zoom out"
+            >
+              −
+            </button>
+            <button
+              onClick={zoomReset}
+              className="px-2 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200"
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={zoomIn}
+              disabled={zoom >= 2}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200 disabled:opacity-40"
+              title="Zoom in (or Ctrl+scroll)"
+              aria-label="Zoom in"
+            >
+              +
+            </button>
+          </div>
           <button
             onClick={() => setGroupByDept((v) => !v)}
             className="flex items-center gap-2 text-sm font-medium text-gray-700"
@@ -661,8 +1028,11 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-x-auto">
-        <div className="flex justify-center gap-10 min-w-max">
+      <div ref={chartScrollRef} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-auto">
+        <div
+          className="flex justify-center gap-10 min-w-max"
+          style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+        >
           {roots.map((r) => (
             <OrgNode
               key={r.id}

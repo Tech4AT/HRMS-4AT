@@ -68,11 +68,14 @@ class Command(BaseCommand):
         self.stdout.write(f"{'person':<32}{'role':<20}{'source':<16}{'tier':<14}reach")
         self.stdout.write("-" * 96)
         rows = []
-        for employee in Employee.objects.select_related("user__role").order_by("user__last_name"):
+        for employee in Employee.objects.select_related("user").prefetch_related(
+            "user__roles"
+        ).order_by("user__last_name"):
             user = employee.user
             info = explain_permission(user, code)
             reach = resolve_employee_scope(user, code).count() if info["granted"] else 0
-            rows.append((_name(employee), user.role.name if user.role else "-", info, reach))
+            names = ", ".join(user.roles.order_by("name").values_list("name", flat=True))
+            rows.append((_name(employee), names or "-", info, reach))
         for name, role, info, reach in sorted(rows, key=lambda r: (-r[3], r[0])):
             tier = info["tier"] or "-"
             self.stdout.write(
@@ -87,11 +90,11 @@ class Command(BaseCommand):
 
     def _one_user(self, code, email):
         try:
-            user = User.objects.select_related("role").get(email__iexact=email)
+            user = User.objects.prefetch_related("roles").get(email__iexact=email)
         except User.DoesNotExist:
             raise CommandError(f"No user with email {email!r}.") from None
         info = explain_permission(user, code)
-        role = user.role.name if user.role else "no role"
+        role = ", ".join(user.roles.order_by("name").values_list("name", flat=True)) or "no role"
         self.stdout.write(f"{user.get_full_name() or user.email}  ({role})")
         self.stdout.write(
             f"{code}: {'granted' if info['granted'] else 'NOT granted'} "

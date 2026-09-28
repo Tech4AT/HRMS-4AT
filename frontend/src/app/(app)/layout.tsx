@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
-import { useRouter, usePathname } from 'next/navigation';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { ProfileDropdown } from '@/components/ProfileDropdown';
 import { NotificationsDropdown } from '@/components/NotificationsDropdown';
 import {
@@ -11,9 +11,6 @@ import {
   InboxIcon,
   TeamIcon,
   WalletIcon,
-  TimerIcon,
-  CalendarCheckIcon,
-  CalendarIcon,
   TrendingUpIcon,
   MessageCircleIcon,
   GlobeIcon,
@@ -21,6 +18,7 @@ import {
   SettingsIcon,
   HelpIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
@@ -28,7 +26,8 @@ import {
   SearchIcon,
   FingerprintIcon,
   IdCardIcon,
-  BriefcaseIcon,
+  ClipboardCheckIcon,
+  DocumentIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -58,15 +57,41 @@ interface NavItem {
   /** Only show for users holding at least one of these permission codes. */
   requireAnyPermission?: string[];
   badge?: number;
-  children?: { label: string; href: string }[];
+  children?: NavChild[];
+}
+
+/** A submenu link, optionally gated by the same access rules as a top-level
+ * item, so one menu can hold links that only some roles/permissions can see. */
+interface NavChild {
+  label: string;
+  href: string;
+  roles?: RequiredRole[];
+  requireOrgScope?: boolean;
+  requirePermission?: string;
+  requireAnyPermission?: string[];
 }
 
 const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, href: '/', roles: ['admin', 'employee', 'superadmin'] },
+  { id: 'my-onboarding', label: 'My Onboarding', icon: ClipboardCheckIcon, href: '/me/onboarding', roles: ['employee'] },
+  { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'attendance', label: 'Attendance', icon: CalendarCheckIcon, href: '/attendance', roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'leave', label: 'Leave Management', icon: CalendarIcon, href: '/leave', roles: ['admin', 'employee', 'superadmin'] },
-  { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet', roles: ['admin', 'employee', 'superadmin'] },
+  {
+    id: 'approvals',
+    label: 'Approvals',
+    icon: ClipboardCheckIcon,
+    href: '/approvals',
+    roles: ['admin', 'employee', 'superadmin'],
+    children: [
+      { label: 'To approve', href: '/approvals?tab=to-approve' },
+      { label: 'My requests', href: '/approvals?tab=mine' },
+    ],
+  },
+  // Attendance / Leave / Timesheet are hidden until their backends exist. The
+  // pages proxy to /api/{attendance,leave,timesheet}/* which have no matching
+  // backend route (leave's only backend is the minimal example-leave reference,
+  // missing types/balance/holidays), so they render "Upstream error". Re-add
+  // each here when its real (peer-owned) backend lands.
   {
     id: 'finances',
     label: 'My Finances',
@@ -88,19 +113,43 @@ const navItems: NavItem[] = [
   },
   { id: 'team', label: 'My Team', icon: TeamIcon, href: '/team', roles: ['admin', 'employee', 'superadmin'] },
   {
-    id: 'org-all',
-    label: 'Organisation',
+    // Org menu: directory/chart visible to all; admin sections gated to admin+.
+    id: 'org',
+    label: 'Organization',
+    icon: GlobeIcon,
+    href: '/org-module',
+    roles: ['admin', 'superadmin'],
+    children: [
+      { label: 'Dashboard', href: '/org-module', roles: ['admin', 'superadmin'] },
+      { label: 'Employee Directory', href: '/org?tab=directory', requireAnyPermission: ['employees.read', 'employees.write'] },
+      { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
+      { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
+      { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },
+      { label: 'Job Architecture', href: '/org-module/job-families', roles: ['admin', 'superadmin'] },
+      {
+        label: 'Manage Structure',
+        href: '/manage-org',
+        roles: ['admin', 'superadmin'],
+        requireAnyPermission: ['employees.write', 'org.manage'],
+      },
+      { label: 'Onboarding', href: '/onboarding', roles: ['admin', 'superadmin'] },
+      { label: 'Org Changes', href: '/org-module/promotions', roles: ['admin', 'superadmin'] },
+      { label: 'Exits', href: '/exits', roles: ['superadmin'] },
+      { label: 'Settings', href: '/org-module/org-configuration', roles: ['superadmin'] },
+    ],
+  },
+  {
+    // Employee self-service: org directory and chart, visible to all roles.
+    id: 'directory',
+    label: 'Directory',
     icon: GlobeIcon,
     href: '/org',
-    roles: ['admin', 'employee', 'superadmin'],
+    roles: ['employee'],
     children: [
       { label: 'Employee Directory', href: '/org?tab=directory' },
       { label: 'Organisation Chart', href: '/org?tab=chart' },
-      { label: 'Organization Documents', href: '/org?tab=documents' },
     ],
   },
-  { id: 'org', label: 'Organization', icon: TeamIcon, href: '/employees', roles: ['superadmin'], requireOrgScope: true },
-  { id: 'manage-org', label: 'Manage organisation', icon: BriefcaseIcon, href: '/manage-org', roles: ['admin', 'employee', 'superadmin'], requireAnyPermission: ['employees.write', 'org.manage'] },
   {
     id: 'payroll',
     label: 'Payroll',
@@ -124,6 +173,7 @@ const COLLAPSE_STORAGE_KEY = 'hrms-sidebar-collapsed';
 const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/': { title: 'Home', subtitle: 'Overview of your workday and organization updates' },
   '/inbox': { title: 'Inbox', subtitle: 'Review messages, requests, and notifications that need your attention' },
+  '/approvals': { title: 'Approvals', subtitle: 'Approve requests routed to you and track your own' },
   '/me/attendance': { title: 'Attendance', subtitle: 'Track your attendance, timings, and attendance requests' },
   '/leave': { title: 'Leave Management', subtitle: 'View your leave balance, requests, and time off' },
   '/timesheet': { title: 'Timesheet', subtitle: 'Track logged hours across projects and categories' },
@@ -132,11 +182,17 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
+  '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
+  '/me/documents': { title: 'My Documents', subtitle: 'View and download your employment documents' },
+  '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
+  '/me/exit': { title: 'My Exit', subtitle: 'Submit or manage your resignation' },
+  '/exits': { title: 'Exits', subtitle: 'Review resignations and record employee exits' },
+  '/policies': { title: 'Policies', subtitle: 'Manage company policies and track employee acknowledgments' },
   '/engage': { title: 'Engage', subtitle: 'Connect with colleagues and stay updated with your organization' },
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
   '/apps': { title: 'Apps', subtitle: 'Access the tools and applications available to you' },
@@ -153,6 +209,53 @@ function getPageTitle(pathname: string) {
   return match ? pageTitles[match] : null;
 }
 
+/** Uniform page sub-nav: the active sidebar menu's children rendered as tabs
+ * below the page heading. Reads the URL so a `?tab=` child highlights correctly
+ * (defaulting to the first tab child when no tab is set). */
+function SubNav({ items }: { items: NavChild[] }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  if (items.length === 0) return null;
+
+  const parsed = items.map((c) => {
+    const [path, query] = c.href.split('?');
+    return { ...c, path, tab: query ? new URLSearchParams(query).get('tab') : null };
+  });
+  const currentTab = searchParams.get('tab');
+
+  const isActive = (c: (typeof parsed)[number]) => {
+    if (pathname !== c.path && !pathname.startsWith(`${c.path}/`)) return false;
+    if (c.tab == null) return true;
+    const tabsHere = parsed.filter((x) => x.path === c.path && x.tab != null);
+    return c.tab === (currentTab ?? tabsHere[0]?.tab);
+  };
+
+  return (
+    <div className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8">
+      <div className="flex gap-5 overflow-x-auto scrollbar-hide" role="tablist">
+        {parsed.map((c) => {
+          const active = isActive(c);
+          return (
+            <Link
+              key={c.href}
+              href={c.href}
+              role="tab"
+              aria-selected={active}
+              className={`px-1 py-3 border-b-2 text-sm font-semibold whitespace-nowrap transition-colors ${
+                active
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              {c.label}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, hasOrgScope, hasPermission } = useAuth();
   const router = useRouter();
@@ -166,6 +269,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [isAuthenticated, isLoading, router]);
+
+  // Forced temporary-password change (T06): a user with the flag set stays
+  // on the change-password screen until the flag clears — nothing else in
+  // the app is reachable.
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user?.mustChangePassword) {
+      router.push('/change-password');
+    }
+  }, [isAuthenticated, isLoading, user, router]);
 
   useEffect(() => {
     setIsMobileNavOpen(false);
@@ -201,23 +313,41 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  const filteredNavItems = navItems.filter(
-    (item) =>
-      !!user &&
-      item.roles.includes(user.role as RequiredRole) &&
-      (!item.requireOrgScope || hasOrgScope()) &&
-      (!item.requirePermission || hasPermission(item.requirePermission)) &&
-      (!item.requireAnyPermission || item.requireAnyPermission.some((code) => hasPermission(code))),
-  );
+  // Shared access test for a top-level item or a submenu child.
+  const canAccess = (rules: {
+    roles?: RequiredRole[];
+    requireOrgScope?: boolean;
+    requirePermission?: string;
+    requireAnyPermission?: string[];
+  }) =>
+    !!user &&
+    (!rules.roles || rules.roles.includes(user.role as RequiredRole)) &&
+    (!rules.requireOrgScope || hasOrgScope()) &&
+    (!rules.requirePermission || hasPermission(rules.requirePermission)) &&
+    (!rules.requireAnyPermission || rules.requireAnyPermission.some((code) => hasPermission(code)));
+
+  const filteredNavItems = navItems.filter(canAccess);
 
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   const currentPageTitle = getPageTitle(pathname);
 
+  // The sidebar menu the current page belongs to, and its access-filtered
+  // children — mirrored as a sub-nav bar under the page heading (uniform).
+  const matchPath = (h: string) => {
+    const p = h.split('?')[0];
+    return p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
+  };
+  const activeItem = navItems.find(
+    (it) => matchPath(it.href) || it.children?.some((c) => matchPath(c.href)),
+  );
+  const subNavChildren = activeItem?.children?.filter(canAccess) ?? [];
+
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
     const active = isActive(item.href);
-    const hasChildren = !!item.children?.length;
+    const visibleChildren = item.children?.filter(canAccess) ?? [];
+    const hasChildren = visibleChildren.length > 0;
     const expanded = expandedId === item.id;
 
     return (
@@ -274,7 +404,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {hasChildren && expanded && !collapsed ? (
           <div className="mt-1 ml-8 space-y-0.5 border-l border-slate-700 pl-3">
-            {item.children!.map((child) => (
+            {visibleChildren.map((child) => (
               <Link
                 key={child.label}
                 href={child.href}
@@ -379,11 +509,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Shared top bar, visible on every page */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
           {currentPageTitle ? (
-            <div className="min-w-0 shrink-0">
-              <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
-              {currentPageTitle.subtitle ? (
-                <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+            <div className="min-w-0 shrink-0 flex items-center gap-1.5">
+              {pathname !== '/' ? (
+                <button
+                  type="button"
+                  onClick={() => router.back()}
+                  aria-label="Go back"
+                  title="Go back"
+                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
+                >
+                  <ChevronLeftIcon className="w-5 h-5" />
+                </button>
               ) : null}
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
+                {currentPageTitle.subtitle ? (
+                  <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -423,6 +566,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </header>
+
+        {subNavChildren.length > 0 ? (
+          <Suspense fallback={null}>
+            <SubNav items={subNavChildren} />
+          </Suspense>
+        ) : null}
 
         <div className="flex-1 overflow-y-auto">{children}</div>
       </div>

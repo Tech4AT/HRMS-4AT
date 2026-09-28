@@ -37,7 +37,7 @@ from accounts.serializers import (
 )
 from accounts.services import revoke_all_sessions
 from audit.service import write_audit
-from core.scope import resolve_management_scope, user_effective_permissions
+from core.scope import primary_archetype, resolve_management_scope, user_effective_permissions
 
 User = get_user_model()
 
@@ -185,8 +185,13 @@ class MeView(APIView):
 
     def get(self, request):
         user = request.user
-        role = user.role
-        roles = [{"name": role.name, "archetype": role.archetype}] if role else []
+        # Multi-role (docs/MULTI-ROLE-TESTS.md D2): `roles` is the sorted
+        # list of ACTIVE role names, `archetype` the single deterministic
+        # primary (most-privileged active role; employee-if-employee-record
+        # when holding none), `permissions` the flat effective set.
+        roles = sorted(
+            user.roles.filter(is_active=True).values_list("name", flat=True)
+        )
 
         return Response(
             {
@@ -197,8 +202,10 @@ class MeView(APIView):
                     "firstName": user.first_name,
                     "lastName": user.last_name,
                     "roles": roles,
+                    "archetype": primary_archetype(user),
                     "permissions": sorted(user_effective_permissions(user)),
                     "scope": resolve_management_scope(user),
+                    "mustChangePassword": user.must_change_password,
                 },
             }
         )
@@ -269,9 +276,90 @@ class ChangePasswordView(APIView):
 
         with transaction.atomic():
             user.set_password(new)
-            user.save(update_fields=["password"])
+            # A successful change clears the forced-change flag an admin-set
+            # temporary password raised (T06) — including the user's own first
+            # change, which is exactly the case that must clear it.
+            user.must_change_password = False
+            user.save(update_fields=["password", "must_change_password"])
             revoked = revoke_all_sessions(user)
             write_audit(
                 user, "user.password_changed", "User", user.pk, {"sessionsRevoked": revoked}
             )
         return Response({"success": True, "data": _issue_tokens(user)})
+
+
+class PasswordSetupCheckView(APIView):
+    """GET /auth/set-password/<token> — validate a one-time set-password link
+    and return the email address it belongs to, without consuming the token."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        from accounts.models import consume_password_setup_token
+        record = consume_password_setup_token(token)
+        if record is None:
+            return _error(
+                "INVALID_TOKEN",
+                "This link is invalid or has already been used.",
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({"success": True, "data": {"email": record.user.email}})
+
+
+class PasswordSetupCompleteView(APIView):
+    """POST /auth/set-password/<token>/complete — consume the token, set the
+    new password, activate the account, and return JWT tokens so the candidate
+    lands already signed in."""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, token):
+        from accounts.models import consume_password_setup_token
+        from django.utils import timezone
+
+        record = consume_password_setup_token(token)
+        if record is None:
+            return _error(
+                "INVALID_TOKEN",
+                "This link is invalid or has already been used.",
+                http_status=status.HTTP_404_NOT_FOUND,
+            )
+
+        password = request.data.get("password", "")
+        # CamelCaseJSONParser converts confirmPassword → confirm_password
+        confirm = request.data.get("confirm_password", "")
+
+        if not password:
+            return _error("VALIDATION_ERROR", "Password is required.", {"password": ["This field is required."]})
+        if password != confirm:
+            return _error("VALIDATION_ERROR", "Passwords do not match.", {"confirmPassword": ["Passwords do not match."]})
+
+        user = record.user
+        try:
+            validate_password(password, user)
+        except DjangoValidationError as exc:
+            return _error("VALIDATION_ERROR", "Password does not meet requirements.", {"password": list(exc.messages)})
+
+        with transaction.atomic():
+            user.set_password(password)
+            user.is_active = True
+            user.must_change_password = False
+            user.save(update_fields=["password", "is_active", "must_change_password"])
+            record.used_at = timezone.now()
+            record.save(update_fields=["used_at"])
+            write_audit(user, "user.password_setup_completed", "User", user.pk, {})
+
+        tokens = _issue_tokens(user)
+        return Response({
+            "success": True,
+            "data": {
+                "accessToken": tokens["accessToken"],
+                "refreshToken": tokens["refreshToken"],
+                "user": {
+                    "id": user.pk,
+                    "email": user.email,
+                    "firstName": user.first_name,
+                    "lastName": user.last_name,
+                },
+            },
+        })

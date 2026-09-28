@@ -1,10 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [theme, setTheme] = useState('light');
   const [notifications, setNotifications] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
@@ -23,7 +25,12 @@ export default function SettingsPage() {
                 <p className="text-sm text-gray-600">{user?.email}</p>
               </div>
             </div>
-            <button className="text-blue-600 hover:text-blue-700 font-medium text-sm">Change Password</button>
+            <button
+              onClick={() => router.push('/change-password')}
+              className="text-blue-600 hover:text-blue-700 font-medium text-sm"
+            >
+              Change Password
+            </button>
           </div>
         </div>
 

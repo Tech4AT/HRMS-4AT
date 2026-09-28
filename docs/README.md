@@ -9,7 +9,8 @@ unchanged.
 4AT-HRMS/
 ├── docs/       ← you are here
 ├── frontend/   ← existing Next.js app, moved as-is
-└── backend/    ← new Django + DRF backend (not yet implemented)
+└── backend/    ← Django + DRF backend (implemented on the RBAC branch —
+                see IMPLEMENTATION-STATUS.md for what is built)
 ```
 
 ## Documentation map
@@ -86,5 +87,7 @@ below so they don't get silently picked up as ambiguity later.
 - ✅ Frontend moved into `frontend/`, unchanged, confirmed to have no absolute-path or
   repo-location dependencies.
 - ✅ Documentation consolidated into `docs/`.
-- ⬜ `backend/` is an empty placeholder — implementation has not started (see
-  [TASKS.md](TASKS.md) for the first tasks, Phase 0).
+- ✅ `backend/` implemented on the RBAC branch — RBAC core, approvals,
+  audit, notifications, employees, payroll, documents, example_leave (see
+  [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md); the original
+  [TASKS.md](TASKS.md) Phase 0 plan is history).

@@ -63,7 +63,7 @@ def test_hr_creates_an_employee_with_a_login_that_cannot_be_used_yet():
     assert data["department_id"] == str(department.pk)
     user = User.objects.get(email="nia.north@example.com")
     assert user.has_usable_password() is False
-    assert user.role.name == "Employee"
+    assert list(user.roles.values_list("name", flat=True)) == ["Employee"]
     assert AuditLog.objects.filter(action="Employee.created", entity_id=data["id"]).exists()
 
 
@@ -71,7 +71,7 @@ def test_a_role_in_the_request_body_is_ignored():
     """employees.write must not be a way to assign roles; that is roles.manage."""
     _hr().post(URL, _body(role="HR Admin", role_id=1), format="json")
 
-    assert User.objects.get(email="nia.north@example.com").role.name == "Employee"
+    assert list(User.objects.get(email="nia.north@example.com").roles.values_list("name", flat=True)) == ["Employee"]
 
 
 def test_duplicate_email_and_employee_code_are_rejected_with_field_errors():

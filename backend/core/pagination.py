@@ -9,7 +9,11 @@ class ContractPageNumberPagination(PageNumberPagination):
 
     page_size = 20
     page_size_query_param = "pageSize"
-    max_page_size = 100
+    # Admin screens (role member pickers, "assign role") load the whole
+    # directory in one page to search and count across every employee; at 100
+    # the tail of a 146-person org was unreachable. ponytail: flat 1000 cap,
+    # fine at this org scale — switch the pickers to cursor paging if it grows.
+    max_page_size = 1000
 
     def get_paginated_response(self, data):
         return Response(

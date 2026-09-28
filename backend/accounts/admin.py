@@ -28,5 +28,11 @@ class UserPermissionOverrideAdmin(admin.ModelAdmin):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    fieldsets = BaseUserAdmin.fieldsets + (("HRMS", {"fields": ("role",)}),)
-    list_display = (*BaseUserAdmin.list_display, "role")
+    fieldsets = BaseUserAdmin.fieldsets + (("HRMS", {"fields": ("roles",)}),)
+    list_display = (*BaseUserAdmin.list_display, "role_names")
+    filter_horizontal = ("roles",)
+
+    def role_names(self, obj):
+        return ", ".join(obj.roles.order_by("name").values_list("name", flat=True))
+
+    role_names.short_description = "Roles"

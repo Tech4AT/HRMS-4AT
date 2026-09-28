@@ -25,8 +25,13 @@ from employees.models import (
     Department,
     Designation,
     Employee,
+    Grade,
+    JobFamily,
     LegalEntity,
+    Level,
     Location,
+    Position,
+    Team,
 )
 from employees.serializers import (
     BusinessUnitAdminSerializer,
@@ -41,12 +46,56 @@ from employees.serializers import (
     EmployeeWriteSerializer,
     EssProfileSerializer,
     EssProfileWriteSerializer,
+    GradeAdminSerializer,
+    GradeSerializer,
+    JobFamilyAdminSerializer,
+    JobFamilySerializer,
     LegalEntityAdminSerializer,
     LegalEntitySerializer,
+    LevelAdminSerializer,
+    LevelSerializer,
     LocationAdminSerializer,
     LocationSerializer,
     PersonalSerializer,
+    PositionAdminSerializer,
+    PositionSerializer,
+    TeamAdminSerializer,
+    TeamSerializer,
 )
+
+
+class OrgDirectoryViewSet(FrontendEnvelopeMixin, viewsets.ReadOnlyModelViewSet):
+    """Company-wide, read-only org directory — the source for the Organisation
+    page's chart and directory tabs. Every authenticated user sees the whole
+    company (names, titles, reporting lines), independent of RBAC scope, so the
+    org chart is complete for everyone. Deliberately unscoped: this is directory
+    data, not the sensitive per-employee surface (payroll, personal details,
+    edits) which stays scoped on EmployeeViewSet and the admin endpoints. Reuses
+    EmployeeSerializer (no salary/bank fields) → same {success, data} snake_case
+    shape as /employees. Exited people are excluded so the chart shows the
+    current org."""
+
+    serializer_class = EmployeeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return (
+            Employee.objects.select_related(
+                "user",
+                "manager__user",
+                "department",
+                "designation",
+                "location",
+                "legal_entity",
+                "business_unit",
+                "cost_center",
+                "position",
+                "level",
+                "grade",
+            )
+            .exclude(status=EmployeeStatus.EXITED)
+            .order_by("user__first_name", "user__last_name")
+        )
 
 
 class EmployeeViewSet(
@@ -76,7 +125,7 @@ class EmployeeViewSet(
     permission_classes = [ScopedEmployeePermission]
     required_permission = "employees.read"
     write_permission = "employees.write"
-    action_permissions = {"personal": "employees.personal.read"}
+    action_permissions = {"personal": "employees.personal.read", "lookup": None}
     http_method_names = ["get", "post", "patch", "head", "options"]
     filter_backends = [filters.SearchFilter]
     search_fields = ["employee_code", "user__first_name", "user__last_name", "user__email"]
@@ -91,6 +140,9 @@ class EmployeeViewSet(
             "legal_entity",
             "business_unit",
             "cost_center",
+            "position",
+            "level",
+            "grade",
         )
         if self.action != "list":
             return base
@@ -197,6 +249,29 @@ class EmployeeViewSet(
             employee.exit_reason = ""
             employee.save(update_fields=["date_of_exit", "exit_reason"])
             write_audit(actor, "Employee.reactivated", "Employee", employee.pk)
+
+    # -- lookup (manager/buddy dropdowns) -----------------------------------
+
+    @action(detail=False, methods=["get"], url_path="lookup", permission_classes=[IsAuthenticated])
+    def lookup(self, request):
+        """Minimal employee list for manager/buddy dropdowns.
+        Returns all non-exited employees regardless of scope — the same people
+        any HR admin would pick from when assigning a manager or buddy."""
+        qs = (
+            Employee.objects.select_related("user")
+            .exclude(status=EmployeeStatus.EXITED)
+            .order_by("first_name", "last_name")
+        )
+        data = [
+            {
+                "id": emp.id,
+                "name": f"{emp.first_name} {emp.last_name}".strip() or emp.work_email,
+                "workEmail": emp.work_email,
+                "employeeCode": emp.employee_code,
+            }
+            for emp in qs
+        ]
+        return Response({"success": True, "data": data})
 
     # -- personal details ---------------------------------------------------
 
@@ -311,6 +386,43 @@ class CostCenterViewSet(_EmployeeReadOnlyReferenceViewSet):
     serializer_class = CostCenterSerializer
 
 
+class TeamViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = Team.objects.filter(is_active=True).select_related("department", "lead__user")
+    serializer_class = TeamSerializer
+
+
+class JobFamilyViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = JobFamily.objects.filter(is_active=True)
+    serializer_class = JobFamilySerializer
+
+
+class LevelViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = Level.objects.filter(is_active=True)
+    serializer_class = LevelSerializer
+
+
+class GradeViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = Grade.objects.filter(is_active=True)
+    serializer_class = GradeSerializer
+
+
+class PositionViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = (
+        Position.objects.filter(is_active=True)
+        .select_related(
+            "department",
+            "job_title",
+            "level",
+            "grade",
+            "business_unit",
+            "reports_to",
+            "incumbent__user",
+        )
+        .order_by("name")
+    )
+    serializer_class = PositionSerializer
+
+
 # ---- managing the organisation structure (org.manage) ----
 
 
@@ -410,3 +522,99 @@ class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = CostCenterAdminSerializer
     audit_entity_type = "CostCenter"
     search_on_code = True
+
+
+class TeamAdminViewSet(AuditedModelViewSet):
+    """Teams are referenced by nothing, so there is nothing to block on —
+    every change is still audited. ?search= filters by team name."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = TeamAdminSerializer
+    audit_entity_type = "Team"
+
+    def get_queryset(self):
+        queryset = Team.objects.select_related("department", "lead__user")
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        return queryset.order_by("name")
+
+
+class JobFamilyAdminViewSet(AuditedModelViewSet):
+    """Job families are referenced by nothing, so like teams they carry no
+    delete blockers. ?search= filters by name."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = JobFamilyAdminSerializer
+    audit_entity_type = "JobFamily"
+
+    def get_queryset(self):
+        queryset = JobFamily.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        return queryset.order_by("name")
+
+
+class _JobArchAdminViewSet(_OrgUnitAdminViewSet):
+    """Level/Grade admin: people may sit at a level/grade directly (Employee
+    FKs) and approved seats may point at it (Position FKs) — both block a
+    delete, and both counts are reported on the row."""
+
+    def get_queryset(self):
+        return super().get_queryset().annotate(position_count=Count("positions", distinct=True))
+
+    def _blockers(self, instance):
+        return instance.employees.count() + instance.positions.count()
+
+    def perform_destroy(self, instance):
+        in_use = self._blockers(instance)
+        if in_use:
+            noun = "assignment" if in_use == 1 else "assignments"
+            raise Conflict(
+                f"{in_use} people/seat {noun} still point at "
+                f"'{instance.name}'. Move them first, or deactivate it instead of deleting it."
+            )
+        AuditedModelViewSet.perform_destroy(self, instance)
+
+
+class LevelAdminViewSet(_JobArchAdminViewSet):
+    model = Level
+    serializer_class = LevelAdminSerializer
+    audit_entity_type = "Level"
+
+
+class GradeAdminViewSet(_JobArchAdminViewSet):
+    model = Grade
+    serializer_class = GradeAdminSerializer
+    audit_entity_type = "Grade"
+
+
+class PositionAdminViewSet(AuditedModelViewSet):
+    """Approved seats. ?search= filters by seat name, ?status= by seat status.
+    Deleting a seat is allowed (it is just an approval record) and audited."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = PositionAdminSerializer
+    audit_entity_type = "Position"
+
+    def get_queryset(self):
+        queryset = Position.objects.select_related(
+            "department",
+            "job_title",
+            "level",
+            "grade",
+            "business_unit",
+            "reports_to",
+            "incumbent__user",
+        )
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        status = self.request.query_params.get("status")
+        if status:
+            queryset = queryset.filter(status=status)
+        return queryset.order_by("name")

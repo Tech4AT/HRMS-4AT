@@ -171,8 +171,8 @@ class Command(BaseCommand):
             admin = User(email=ADMIN_EMAIL, username=ADMIN_EMAIL, first_name="Admin",
                          last_name="", is_staff=True, is_superuser=True)
             admin.set_password(ADMIN_PW)
-            admin.role = roles.get("HR Admin")
             admin.save()
+            admin.roles.add(roles.get("HR Admin"))
             logins = [(ADMIN_EMAIL, ADMIN_PW, "HR Admin (superuser)")]
 
             def give(emp, role_name):
@@ -180,16 +180,28 @@ class Command(BaseCommand):
                     return
                 u = emp.user
                 u.set_password(DEMO_PW)
-                u.role = roles.get(role_name)
                 u.save()
+                u.roles.add(roles.get(role_name))
                 logins.append((u.email, DEMO_PW, f"{role_name} — {u.get_full_name()}"))
 
-            mgr = max(emps, key=lambda x: Employee.objects.filter(manager=x).count())
-            give(mgr, "Manager")
-            for rep in Employee.objects.filter(manager=mgr)[:2]:
-                give(rep, "Employee")
-            hr = Employee.objects.filter(department__name__icontains="HR").exclude(pk=mgr.pk).first()
-            give(hr, "HR Admin")
+            # EXPLICIT demo logins by email (durable: this command re-runs on
+            # every backend boot, so role holders must be pinned here, not just
+            # in the DB). Nobody else gets a demo password or a role, so only
+            # admin + these 4 can log in. Everyone else stays in the directory
+            # with an unusable password and no roles.
+            DEMO_LOGINS = [
+                ("4at0111@consult-4at.com", "HR Admin"),
+                ("4at0181@consult-4at.com", "Employee"),
+                ("4at0187@consult-4at.com", "Manager"),
+                ("4at0070@consult-4at.com", "Finance"),
+            ]
+            by_email = {e.user.email.lower(): e for e in emps}
+            for email, role_name in DEMO_LOGINS:
+                emp = by_email.get(email.lower())
+                if emp is None:
+                    self.stdout.write(f"  WARNING: demo login email not found: {email}")
+                    continue
+                give(emp, role_name)
 
         self.stdout.write(self.style.SUCCESS(
             f"Loaded {len(emps)} employees, {linked} manager links. Logins:"))

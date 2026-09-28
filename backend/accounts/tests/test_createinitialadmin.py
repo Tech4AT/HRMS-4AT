@@ -33,7 +33,7 @@ def test_creates_admin_with_hr_admin_role_and_employee_record(monkeypatch):
     call_command("createinitialadmin")
 
     user = User.objects.get(email="admin@example.com")
-    assert user.role_id == role.id
+    assert list(user.roles.values_list("pk", flat=True)) == [role.id]
     assert user.check_password("a-real-password-123")
     assert Employee.objects.filter(user=user).exists()
 

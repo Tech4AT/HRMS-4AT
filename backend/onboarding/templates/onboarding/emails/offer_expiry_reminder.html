@@ -1,0 +1,20 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Your offer expires soon — {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Your offer is still waiting, {{ first_name }}</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  Just a reminder that your offer letter for <strong>{{ designation }}</strong> is still awaiting your response,
+  and the secure signing link expires on <strong>{{ expires_at }}</strong>.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
+  <tr>
+    <td style="border-radius:10px; background-color:#7c3aed;">
+      <a href="{{ signing_url }}" style="display:inline-block; padding:13px 28px; font-size:14px; font-weight:700; color:#ffffff; text-decoration:none;">Review &amp; Sign Offer</a>
+    </td>
+  </tr>
+</table>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Questions before you decide? Just reply to this email.<br>
+  <strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

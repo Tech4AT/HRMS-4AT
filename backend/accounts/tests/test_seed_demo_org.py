@@ -24,7 +24,7 @@ def test_creates_the_eight_people_with_working_logins():
 
     assert _demo_employees().count() == 8
     hana = User.objects.get(email="demo.hana@hrms.local")
-    assert hana.check_password("DemoPass123!") and hana.role.name == "HR Admin"
+    assert hana.check_password("DemoPass123!") and list(hana.roles.values_list("name", flat=True)) == ["HR Admin"]
 
 
 def test_rebuilds_the_reporting_lines():

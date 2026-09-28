@@ -8,22 +8,23 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login, isLoading, isAuthenticated } = useAuth();
+  const { login, isLoading, isAuthenticated, user } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/');
+      // A temporary admin-issued password forces a change first (T06).
+      router.push(user?.mustChangePassword ? '/change-password' : '/');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, user, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     try {
-      await login(email, password);
-      router.push('/');
+      const mustChange = await login(email, password);
+      router.push(mustChange ? '/change-password' : '/');
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : 'Invalid email or password');
     }

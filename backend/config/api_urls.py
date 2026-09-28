@@ -16,6 +16,7 @@ CORE_APPS = {"employees", "accounts"}
 urlpatterns = [
     path("", include("employees.urls")),
     path("", include("accounts.urls")),
+    path("exits/", include("employees.urls_exits")),
 ]
 
 for _app in settings.INSTALLED_APPS:

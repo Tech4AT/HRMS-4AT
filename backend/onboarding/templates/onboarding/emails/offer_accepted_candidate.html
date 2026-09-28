@@ -1,0 +1,13 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}You accepted your offer — {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Welcome to the team, {{ first_name }}!</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  Thanks for signing — your acceptance has been recorded. We'll email you shortly with your preboarding checklist:
+  a short list of documents and details we need before your first day.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Looking forward to having you on board,<br>
+  <strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}
