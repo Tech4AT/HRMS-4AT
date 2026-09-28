@@ -315,6 +315,7 @@ export function RolesTab() {
 
       {builder && (
         <RoleBuilder
+          key={builder.role?.id ?? 'new'}
           role={builder.role}
           permissions={permissions}
           onClose={() => setBuilder(null)}

@@ -239,7 +239,7 @@ export function UsersTab() {
           subtitle={exceptionsUser.email}
           onClose={() => setExceptionsId(null)}
         >
-          <ExceptionsSection person={exceptionsUser} permissions={permissions} onChanged={() => {}} />
+          <ExceptionsSection person={exceptionsUser} permissions={permissions} onChanged={load} />
         </Drawer>
       )}
     </div>
