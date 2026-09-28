@@ -10,6 +10,12 @@ def _display_name(employee) -> str:
 
 
 class LeaveTypeSerializer(serializers.ModelSerializer):
+    # `lib/api/leave.ts` types `id` as `string`; found returning a bare int
+    # during a comprehensive post-Step-6 audit — same class of bug as
+    # org_calendar's serializers, missed here despite fixing it on every other
+    # id in this same file (leave_type_id, employee_id, ...).
+    id = serializers.SerializerMethodField()
+
     class Meta:
         model = LeaveType
         fields = [
@@ -25,6 +31,9 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
             "status",
         ]
         read_only_fields = ["id", "code", "status"]
+
+    def get_id(self, obj) -> str:
+        return str(obj.pk)
 
 
 class LeaveBalanceSerializer(serializers.ModelSerializer):

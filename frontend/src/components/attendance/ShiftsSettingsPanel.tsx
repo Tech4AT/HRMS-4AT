@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { getEmployeeDirectory, type DirectoryEmployee } from '@/lib/api/employees';
 import {
-  SAMPLE_SHIFTS,
-  SAMPLE_SHIFT_EMPLOYEES,
+  shiftsApi,
+  ShiftsApiError,
   formatMinutes,
   formatShiftTime,
   shiftWorkingMinutes,
   type Shift,
-} from '@/lib/attendance/shifts';
+} from '@/lib/api/shifts';
 
 type ShiftDraft = {
   name: string;
@@ -21,24 +22,24 @@ type ShiftDraft = {
 
 const EMPTY_DRAFT: ShiftDraft = { name: '', startTime: '09:30', endTime: '18:30', breakMinutes: 60, employeeIds: [] };
 
-function employeeNames(ids: string[]): string {
+function employeeNames(ids: string[], employees: DirectoryEmployee[]): string {
   if (ids.length === 0) return 'No employees assigned';
   return ids
-    .map((id) => SAMPLE_SHIFT_EMPLOYEES.find((e) => e.id === id)?.name)
+    .map((id) => employees.find((e) => e.id === id)?.name)
     .filter(Boolean)
     .join(', ');
 }
 
-const TEAMS = Array.from(new Set(SAMPLE_SHIFT_EMPLOYEES.map((e) => e.team)));
-
 /** Full-roster picker for assigning employees to a shift - a flat list of
  * pills doesn't scale once there are more than a handful of employees, so
- * this opens as a popup with search and per-team "select all" instead. */
+ * this opens as a popup with search and per-department "select all" instead. */
 function AssignEmployeesModal({
+  employees,
   initialSelected,
   onCancel,
   onConfirm,
 }: {
+  employees: DirectoryEmployee[];
   initialSelected: string[];
   onCancel: () => void;
   onConfirm: (ids: string[]) => void;
@@ -46,24 +47,31 @@ function AssignEmployeesModal({
   const [selected, setSelected] = useState<string[]>(initialSelected);
   const [search, setSearch] = useState('');
 
+  const departments = Array.from(new Set(employees.map((e) => e.department)));
+
   const toggle = (id: string) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((e) => e !== id) : [...prev, id]));
   };
 
-  const teamMemberIds = (team: string) => SAMPLE_SHIFT_EMPLOYEES.filter((e) => e.team === team).map((e) => e.id);
+  const departmentMemberIds = (department: string) =>
+    employees.filter((e) => e.department === department).map((e) => e.id);
 
-  const toggleTeam = (team: string) => {
-    const ids = teamMemberIds(team);
+  const toggleDepartment = (department: string) => {
+    const ids = departmentMemberIds(department);
     const allSelected = ids.every((id) => selected.includes(id));
     setSelected((prev) =>
       allSelected ? prev.filter((id) => !ids.includes(id)) : Array.from(new Set([...prev, ...ids])),
     );
   };
 
-  const filteredByTeam = TEAMS.map((team) => ({
-    team,
-    members: SAMPLE_SHIFT_EMPLOYEES.filter((e) => e.team === team && e.name.toLowerCase().includes(search.toLowerCase())),
-  })).filter(({ members }) => members.length > 0);
+  const filteredByDepartment = departments
+    .map((department) => ({
+      department,
+      members: employees.filter(
+        (e) => e.department === department && e.name.toLowerCase().includes(search.toLowerCase()),
+      ),
+    }))
+    .filter(({ members }) => members.length > 0);
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={onCancel}>
@@ -91,21 +99,21 @@ function AssignEmployeesModal({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {filteredByTeam.length === 0 ? (
+          {filteredByDepartment.length === 0 ? (
             <p className="text-sm text-slate-400">No employees match your search.</p>
           ) : (
-            filteredByTeam.map(({ team, members }) => {
-              const allSelected = teamMemberIds(team).every((id) => selected.includes(id));
+            filteredByDepartment.map(({ department, members }) => {
+              const allSelected = departmentMemberIds(department).every((id) => selected.includes(id));
               return (
-                <div key={team}>
+                <div key={department}>
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-semibold text-slate-500 uppercase">{team}</span>
+                    <span className="text-xs font-semibold text-slate-500 uppercase">{department}</span>
                     <button
                       type="button"
-                      onClick={() => toggleTeam(team)}
+                      onClick={() => toggleDepartment(department)}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
                     >
-                      {allSelected ? 'Unselect team' : 'Select team'}
+                      {allSelected ? 'Unselect all' : 'Select all'}
                     </button>
                   </div>
                   <div className="space-y-1">
@@ -154,19 +162,26 @@ function AssignEmployeesModal({
 
 function ShiftForm({
   draft,
+  employees,
   onChange,
   onCancel,
   onSave,
+  saving,
+  error,
 }: {
   draft: ShiftDraft;
+  employees: DirectoryEmployee[];
   onChange: (next: ShiftDraft) => void;
   onCancel: () => void;
   onSave: () => void;
+  saving: boolean;
+  error: string | null;
 }) {
   const [assigning, setAssigning] = useState(false);
 
   return (
     <div className="border border-slate-200 rounded-lg p-4 space-y-4 bg-slate-50">
+      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
       <div>
         <label className="block text-xs font-semibold text-slate-600 mb-1">Shift name</label>
         <input
@@ -217,10 +232,11 @@ function ShiftForm({
           onClick={() => setAssigning(true)}
           className="w-full text-left text-sm border border-slate-200 rounded-lg px-3 py-2 text-slate-700 hover:bg-white transition-colors"
         >
-          {draft.employeeIds.length ? employeeNames(draft.employeeIds) : 'No employees assigned — click to assign'}
+          {draft.employeeIds.length ? employeeNames(draft.employeeIds, employees) : 'No employees assigned — click to assign'}
         </button>
         {assigning ? (
           <AssignEmployeesModal
+            employees={employees}
             initialSelected={draft.employeeIds}
             onCancel={() => setAssigning(false)}
             onConfirm={(ids) => {
@@ -234,13 +250,14 @@ function ShiftForm({
       <div className="flex items-center gap-2 pt-1">
         <button
           onClick={onSave}
-          disabled={!draft.name.trim() || !draft.startTime || !draft.endTime}
+          disabled={saving || !draft.name.trim() || !draft.startTime || !draft.endTime}
           className="text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Save shift
+          {saving ? 'Saving…' : 'Save shift'}
         </button>
         <button
           onClick={onCancel}
+          disabled={saving}
           className="text-sm font-medium px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
         >
           Cancel
@@ -250,31 +267,63 @@ function ShiftForm({
   );
 }
 
-/** Settings > Shifts. Frontend-only for now (no backend to persist to) -
- *  create shifts with a start/end time and break duration, and assign
- *  employees to each one from a small sample roster. */
+/** Settings > Shifts. Real data (PLAN.md Step 6/11): shifts persist via
+ *  `shiftsApi`, and the assignment picker draws from the real employee
+ *  directory (`/api/employees` + `/api/departments`) instead of a sample
+ *  roster. */
 export function ShiftsSettingsPanel() {
-  const [shifts, setShifts] = useState<Shift[]>(SAMPLE_SHIFTS);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [employees, setEmployees] = useState<DirectoryEmployee[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const [addingNew, setAddingNew] = useState(false);
   const [newDraft, setNewDraft] = useState<ShiftDraft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ShiftDraft>(EMPTY_DRAFT);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const refresh = () => {
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([shiftsApi.getShifts(), getEmployeeDirectory()])
+      .then(([shiftList, employeeList]) => {
+        setShifts(shiftList);
+        setEmployees(employeeList);
+      })
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load shifts'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(refresh, []);
 
   const startAdd = () => {
     setEditingId(null);
     setNewDraft(EMPTY_DRAFT);
+    setFormError(null);
     setAddingNew(true);
   };
 
-  const saveNew = () => {
-    setShifts((prev) => [...prev, { id: `shift-${Date.now()}`, ...newDraft, name: newDraft.name.trim() }]);
-    setAddingNew(false);
+  const saveNew = async () => {
+    setSaving(true);
+    setFormError(null);
+    try {
+      await shiftsApi.createShift({ ...newDraft, name: newDraft.name.trim() });
+      setAddingNew(false);
+      refresh();
+    } catch (e) {
+      setFormError(e instanceof ShiftsApiError ? e.message : 'Could not create this shift');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const startEdit = (shift: Shift) => {
     setAddingNew(false);
     setEditingId(shift.id);
+    setFormError(null);
     setEditDraft({
       name: shift.name,
       startTime: shift.startTime,
@@ -284,17 +333,31 @@ export function ShiftsSettingsPanel() {
     });
   };
 
-  const saveEdit = () => {
-    setShifts((prev) =>
-      prev.map((s) => (s.id === editingId ? { ...s, ...editDraft, name: editDraft.name.trim() } : s)),
-    );
-    setEditingId(null);
+  const saveEdit = async () => {
+    if (!editingId) return;
+    setSaving(true);
+    setFormError(null);
+    try {
+      await shiftsApi.updateShift(editingId, { ...editDraft, name: editDraft.name.trim() });
+      setEditingId(null);
+      refresh();
+    } catch (e) {
+      setFormError(e instanceof ShiftsApiError ? e.message : 'Could not update this shift');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const deleteShift = (id: string) => {
-    setShifts((prev) => prev.filter((s) => s.id !== id));
-    if (editingId === id) setEditingId(null);
-    setDeletingId(null);
+  const deleteShift = async (id: string) => {
+    try {
+      await shiftsApi.deleteShift(id);
+      if (editingId === id) setEditingId(null);
+      refresh();
+    } catch {
+      // Leave the row in place — the list stays accurate either way on refresh.
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const deletingShift = shifts.find((s) => s.id === deletingId);
@@ -306,7 +369,7 @@ export function ShiftsSettingsPanel() {
           <h3 className="text-sm font-bold text-slate-900">Shifts</h3>
           <p className="text-xs text-slate-500 mt-1">Define work shifts and assign them to employees.</p>
         </div>
-        {addingNew ? null : (
+        {addingNew || loading ? null : (
           <button
             onClick={startAdd}
             className="text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0"
@@ -316,53 +379,72 @@ export function ShiftsSettingsPanel() {
         )}
       </div>
 
-      {addingNew ? (
-        <ShiftForm draft={newDraft} onChange={setNewDraft} onCancel={() => setAddingNew(false)} onSave={saveNew} />
-      ) : null}
-
-      {shifts.length === 0 && !addingNew ? (
-        <p className="text-sm text-slate-400">No shifts have been created yet.</p>
+      {loading ? (
+        <p className="text-sm text-slate-500">Loading shifts…</p>
+      ) : loadError ? (
+        <p className="text-sm text-red-600">{loadError}</p>
       ) : (
-        <div className="space-y-3">
-          {shifts.map((shift) =>
-            editingId === shift.id ? (
-              <ShiftForm
-                key={shift.id}
-                draft={editDraft}
-                onChange={setEditDraft}
-                onCancel={() => setEditingId(null)}
-                onSave={saveEdit}
-              />
-            ) : (
-              <div key={shift.id} className="border border-slate-200 rounded-lg px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900">{shift.name}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {formatShiftTime(shift.startTime)} – {formatShiftTime(shift.endTime)} · {shift.breakMinutes}m break ·{' '}
-                      {formatMinutes(shiftWorkingMinutes(shift))} working
-                    </p>
-                    <p className="text-xs text-slate-400 mt-1">{employeeNames(shift.employeeIds)}</p>
+        <>
+          {addingNew ? (
+            <ShiftForm
+              draft={newDraft}
+              employees={employees}
+              onChange={setNewDraft}
+              onCancel={() => setAddingNew(false)}
+              onSave={saveNew}
+              saving={saving}
+              error={formError}
+            />
+          ) : null}
+
+          {shifts.length === 0 && !addingNew ? (
+            <p className="text-sm text-slate-400">No shifts have been created yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {shifts.map((shift) =>
+                editingId === shift.id ? (
+                  <ShiftForm
+                    key={shift.id}
+                    draft={editDraft}
+                    employees={employees}
+                    onChange={setEditDraft}
+                    onCancel={() => setEditingId(null)}
+                    onSave={saveEdit}
+                    saving={saving}
+                    error={formError}
+                  />
+                ) : (
+                  <div key={shift.id} className="border border-slate-200 rounded-lg px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">{shift.name}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {formatShiftTime(shift.startTime)} – {formatShiftTime(shift.endTime)} · {shift.breakMinutes}m break ·{' '}
+                          {formatMinutes(shiftWorkingMinutes(shift))} working
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">{employeeNames(shift.employeeIds, employees)}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          onClick={() => startEdit(shift)}
+                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => setDeletingId(shift.id)}
+                          className="text-xs font-semibold text-red-500 hover:text-red-600"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <button
-                      onClick={() => startEdit(shift)}
-                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => setDeletingId(shift.id)}
-                      className="text-xs font-semibold text-red-500 hover:text-red-600"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ),
+                ),
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
 
       {deletingShift ? (

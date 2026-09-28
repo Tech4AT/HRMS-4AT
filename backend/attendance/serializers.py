@@ -22,6 +22,11 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     organization_id = serializers.SerializerMethodField()
     employee_id = serializers.SerializerMethodField()
     break_minutes = serializers.SerializerMethodField()
+    # Always null today (nothing sets it yet — admin-marking a record isn't
+    # built), but stringified now anyway for the same reason as id/employee_id
+    # above: found during a comprehensive audit, cheap to fix before it's ever
+    # a live bug rather than after.
+    marked_by = serializers.SerializerMethodField()
 
     class Meta:
         model = AttendanceRecord
@@ -56,6 +61,9 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
 
     def get_break_minutes(self, obj) -> int:
         return sum(b.minutes for b in obj.breaks.all())
+
+    def get_marked_by(self, obj):
+        return str(obj.marked_by_id) if obj.marked_by_id else None
 
 
 class AttendanceRequestSerializer(serializers.ModelSerializer):

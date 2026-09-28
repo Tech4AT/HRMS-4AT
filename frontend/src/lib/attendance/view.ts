@@ -22,6 +22,12 @@ export interface AttendanceRow {
   wfhNote?: string | null;
   wfhDescription?: string | null;
   events?: { name: string; description: string | null }[];
+  /** The employee's assigned Shift, "HH:MM" 24h - undefined if none assigned. */
+  shiftStart?: string;
+  shiftEnd?: string;
+  /** The shift's scheduled working minutes (span minus break) - what
+   *  `effectiveMinutes` is measured against for a progress visual. */
+  shiftScheduledMinutes?: number;
 }
 
 export function fmtHM(minutes?: number) {
@@ -85,5 +91,8 @@ export function toAttendanceRow(v: AttendanceDayView): AttendanceRow {
     wfhDescription: v.wfh_description,
     events: v.events,
     overtimeMinutes: v.overtime_minutes ?? undefined,
+    shiftStart: v.shift_start_time ?? undefined,
+    shiftEnd: v.shift_end_time ?? undefined,
+    shiftScheduledMinutes: v.shift_scheduled_minutes ?? undefined,
   };
 }

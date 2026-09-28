@@ -81,6 +81,20 @@ def test_create_without_approval_is_auto_approved_and_deducts_balance_immediatel
     assert balance["pending"] == "0.0"
 
 
+def test_non_numeric_leave_type_id_is_a_400_not_a_500():
+    """Found during a comprehensive audit: a raw `pk=` filter with a
+    non-numeric string reached Postgres before Django validated it."""
+    client, _ = _employee_client()
+
+    response = client.post(
+        REQUESTS_URL,
+        {"leave_type_id": "not-a-number", "start_date": "2026-03-02", "end_date": "2026-03-02"},
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
 def test_insufficient_balance_is_rejected_at_creation():
     client, _ = _employee_client()
     leave_type = LeaveType.objects.create(name="Casual Leave", annual_allocation=1)

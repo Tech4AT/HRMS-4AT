@@ -185,3 +185,34 @@ def test_hr_admin_reassigns_a_stuck_wfh_request_and_the_new_approver_can_decide(
         f"/api/v1/requests/{request_id}/approve", {}, format="json"
     )
     assert decide_response.status_code == 200
+
+
+def test_reassign_with_a_non_numeric_approver_is_not_a_500():
+    """Found during a comprehensive audit: a raw `pk=` filter on the User
+    model with a non-numeric string reached the DB before Django validated
+    it. A malformed approver now behaves like a not-found one (unassigns)
+    rather than crashing."""
+    hr_client, _, _ = _hr_admin()
+    employee_client, _, _ = _client("Employee")
+    employee_client.post(
+        "/api/v1/attendance/requests",
+        {
+            "request_type": "wfh",
+            "start_date": "2026-04-06",
+            "end_date": "2026-04-06",
+            "reason": "x",
+        },
+        format="json",
+    )
+    request_id = next(
+        r["id"] for r in hr_client.get(INBOX_URL).json()["data"] if r["request_type"] == "wfh"
+    )
+
+    response = hr_client.post(
+        f"/api/v1/requests/{request_id}/reassign",
+        {"approver": "not-a-number"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["approver"] is None

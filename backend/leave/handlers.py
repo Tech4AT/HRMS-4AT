@@ -25,6 +25,13 @@ def apply_leave_decision(sender, request, actor, status, **kwargs):
     row_id = (request.payload or {}).get("leave_request_id")
     if not row_id:
         return
+    try:
+        row_id = int(row_id)
+    except (TypeError, ValueError):
+        # Same guard as attendance/handlers.py's identical case: payload is
+        # free-form JSON on the generic engine, so a malformed id here must
+        # not crash the manager's decide request.
+        return
     row = LeaveRequest.objects.filter(pk=row_id).first()
     if row is None:
         return

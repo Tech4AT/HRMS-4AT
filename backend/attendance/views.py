@@ -30,6 +30,7 @@ from core.scope import resolve_employee_scope
 from . import conflicts
 from .day_facts import get_day_facts_range
 from .day_view import build_day_view
+from .timing import checkout_timing_for, late_minutes_for, shift_for
 from .models import (
     AttendanceRecord,
     AttendanceRequest,
@@ -138,10 +139,12 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         today = timezone.localdate()
         # One batch of queries for the whole range (day_facts.py), not one
         # per day — looping the single-date lookup here was an N+1 pattern
-        # that made a full month's history noticeably slow.
+        # that made a full month's history noticeably slow. Same idea for the
+        # shift — one lookup, since it doesn't vary by date.
         facts_by_day = get_day_facts_range(start_date, end_date, employee=employee)
+        shift = shift_for(employee)
         views = [
-            build_day_view(day, records.get(day), today=today, facts=facts_by_day[day])
+            build_day_view(day, records.get(day), today=today, facts=facts_by_day[day], shift=shift)
             for day in _date_span(start_date, end_date)
         ]
         return Response({"success": True, "data": views})
@@ -171,8 +174,9 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         }
         today = timezone.localdate()
         facts_by_day = get_day_facts_range(start_date, end_date, employee=employee)
+        shift = shift_for(employee)
         views = [
-            build_day_view(day, records.get(day), today=today, facts=facts_by_day[day])
+            build_day_view(day, records.get(day), today=today, facts=facts_by_day[day], shift=shift)
             for day in _date_span(start_date, end_date)
         ]
         return Response({"success": True, "data": _summarize(start_date, end_date, views, today)})
@@ -219,10 +223,13 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         record.clock_in_time = timezone.now()
         record.status = AttendanceStatus.PRESENT
         record.source = AttendanceSource.SELF
+        record.late_minutes = late_minutes_for(employee, record.clock_in_time)
         notes = (request.data.get("notes") or "").strip()
         if notes:
             record.notes = notes
-        record.save(update_fields=["clock_in_time", "status", "source", "notes", "updated_at"])
+        record.save(
+            update_fields=["clock_in_time", "status", "source", "late_minutes", "notes", "updated_at"]
+        )
         write_audit(request.user, "AttendanceRecord.checked_in", "AttendanceRecord", record.pk)
         return Response({"success": True, "data": AttendanceRecordSerializer(record).data})
 
@@ -239,10 +246,22 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         elapsed_minutes = int((record.clock_out_time - record.clock_in_time).total_seconds() // 60)
         break_minutes = sum(b.minutes for b in record.breaks.all())
         record.working_minutes = max(0, elapsed_minutes - break_minutes)
+        record.early_leave_minutes, record.overtime_minutes = checkout_timing_for(
+            employee, record.clock_out_time, record.working_minutes
+        )
         notes = (request.data.get("notes") or "").strip()
         if notes:
             record.notes = f"{record.notes}\n{notes}".strip() if record.notes else notes
-        record.save(update_fields=["clock_out_time", "working_minutes", "notes", "updated_at"])
+        record.save(
+            update_fields=[
+                "clock_out_time",
+                "working_minutes",
+                "early_leave_minutes",
+                "overtime_minutes",
+                "notes",
+                "updated_at",
+            ]
+        )
         write_audit(request.user, "AttendanceRecord.checked_out", "AttendanceRecord", record.pk)
         return Response({"success": True, "data": AttendanceRecordSerializer(record).data})
 

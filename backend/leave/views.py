@@ -206,8 +206,17 @@ class LeaveRequestViewSet(
         employee = _employee_or_403(request)
 
         leave_type_id = request.data.get("leave_type_id")
+        try:
+            leave_type_pk = int(leave_type_id)
+        except (TypeError, ValueError) as exc:
+            # A raw `pk=` filter with a non-numeric string reaches Postgres
+            # before Django ever validates it, and 500s there instead of
+            # 400ing cleanly — found during a comprehensive audit.
+            raise ValidationError(
+                {"leave_type_id": "Must reference an active leave type."}
+            ) from exc
         leave_type = LeaveType.objects.filter(
-            pk=leave_type_id, status=LeaveTypeStatus.ACTIVE
+            pk=leave_type_pk, status=LeaveTypeStatus.ACTIVE
         ).first()
         if leave_type is None:
             raise ValidationError({"leave_type_id": "Must reference an active leave type."})
@@ -326,7 +335,13 @@ class HolidayViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
 
     def list(self, request):
         year_param = request.query_params.get("year")
-        year = int(year_param) if year_param else timezone.localdate().year
+        if year_param:
+            try:
+                year = int(year_param)
+            except ValueError as exc:
+                raise ValidationError({"year": "Must be a whole number."}) from exc
+        else:
+            year = timezone.localdate().year
         entries = CalendarEntry.objects.filter(
             type=CalendarEntryType.HOLIDAY, date__year=year
         ).order_by("date")
