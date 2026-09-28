@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   adminApi,
+  REACH_OPTIONS,
   type AdminUser,
   type Permission,
   type Role,
+  type ScopeTier,
 } from '@/lib/admin/api';
-import { Badge, Button, ConfirmModal, Drawer, Notice, errorText } from './ui';
+import { Badge, Button, ConfirmModal, Drawer, Notice, Select, errorText } from './ui';
 import { RoleBuilder } from './RoleBuilder';
 
 // The seeded starter roles show an "Inbuilt" tag, like Keka's system roles.
@@ -71,6 +73,7 @@ export function RolesTab() {
   const [builder, setBuilder] = useState<{ role: Role | null } | null>(null);
   const [addUsersTarget, setAddUsersTarget] = useState<Role | null>(null);
   const [removeTarget, setRemoveTarget] = useState<{ role: Role; user: AdminUser } | null>(null);
+  const [scopeTarget, setScopeTarget] = useState<Role | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -293,6 +296,19 @@ export function RolesTab() {
                             Add users
                           </button>
                         )}
+                        {role.permissions.length > 0 && (
+                          <button
+                            role="menuitem"
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => {
+                              setMenuId(null);
+                              setOpError(null);
+                              setScopeTarget(role);
+                            }}
+                          >
+                            Edit scope
+                          </button>
+                        )}
                         <button
                           role="menuitem"
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -409,6 +425,17 @@ export function RolesTab() {
           }}
         />
       )}
+
+      {scopeTarget && (
+        <EditScopeModal
+          role={scopeTarget}
+          onClose={() => setScopeTarget(null)}
+          onSaved={async () => {
+            setScopeTarget(null);
+            await load();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -494,6 +521,63 @@ function AddUsersPanel({
         </Button>
       </div>
     </Drawer>
+  );
+}
+
+function EditScopeModal({
+  role,
+  onClose,
+  onSaved,
+}: {
+  role: Role;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [tier, setTier] = useState<ScopeTier>(role.permissions[0]?.scopeTier ?? 'team');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      for (const g of role.permissions) {
+        await adminApi.changeGrant(g.id, tier);
+      }
+      await onSaved();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ConfirmModal
+      title={`Edit scope — ${role.name}`}
+      body={
+        <div className="space-y-3">
+          <p>
+            Apply one reach level to all {role.permissions.length}{' '}
+            {role.permissions.length === 1 ? 'grant' : 'grants'} in this role.
+          </p>
+          <label className="block">
+            <span className="block font-medium text-gray-700 mb-1">Reach</span>
+            <Select value={tier} onChange={(e) => setTier(e.target.value as ScopeTier)}>
+              {REACH_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label} — {o.hint}
+                </option>
+              ))}
+            </Select>
+          </label>
+        </div>
+      }
+      confirmLabel={`Apply to ${role.permissions.length} ${role.permissions.length === 1 ? 'grant' : 'grants'}`}
+      busy={busy}
+      error={error}
+      onConfirm={save}
+      onCancel={onClose}
+    />
   );
 }
 
