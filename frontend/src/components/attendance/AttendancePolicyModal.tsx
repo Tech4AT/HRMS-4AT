@@ -1,10 +1,12 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import {
   compOffAccrualSentence,
   penalisationRuleSentence,
   usePenalizationSettings,
 } from '@/lib/attendance/penalisation';
+import { leaveApi, type LeaveType } from '@/lib/api/leave';
 
 const RULE_TITLES = {
   noAttendance: 'No Attendance',
@@ -19,7 +21,26 @@ const RULE_TITLES = {
  *  backend-persisted settings HR configures there - see
  *  usePenalizationSettings. */
 export function AttendancePolicyModal({ onClose }: { onClose: () => void }) {
-  const [settings] = usePenalizationSettings();
+  const [settings, , loaded] = usePenalizationSettings();
+  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+
+  useEffect(() => {
+    leaveApi.getTypes().then(setLeaveTypes).catch(() => {});
+  }, []);
+
+  const penaltyLeaveTypeName = leaveTypes.find((t) => t.id === settings.penaltyLeaveTypeId)?.name;
+
+  if (!loaded) {
+    // Don't show the hardcoded defaults even briefly while the real fetch is
+    // still in flight - same reasoning as PenalizationSettingsPanel.
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+        <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+          <p className="text-sm text-slate-500">Loading attendance policy…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -55,6 +76,11 @@ export function AttendancePolicyModal({ onClose }: { onClose: () => void }) {
 
           <div>
             <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Attendance violation penalties</p>
+            <p className="text-xs text-slate-500 mb-2">
+              {penaltyLeaveTypeName
+                ? `Penalties are deducted from your ${penaltyLeaveTypeName} balance.`
+                : 'No leave type is currently configured for deductions.'}
+            </p>
             <div className="space-y-2.5">
               {(Object.keys(RULE_TITLES) as (keyof typeof RULE_TITLES)[]).map((kind) => (
                 <div key={kind}>

@@ -1,12 +1,13 @@
 # Attendance & Leave — Backend Implementation Plan
 
-Status: **Steps 1–6 are built, tested, and verified live** (Calendar, Attendance,
-Leave, the cross-cutting Approvals integration, Shifts/Policy Settings — plus a
-post-Step-6 comprehensive bug audit and post-Step-6 manual-verification fixes,
-both recorded in their own sections below). **Step 7 (Leave balances &
-accruals) is partially built**: opening-balance seeding and carry-forward are
-done; Comp Off accrual is deliberately deferred, an open business-rule
-decision, not a technical gap. **Steps 8–12 are planning only.**
+Status: **Steps 1–6 and 8 are built, tested, and verified live** (Calendar,
+Attendance, Leave, the cross-cutting Approvals integration, Shifts/Policy
+Settings, Penalisation — plus a post-Step-6 comprehensive bug audit and
+post-Step-6 manual-verification fixes, both recorded in their own sections
+below). **Step 7 (Leave balances & accruals) is partially built**:
+opening-balance seeding and carry-forward are done; Comp Off accrual is
+deliberately deferred, an open business-rule decision, not a technical gap.
+**Steps 9–12 are planning only.**
 
 ## Revision note
 
@@ -122,16 +123,21 @@ Leave/WFH/Regularisation request
 ```
 
 **Penalisation is the deliberate exception.** It has no raise/route/decide shape
-in the frontend — it auto-applies once a grace period lapses, and the only
-"decision" a human makes is reviewing an overturn request, which today (Approvals
-→ Penalisation tab, `lib/attendance/penalisation.ts`) is a direct
-apply/overturn state machine (`applied` → `overturn_requested` → `overturned`),
-not a raise-then-decide flow with a routed approver. **Do not force Penalisation
-onto `approvals.Request`.** Keep its existing domain-specific lifecycle as its
-own model with its own status field and its own permission-gated review actions
-(Step 8). If a future requirement makes Penalisation's overturn review look more
-like a routed approval, that's a deliberate, separately-agreed change — not
-something this plan does by default for consistency's sake.
+in the frontend at all — it auto-applies once a grace period lapses, and the
+only "decision" a human makes is HR directly overturning one, which today
+(Approvals → Penalisation tab, `lib/attendance/penalisation.ts`) is a plain
+two-state record (`applied` → `overturned`), not a raise-then-decide flow with
+a routed approver. **An employee cannot request an overturn** — corrected
+during manual verification (post-Step 7): the original design let an employee
+submit an overturn request from Leave Management for HR to approve/reject
+(`applied` → `overturn_requested` → `overturned`); the project owner rejected
+this — an employee only ever sees whether they've been penalised, read-only,
+and only HR decides an overturn, directly. **Do not force Penalisation onto
+`approvals.Request`.** Keep its existing domain-specific lifecycle as its own
+model with its own status field and its own permission-gated overturn action
+(Step 8). If a future requirement reintroduces an employee-initiated overturn
+request, that's a deliberate, separately-agreed change — not something this
+plan does by default.
 
 ### 1.4 Reference implementations to copy from
 
@@ -972,7 +978,7 @@ a technical gap, and this step does not guess at one.
 
 ---
 
-## Step 8 — Penalisation
+## Step 8 — Penalisation (built)
 
 **Not built on the approvals engine** (1.3) — this is the one area where the
 prior domain-specific design is preserved deliberately, not superseded by the
@@ -981,29 +987,41 @@ engine.
 ### Models
 
 `PenalisationRecord`: `employee` FK, absence date, deadline, reason, `status`
-(`applied` | `overturn_requested` | `overturned`), overturn request reason/date,
-overturned-by/reason — matches `PenalisationRecord` in
-`lib/attendance/penalisation.ts` exactly. Policy configuration itself
-(regularisation grace period, absconding threshold, per-rule flags, Comp Off
-rate) is `PolicySettings`, already covered in Step 6.
+(`applied` | `overturned`), overturned-by/reason — matches `PenalisationRecord`
+in `lib/attendance/penalisation.ts` exactly. **No overturn-request fields** —
+corrected post-Step-7 (see §1.3): an employee cannot request an overturn, so
+there is no `overturn_requested` state and nothing for it to carry (no request
+reason/date). Policy configuration itself (regularisation grace period,
+absconding threshold, per-rule flags, Comp Off rate) is `PolicySettings`,
+already covered in Step 6.
 
 ### Services / business logic
 
 - Auto-apply is triggered by the same shared scheduled mechanism as Step 7 (once
   a regularisation grace period lapses with no attendance) — no approval step for
   the initial `applied` state, matching the frontend's "automatically" language.
-- Overturn request → review is a **direct two-party state machine**
-  (`overturn_requested` → `overturned`, or a rejection back to `applied`) with its
-  own permission-gated review action — not a raise-then-route-to-manager flow,
-  since there's no "requester's manager" concept here in the way Leave/WFH/
-  Regularisation has one; the reviewer is whoever holds the review permission
-  (Step 10), scoped like any other manager/HR action.
-- **Open decision, carried forward — leave-day deduction**: "1 day leave
-  deducted for every no-attendance day" is currently read-only descriptive text
-  (Policy Settings sentence, Attendance Policy popup) — no UI performs an actual
-  deduction. Whether applying a `PenalisationRecord` should deduct a real
-  `LeaveBalance` (Step 4/7), and against which leave type, is undefined by the
-  frontend.
+- Overturning is a **direct HR action on an Applied record** (`applied` →
+  `overturned`, with a required reason) — not a state machine with an
+  intermediate requested state, and not a raise-then-route-to-manager flow:
+  there's no "requester's manager" concept here, and per the corrected design
+  (§1.3) the employee has no initiating role at all. Whoever holds the manage
+  permission below can overturn any record in their scope.
+- **Leave-day deduction — resolved, no longer open.** A Penalisation now
+  really does deduct a real `LeaveBalance` (Step 4/7), against
+  `PolicySettings.penalty_leave_type` — one shared leave type for every
+  enabled rule, a new setting, not one per rule (direct instruction). Deducted
+  once at creation (`attendance/penalisation.py`'s `_deduct_leave()`, "compute
+  once, store" — same precedent as `days_overdue`), recorded on the
+  `PenalisationRecord` itself (`leave_days_deducted`, `leave_balance` FK to
+  the *exact* balance row debited) so overturning credits back to that same
+  row even across a financial-year rollover, rather than re-resolving "the
+  employee's current balance" at overturn time. Only wired for **No
+  Attendance** — the only rule with real auto-apply detection behind it
+  (below); Late Arrival/Early Leaving/Work Hours still have no detection at
+  all, so their `leaveDaysDeducted` numbers stay descriptive-only, unchanged
+  from before. If the rule is disabled or no leave type is configured, the
+  Penalisation record still gets created (it's still a factual record of the
+  absence) with `leave_days_deducted=0` and no balance touched.
 - **Open decision, carried forward — absconding behaviour**: an "absconding
   threshold" (consecutive absent days) exists in Policy Settings, but nothing in
   the frontend shows what happens once it's crossed — no UI reads or reacts to an
@@ -1014,9 +1032,11 @@ rate) is `PolicySettings`, already covered in Step 6.
 
 ### CRUD / API endpoints
 
-Match `lib/attendance/penalisation.ts`'s shape: list (scoped), overturn-request
-(employee, own record), review actions (approve/reject the overturn, direct
-overturn) for whoever holds the review permission.
+Match `lib/attendance/penalisation.ts`'s shape: a scoped list for HR
+(Approvals → Penalisation, Applied/Overturned filters), a self-service
+read-only list for the employee (Leave Management — their own records only,
+no write action available to them at all), and one overturn action (HR only,
+on an Applied record).
 
 ### RBAC
 
@@ -1025,8 +1045,13 @@ The Approvals → Penalisation tab **currently has no permission gate at all**
 precedent, since real scoped data needs real enforcement (`core.E001`–`E004`
 demand it the moment a real view exists). This is new — there is no existing
 hardcoded frontend string to match, unlike `leave.approve`/`attendance.approve`.
-Follow the `<module>.<action>` convention (e.g. `penalisation.review`), scoped
-per Step 10's manager-vs-team decision.
+Given the corrected design has no review/decide split (§1.3) — just one HR
+action, "overturn" — this follows the same flat `<module>.manage` naming
+`attendance.settings.manage` already uses for an admin-only action, not a
+`.review`/`.approve` verb that would imply deciding someone else's request:
+**`penalisation.manage`**, `HasPermissionCode`, `default_grants={"HR Admin":
+ScopeTier.ALL}` (matches how the user described it: "the admin can overturn it
+if he wants" — not a manager-scoped action).
 
 ### Approvals integration
 
@@ -1035,23 +1060,66 @@ Explicitly none, per 1.3 — do not route Penalisation through
 
 ### Notifications / audit
 
-Auto-apply and every overturn-review action call `write_audit`; notify the
-employee on auto-apply and on overturn decision (via `notifications.service.notify`
-directly, the same primitive the approvals engine itself uses internally — no
-need to invent a different notification mechanism).
+Auto-apply and every overturn call `write_audit`; notify the employee on
+auto-apply and on overturn (via `notifications.service.notify` directly, the
+same primitive the approvals engine itself uses internally — no need to invent
+a different notification mechanism).
 
-### Tests
+### Frontend wiring (pulled forward, same as Step 7's Leave Balances admin view)
 
-State-machine tests for the three statuses and their legal transitions;
-permission tests for the new review code once it's registered; a scheduled-job
-idempotency test shared in spirit with Step 7's.
+`lib/api/penalisation.ts` (new) replaces the old localStorage-backed
+`usePenalisations()`/`SAMPLE_PENALISATIONS` (removed from
+`lib/attendance/penalisation.ts`, which now holds only the real Policy
+Settings helpers it always also had). Approvals → Penalisation (HR),
+Leave Management's own read-only Penalisations section, and the Dashboard's
+"Active Penalisations" tile all read the real endpoints now. The Approvals
+page's Penalisation tab is gated on `hasPermission('penalisation.manage')`
+like every other tab, closing 1.6's gap for real on the frontend too — a
+manager without that permission no longer sees the tab at all (previously
+unconditional). The Dashboard's tile, which a manager without
+`penalisation.manage` *can* still reach (it's not scoped like the approval
+tabs), degrades to `0` rather than surfacing a 403 — there is no manager/team
+scope for Penalisation to fall back to (§1.3's flat, HR-only design), so `0`
+is the honest answer for "how many I can see," not a bug.
 
-### Definition of done
+### Tests (35 new tests total, all passing)
 
-Auto-apply runs on schedule and matches Policy Settings' rules; overturn
-request/review works end to end with a real permission gate (closing the
-"visible to anyone who can see Approvals" gap noted in 1.6); verified live
-against Approvals → Penalisation with `MOCK_AUTH` off.
+`test_penalisation.py` (16): every exemption rule (weekend, holiday, on-leave,
+clocked-in, a submitted-and-not-cancelled regularisation request) in
+isolation; a cancelled regularisation request does *not* exempt the day;
+respects a custom grace period; idempotent across repeated runs (both the
+function directly and the management command); every active employee is
+covered, exited ones are skipped; audit log + notification on auto-apply;
+leave-deduction: deducts the configured rate against the configured leave
+type, skips the deduction (record still created) when the rule is disabled or
+no leave type is configured, deducts exactly the configured amount (not a
+hardcoded default). `test_penalisation_views.py` (16): 401/403 for the HR
+list/overturn actions; HR sees every employee's records with the right
+camelCase shape; the `?status=` filter; overturn updates
+status/audit/notification correctly, credits the exact deducted amount back
+to the exact balance row debited, leaves other balances untouched when
+nothing was deducted, rejects a missing reason and an already-overturned
+record, 404s on an unknown id; the self-service `mine` endpoint 401s
+anonymously, 403s with no employee record, returns only the caller's own
+records, and has no write action at all. `test_policy_settings.py` gained 3
+covering `penalty_leave_type_id`: sets it, rejects an unknown id, rejects a
+PUT that omits it (this serializer's "always the complete object" contract,
+same as every other field).
+
+### Definition of done — met
+
+Auto-apply runs on schedule (`apply_penalisations`, idempotent) and matches
+Policy Settings' grace-period rule; the direct overturn action works end to
+end with a real, HR-only permission gate (closing the "visible to anyone who
+can see Approvals" gap noted in 1.6, on both the backend and the frontend nav
+gate); the employee's own Leave Management view is confirmed read-only (no
+overturn action reachable from there — verified both in the component tree
+and via a dedicated backend test asserting `MyPenalisationsView` has no write
+action); a Penalisation now really deducts and restores real leave, verified
+live end to end through the actual Next.js proxy (set `penaltyLeaveTypeId` →
+ran auto-apply against the real dev database → confirmed the balance actually
+moved → overturned it → confirmed the exact amount came back); 532 tests pass
+repo-wide, `manage.py check`/`ruff`/`black` clean, `tsc --noEmit` clean.
 
 ---
 

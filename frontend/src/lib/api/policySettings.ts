@@ -46,6 +46,7 @@ interface RawCompOffAccrual {
 interface RawPolicySettings {
   regularisationGraceDays: number;
   abscondingThresholdDays: number;
+  penaltyLeaveTypeId: string | null;
   noAttendance: RawRuleConfig;
   lateArrival: RawRuleConfig;
   earlyLeaving: RawRuleConfig;
@@ -70,6 +71,7 @@ function toPolicySettings(raw: RawPolicySettings): PenalizationSettings {
   return {
     regularisationGraceDays: raw.regularisationGraceDays,
     abscondingThresholdDays: raw.abscondingThresholdDays,
+    penaltyLeaveTypeId: raw.penaltyLeaveTypeId,
     noAttendance: toRuleConfig(raw.noAttendance),
     lateArrival: toRuleConfig(raw.lateArrival),
     earlyLeaving: toRuleConfig(raw.earlyLeaving),

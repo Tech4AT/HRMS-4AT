@@ -6,6 +6,7 @@ different concern (PLAN.md Step 6)."""
 from rest_framework import serializers
 
 from employees.models import Employee
+from leave.models import LeaveType, LeaveTypeStatus
 
 from .models import PolicySettings, Shift
 
@@ -68,6 +69,15 @@ class PolicySettingsSerializer(serializers.Serializer):
 
     regularisation_grace_days = serializers.IntegerField(min_value=1)
     absconding_threshold_days = serializers.IntegerField(min_value=1)
+    # The one leave type every enabled rule below deducts from — shared, not
+    # one per rule, per direct instruction. Null means "not configured yet";
+    # `apply_penalisations()` then skips the deduction entirely.
+    penalty_leave_type_id = serializers.PrimaryKeyRelatedField(
+        source="penalty_leave_type",
+        queryset=LeaveType.objects.filter(status=LeaveTypeStatus.ACTIVE),
+        pk_field=serializers.CharField(),
+        allow_null=True,
+    )
     no_attendance = RuleConfigSerializer()
     late_arrival = RuleConfigSerializer()
     early_leaving = RuleConfigSerializer()
@@ -84,6 +94,9 @@ class PolicySettingsSerializer(serializers.Serializer):
         return {
             "regularisation_grace_days": instance.regularisation_grace_days,
             "absconding_threshold_days": instance.absconding_threshold_days,
+            "penalty_leave_type_id": (
+                str(instance.penalty_leave_type_id) if instance.penalty_leave_type_id else None
+            ),
             "no_attendance": RuleConfigSerializer(
                 {
                     "enabled": instance.no_attendance_enabled,
@@ -124,6 +137,7 @@ class PolicySettingsSerializer(serializers.Serializer):
     def update(self, instance: PolicySettings, validated_data: dict) -> PolicySettings:
         instance.regularisation_grace_days = validated_data["regularisation_grace_days"]
         instance.absconding_threshold_days = validated_data["absconding_threshold_days"]
+        instance.penalty_leave_type = validated_data["penalty_leave_type"]
 
         na = validated_data["no_attendance"]
         instance.no_attendance_enabled = na["enabled"]

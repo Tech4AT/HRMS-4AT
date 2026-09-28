@@ -7,12 +7,14 @@ APPEND_SLASH redirect can't preserve a POST body (check-in/out are POST)."""
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from attendance.penalisation_views import MyPenalisationsView, PenalisationViewSet
 from attendance.settings_views import PolicySettingsView, ShiftViewSet
 from attendance.views import AttendanceRequestViewSet, AttendanceViewSet
 
 router = DefaultRouter(trailing_slash=False)
 router.register("attendance/requests", AttendanceRequestViewSet, basename="attendance-request")
 router.register("attendance/shifts", ShiftViewSet, basename="shift")
+router.register("attendance/penalisations", PenalisationViewSet, basename="penalisation")
 router.register("attendance", AttendanceViewSet, basename="attendance")
 
 urlpatterns = [
@@ -22,6 +24,15 @@ urlpatterns = [
         "attendance/policy-settings",
         PolicySettingsView.as_view(),
         name="attendance-policy-settings",
+    ),
+    # The caller's own Penalisations, read-only — a plain APIView, not part of
+    # PenalisationViewSet's HR-only, `penalisation.manage`-gated router
+    # registration above (see penalisation_views.py's own docstring for why
+    # these are two separate views, not one branching on permission).
+    path(
+        "attendance/penalisations/mine",
+        MyPenalisationsView.as_view(),
+        name="attendance-my-penalisations",
     ),
     *router.urls,
 ]

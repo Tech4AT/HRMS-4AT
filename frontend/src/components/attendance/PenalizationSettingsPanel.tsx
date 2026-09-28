@@ -9,6 +9,7 @@ import {
   type PenalisationRuleConfig,
   type PenalizationSettings,
 } from '@/lib/attendance/penalisation';
+import { leaveApi, type LeaveType } from '@/lib/api/leave';
 
 type RuleKind = 'noAttendance' | 'lateArrival' | 'earlyLeaving' | 'workHours';
 
@@ -167,35 +168,51 @@ function CompOffAccrualRow({
   );
 }
 
-/** Settings > Policy Settings. Real data now (PLAN.md Step 6/11) — settings
+/** Settings > Policy Settings. Real data (PLAN.md Step 6/11) — settings
  *  persist via {@link usePenalizationSettings}, backed by
  *  `/api/attendance/policy-settings`, not localStorage. Configures the rules
- *  that drive the sample data still shown under Approvals > Penalisation
- *  (the Penalisation records themselves are PLAN.md Step 8, still mock): the
- *  regularisation grace period, the absconding threshold, a penalty (or "no
- *  penalization") for each of No Attendance, Late Arrival, Early Leaving,
- *  and Work Hours, and the Comp Off accrual rate (the one reward rule
- *  alongside all the penalties - a Comp Off is earned from overtime hours
- *  instead of being deducted for a violation). The saved settings are also
- *  what the read-only "Attendance Policy" popup on My Attendance shows. */
+ *  that drive the real Penalisation records under Approvals > Penalisation
+ *  (PLAN.md Step 8, auto-applied on schedule): the regularisation grace
+ *  period, the absconding threshold, which leave type a penalty actually
+ *  consumes, a penalty (or "no penalization") for each of No Attendance,
+ *  Late Arrival, Early Leaving, and Work Hours (only No Attendance is wired
+ *  to a real auto-apply today - see `attendance/penalisation.py`), and the
+ *  Comp Off accrual rate (the one reward rule alongside all the penalties -
+ *  a Comp Off is earned from overtime hours instead of being deducted for a
+ *  violation). The saved settings are also what the read-only "Attendance
+ *  Policy" popup on My Attendance shows. */
 export function PenalizationSettingsPanel() {
-  const [saved, setSaved] = usePenalizationSettings();
+  const [saved, setSaved, loaded] = usePenalizationSettings();
   const [draft, setDraft] = useState<PenalizationSettings>(saved);
   const [initialized, setInitialized] = useState(false);
   const [savedMessage, setSavedMessage] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
 
-  // `saved` now loads from the real API asynchronously (PLAN.md Step 6/11),
-  // starting at the same defaults it always had — sync the draft once the
-  // real value arrives, since useState(saved)'s initial value is only used
-  // on the very first render.
   useEffect(() => {
-    if (!initialized) {
+    leaveApi.getTypes().then(setLeaveTypes).catch(() => {
+      // Leave the list empty — the dropdown still renders (just with only
+      // "None"), rather than blocking the rest of the panel on this load.
+    });
+  }, []);
+
+  // `saved` starts at the hardcoded defaults and flips to the real fetched
+  // value asynchronously, one render after mount (PLAN.md Step 6/11) - a
+  // plain `if (!initialized)` guard here fired on that *first* render, while
+  // `saved` still held the defaults, and never fired again once the real
+  // value actually arrived - every edit looked like it silently reverted to
+  // the defaults on refresh (found live: grace period always showing 3,
+  // never whatever was actually saved). Gating on `loaded` instead - which
+  // `usePenalizationSettings` only flips once its fetch has genuinely
+  // resolved - fixes that: this effect now does nothing on that first,
+  // still-loading render, and fires exactly once for real once the fetch lands.
+  useEffect(() => {
+    if (loaded && !initialized) {
       setDraft(saved);
       setInitialized(true);
     }
-  }, [saved, initialized]);
+  }, [loaded, saved, initialized]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
 
@@ -216,6 +233,19 @@ export function PenalizationSettingsPanel() {
   const setRule = (kind: RuleKind, next: PenalisationRuleConfig) => {
     setDraft((d) => ({ ...d, [kind]: next }));
   };
+
+  if (!loaded) {
+    // Render nothing but a loading state until the real fetch resolves -
+    // rendering the form against the hardcoded defaults in the meantime
+    // (even briefly) is exactly the flash of "wrong" data this whole section
+    // was just fixed to stop showing.
+    return (
+      <div className="max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <h3 className="text-sm font-bold text-slate-900">Policy Settings</h3>
+        <p className="text-sm text-slate-500 mt-4">Loading policy settings…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-6">
@@ -267,6 +297,26 @@ export function PenalizationSettingsPanel() {
             <span className="text-sm text-slate-500">consecutive day(s)</span>
           </div>
         </div>
+      </div>
+
+      <div className="pt-2 border-t border-slate-100">
+        <label className="block text-sm font-semibold text-slate-800 mb-1">Penalty leave type</label>
+        <p className="text-xs text-slate-500 mb-2">
+          The leave type a penalty actually deducts from, for every enabled violation below. Leaving this unset means
+          a penalisation is still recorded, but no leave is consumed.
+        </p>
+        <select
+          value={draft.penaltyLeaveTypeId ?? ''}
+          onChange={(e) => setDraft((d) => ({ ...d, penaltyLeaveTypeId: e.target.value || null }))}
+          className="w-full sm:w-64 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+        >
+          <option value="">None — don&apos;t deduct leave</option>
+          {leaveTypes.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="pt-2 border-t border-slate-100">

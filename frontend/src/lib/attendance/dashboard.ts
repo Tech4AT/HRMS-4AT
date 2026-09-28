@@ -5,7 +5,7 @@
  *  snapshot from the shared sample roster (sample-employees.ts) instead. Real
  *  signals we do have - pending approvals, active penalisations - are pulled
  *  in separately by the dashboard component itself via `leaveApi`/
- *  `attendanceApi`/`usePenalisations`, not from here. */
+ *  `attendanceApi`/`penalisationApi`, not from here. */
 
 import { SAMPLE_EMPLOYEES, type SampleEmployee } from './sample-employees';
 

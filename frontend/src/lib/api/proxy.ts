@@ -108,6 +108,11 @@ export async function proxyToBackend(
   const send = (token: string) =>
     fetch(`${BACKEND_API_URL}${path}`, {
       ...init,
+      // This proxies a live backend resource on every call - Next.js's fetch
+      // cache must never serve a stale GET here (e.g. Policy Settings read
+      // right back after its own PUT), so this is explicit rather than
+      // relying on `cookies()` usage elsewhere marking the route dynamic.
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),

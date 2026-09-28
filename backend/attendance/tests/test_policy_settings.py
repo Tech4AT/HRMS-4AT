@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from rest_framework.test import APIClient
 
@@ -6,6 +8,7 @@ from accounts.models import Role
 from attendance.models import PolicySettings
 from audit.models import AuditLog
 from employees.factories import EmployeeFactory
+from leave.models import LeaveType
 
 pytestmark = pytest.mark.django_db
 
@@ -14,6 +17,7 @@ URL = "/api/v1/attendance/policy-settings"
 _FULL_PAYLOAD = {
     "regularisationGraceDays": 5,
     "abscondingThresholdDays": 7,
+    "penaltyLeaveTypeId": None,
     "noAttendance": {"enabled": True, "leaveDaysDeducted": 1},
     "lateArrival": {"enabled": True, "leaveDaysDeducted": 0.5, "thresholdCount": 4},
     "earlyLeaving": {"enabled": False, "leaveDaysDeducted": 0.5, "thresholdCount": 3},
@@ -55,6 +59,7 @@ def test_get_lazily_creates_the_singleton_with_defaults():
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["regularisationGraceDays"] == 3
+    assert data["penaltyLeaveTypeId"] is None
     # noAttendance shares RuleConfigSerializer with the other three rules, so
     # thresholdCount/minWorkHours are always present, null when a rule
     # (like this one) doesn't use them — matches the frontend's own single
@@ -93,5 +98,35 @@ def test_put_requires_the_full_nested_shape():
     client, _ = _hr_client()
 
     response = client.put(URL, {"regularisationGraceDays": 5}, format="json")
+
+    assert response.status_code == 400
+
+
+def test_put_sets_the_penalty_leave_type():
+    leave_type = LeaveType.objects.create(name="Casual Leave", annual_allocation=Decimal("12"))
+    client, _ = _hr_client()
+    payload = {**_FULL_PAYLOAD, "penaltyLeaveTypeId": str(leave_type.pk)}
+
+    response = client.put(URL, payload, format="json")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["penaltyLeaveTypeId"] == str(leave_type.pk)
+    assert PolicySettings.load().penalty_leave_type_id == leave_type.pk
+
+
+def test_put_rejects_an_unknown_leave_type_id():
+    client, _ = _hr_client()
+    payload = {**_FULL_PAYLOAD, "penaltyLeaveTypeId": "999999"}
+
+    response = client.put(URL, payload, format="json")
+
+    assert response.status_code == 400
+
+
+def test_put_missing_penalty_leave_type_id_is_rejected():
+    client, _ = _hr_client()
+    payload = {k: v for k, v in _FULL_PAYLOAD.items() if k != "penaltyLeaveTypeId"}
+
+    response = client.put(URL, payload, format="json")
 
     assert response.status_code == 400
