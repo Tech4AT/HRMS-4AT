@@ -103,6 +103,12 @@ export function RolesTab() {
     return map;
   }, [users]);
 
+  // Every active employee IS an employee: the inbuilt "Employee" base role's
+  // membership is computed from the active-employee list, never persisted
+  // as role-assignment rows.
+  const activeEmployees = useMemo(() => users.filter((u) => u.isActive), [users]);
+  const isEmployeeBaseRole = (role: Role) => role.name === 'Employee';
+
   const total = permissions.length;
   const shown = roles.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()));
 
@@ -185,7 +191,8 @@ export function RolesTab() {
           {shown.map((role) => {
             const scope = roleScope(role);
             const fullAccess = total > 0 && role.permissions.length === total && scope.global;
-            const roleUsers = usersByRole.get(role.id) ?? [];
+            const employeeRole = isEmployeeBaseRole(role);
+            const roleUsers = employeeRole ? activeEmployees : (usersByRole.get(role.id) ?? []);
             return (
               <div
                 key={role.id}
@@ -223,7 +230,7 @@ export function RolesTab() {
                         key={u.id}
                         user={u}
                         color={AVATAR_COLORS[i % AVATAR_COLORS.length]}
-                        onRemove={() => removeUserFromRole(role, u)}
+                        onRemove={employeeRole ? undefined : () => removeUserFromRole(role, u)}
                       />
                     ))}
                     {roleUsers.length > 5 && (
@@ -263,17 +270,19 @@ export function RolesTab() {
                         >
                           Edit
                         </button>
-                        <button
-                          role="menuitem"
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          onClick={() => {
-                            setMenuId(null);
-                            setOpError(null);
-                            setAddUsersTarget(role);
-                          }}
-                        >
-                          Add users
-                        </button>
+                        {!employeeRole && (
+                          <button
+                            role="menuitem"
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => {
+                              setMenuId(null);
+                              setOpError(null);
+                              setAddUsersTarget(role);
+                            }}
+                          >
+                            Add users
+                          </button>
+                        )}
                         <button
                           role="menuitem"
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
