@@ -21,7 +21,9 @@ import {
 import { onboardingApi, type OnboardingRecordListItem } from '@/lib/api/onboarding';
 import { exitsApi, type Resignation } from '@/lib/api/exits';
 import { documentsApi } from '@/lib/api/documents';
-import { ActivityTab } from '@/components/admin/ActivityTab';
+import { AnalyticsTab } from '@/components/org-module/analytics-tab';
+import { ReportsTab } from '@/components/org-module/reports-tab';
+import { AuditLogsTab } from '@/components/org-module/audit-logs-tab';
 
 const UNASSIGNED = 'Unassigned';
 
@@ -46,18 +48,6 @@ function groupByDepartment(employees: OrgEmployee[], departments: NamedEntity[])
   }
   return [...counts.entries()]
     .map(([department, headcount]) => ({ department, headcount }))
-    .sort((a, b) => b.headcount - a.headcount);
-}
-
-function groupByLocation(employees: OrgEmployee[], locations: NamedEntity[]) {
-  const names = new Map(locations.map((l) => [l.id, l.name]));
-  const counts = new Map<string, number>();
-  for (const e of employees) {
-    const key = (e.location_id && names.get(e.location_id)) || UNASSIGNED;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .map(([location, headcount]) => ({ location, headcount }))
     .sort((a, b) => b.headcount - a.headcount);
 }
 
@@ -143,12 +133,6 @@ export default function OrgDashboardPage() {
     () => (live ? groupByDepartment(employees, departments) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [live, employees, departments],
-  );
-
-  const headcountByLocation = useMemo(
-    () => (live ? groupByLocation(employees, locations) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [live, employees, locations],
   );
 
   const totalPositions = positions?.length ?? 0;
@@ -265,20 +249,6 @@ export default function OrgDashboardPage() {
         pct: r.progress.percent,
       }));
   }, [onboarding, activeOnboarding, deptNames]);
-
-  /* ------------------------------- reports -------------------------------- */
-  const quickReports: { label: string; desc: string; href?: string; disabledNote?: string }[] = [
-    { label: 'Employee directory', desc: 'Live headcount list', href: '/org?tab=directory' },
-    { label: 'Organisation chart', desc: 'Live reporting lines', href: '/org?tab=chart' },
-    { label: 'Onboarding pipeline', desc: 'Live hire progress', href: '/onboarding' },
-    { label: 'Exits', desc: 'Live resignation states', href: '/exits' },
-  ];
-  const otherReports: { label: string; disabledNote: string }[] = [
-    { label: 'Headcount export', disabledNote: 'No export yet' },
-    { label: 'Login activity', disabledNote: 'No data source yet' },
-    { label: 'Probation report', disabledNote: 'No data source yet' },
-    { label: 'Documents due', disabledNote: 'No data source yet' },
-  ];
 
   return (
     <div className="w-full">
@@ -545,109 +515,26 @@ export default function OrgDashboardPage() {
 
       {tab === 'analytics' && (
         <div role="tabpanel" aria-label="Analytics">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Headcount by Department">
-              {loading ? (
-                <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
-              ) : headcountByDepartment.length === 0 ? (
-                <EmptyNote>No employees in the directory yet.</EmptyNote>
-              ) : (
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={headcountByDepartment} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="department" tick={{ fontSize: 11 }} interval={0} angle={-18} dy={10} height={52} />
-                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                      <Tooltip />
-                      <Bar dataKey="headcount" name="Headcount" fill={DEPT_BAR_FILL} radius={[6, 6, 0, 0]} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Card>
-            <Card title="Breakdown">
-              {loading ? (
-                <div className="space-y-2 animate-pulse">
-                  <div className="h-24 bg-slate-50 rounded-xl" />
-                  <div className="h-24 bg-slate-50 rounded-xl" />
-                </div>
-              ) : !live ? (
-                <EmptyNote>Could not load the directory.</EmptyNote>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">By department</p>
-                    <ul className="space-y-1.5">
-                      {headcountByDepartment.map((d) => (
-                        <li key={d.department} className="flex items-center justify-between text-sm border border-slate-100 rounded-lg px-3 py-1.5">
-                          <span className="text-slate-700 truncate">{d.department}</span>
-                          <span className="font-bold text-slate-900 ml-2">{d.headcount}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">By location</p>
-                    <ul className="space-y-1.5">
-                      {headcountByLocation.map((l) => (
-                        <li key={l.location} className="flex items-center justify-between text-sm border border-slate-100 rounded-lg px-3 py-1.5">
-                          <span className="text-slate-700 truncate">{l.location}</span>
-                          <span className="font-bold text-slate-900 ml-2">{l.headcount}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </Card>
-          </div>
+          <AnalyticsTab
+            employees={employees}
+            departments={departments}
+            locations={locations}
+            resignations={resignations}
+            loading={loading}
+            live={live}
+          />
         </div>
       )}
 
       {tab === 'reports' && (
         <div role="tabpanel" aria-label="Employee Reports">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Quick Reports">
-              <div className="flex flex-col gap-2">
-                {quickReports.map((r) => (
-                  <Link
-                    key={r.label}
-                    href={r.href!}
-                    className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors"
-                  >
-                    <span className="text-sm font-semibold text-slate-700">{r.label}</span>
-                    <span className="text-xs text-slate-400">{r.desc}</span>
-                  </Link>
-                ))}
-              </div>
-            </Card>
-            <Card title="Other Reports">
-              <div className="flex flex-col gap-2">
-                {otherReports.map((r) => (
-                  <span
-                    key={r.label}
-                    title={r.disabledNote}
-                    aria-disabled="true"
-                    className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
-                  >
-                    <span className="text-sm font-semibold">{r.label}</span>
-                    <span className="text-xs">{r.disabledNote}</span>
-                  </span>
-                ))}
-              </div>
-            </Card>
-          </div>
+          <ReportsTab />
         </div>
       )}
 
       {tab === 'audit' && (
         <div role="tabpanel" aria-label="Audit Logs">
-          <Card
-            title="Audit Logs"
-          >
-            <ActivityTab />
-          </Card>
+          <AuditLogsTab />
         </div>
       )}
 
