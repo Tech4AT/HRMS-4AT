@@ -22,7 +22,6 @@ import { onboardingApi, type OnboardingRecordListItem } from '@/lib/api/onboardi
 import { exitsApi, type Resignation } from '@/lib/api/exits';
 import { documentsApi } from '@/lib/api/documents';
 import { ActivityTab } from '@/components/admin/ActivityTab';
-import { PageHeader } from '@/components/org-module/ui';
 
 const UNASSIGNED = 'Unassigned';
 
@@ -158,13 +157,6 @@ export default function OrgDashboardPage() {
     [positions],
   );
 
-  // Exits come straight from the directory: anyone carrying an exit date.
-  const exitedCount = useMemo(
-    () => (live ? employees.filter((e) => e.date_of_exit).length : 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [live, employees],
-  );
-
   const kpis = [
     { label: 'Total Employees', value: live ? employees.length : 0, note: 'Live from directory' },
     { label: 'Departments', value: live ? departments.length : 0, note: 'Live from directory' },
@@ -290,11 +282,6 @@ export default function OrgDashboardPage() {
 
   return (
     <div className="w-full">
-      <PageHeader
-        title="Dashboard"
-        subtitle="Headcount and structure are live from the employee directory; onboarding, exits and audit from their own services. Cards without a backend say so plainly."
-      />
-
       {/* Sub-tabs */}
       <div className="mb-4 flex gap-1 flex-wrap border-b border-slate-200" role="tablist" aria-label="Org dashboard sections">
         {TABS.map((t) => (
@@ -353,12 +340,51 @@ export default function OrgDashboardPage() {
             </div>
           )}
 
+          {/* Charts first, right after the KPIs */}
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card title="Headcount by Department">
+              {loading ? (
+                <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
+              ) : headcountByDepartment.length === 0 ? (
+                <EmptyNote>No employees in the directory yet.</EmptyNote>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={headcountByDepartment} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis
+                        dataKey="department"
+                        tick={{ fontSize: 11 }}
+                        interval={0}
+                        angle={-18}
+                        dy={10}
+                        height={52}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 11 }}
+                        allowDecimals={false}
+                        label={{ value: 'Headcount', angle: -90, position: 'insideLeft', fontSize: 11 }}
+                      />
+                      <Tooltip />
+                      <Bar dataKey="headcount" name="Headcount" fill={DEPT_BAR_FILL} radius={[6, 6, 0, 0]} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </Card>
+            <Card title="Employee Login Summary">
+              <EmptyNote>
+                Login analytics not available yet — no login-events backend.
+              </EmptyNote>
+            </Card>
+          </div>
+
           {/* Pending actions + Quicklinks */}
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2">
               <Card
                 title="Pending Actions"
-                subtitle="Live from onboarding and exits; untracked areas show 0 plainly."
                 action={
                   <Link href="/onboarding" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                     View all
@@ -405,7 +431,7 @@ export default function OrgDashboardPage() {
                 )}
               </Card>
             </div>
-            <Card title="Quicklinks" subtitle="Shortcuts into the modules that exist.">
+            <Card title="Quicklinks">
               <div className="flex flex-col gap-2">
                 {quicklinks.map((q) =>
                   q.href ? (
@@ -423,7 +449,7 @@ export default function OrgDashboardPage() {
                       aria-disabled="true"
                       className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
                     >
-                      {q.label} · {q.disabledNote}
+                      {q.label}
                     </span>
                   ),
                 )}
@@ -431,83 +457,28 @@ export default function OrgDashboardPage() {
             </Card>
           </div>
 
-          {/* Bulk operations + Login summary */}
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2">
-              <Card
-                title="Bulk operations"
-                subtitle="Bulk flows are not built yet — every action below is disabled, not a dead link."
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {bulkOps.map((b) => (
-                    <span
-                      key={b.label}
-                      title={b.disabledNote}
-                      aria-disabled="true"
-                      className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
-                    >
-                      {b.label} · {b.disabledNote}
-                    </span>
-                  ))}
-                </div>
-              </Card>
-            </div>
-            <Card
-              title="Employee Login Summary"
-              subtitle="Sign-in analytics over the last 14 days."
-            >
-              <EmptyNote>
-                Login analytics not available yet — no login-events backend.
-              </EmptyNote>
+          {/* Bulk operations */}
+          <div className="mt-4">
+            <Card title="Bulk operations">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {bulkOps.map((b) => (
+                  <span
+                    key={b.label}
+                    title={b.disabledNote}
+                    aria-disabled="true"
+                    className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
+                  >
+                    {b.label}
+                  </span>
+                ))}
+              </div>
             </Card>
           </div>
 
-          {/* Headcount by department (kept) */}
+          {/* Exits + Onboarding lists */}
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card
-              title="Headcount by Department"
-              subtitle={
-                loading
-                  ? 'Loading…'
-                  : `Live from the employee directory${live && exitedCount > 0 ? ` · ${exitedCount} exited (have an exit date)` : ''}`
-              }
-            >
-              {loading ? (
-                <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
-              ) : headcountByDepartment.length === 0 ? (
-                <EmptyNote>No employees in the directory yet.</EmptyNote>
-              ) : (
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={headcountByDepartment} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis
-                        dataKey="department"
-                        tick={{ fontSize: 11 }}
-                        interval={0}
-                        angle={-18}
-                        dy={10}
-                        height={52}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 11 }}
-                        allowDecimals={false}
-                        label={{ value: 'Headcount', angle: -90, position: 'insideLeft', fontSize: 11 }}
-                      />
-                      <Tooltip />
-                      <Bar dataKey="headcount" name="Headcount" fill={DEPT_BAR_FILL} radius={[6, 6, 0, 0]} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </Card>
-
-            {/* Exits + Onboarding lists */}
-            <div className="flex flex-col gap-4">
               <Card
                 title={`Exits (${resignations === null ? '–' : activeExits.length})`}
-                subtitle="Live from the exits service."
                 action={
                   <Link href="/exits" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                     View all
@@ -539,7 +510,6 @@ export default function OrgDashboardPage() {
               </Card>
               <Card
                 title={`Onboarding (${onboarding === null ? '–' : activeOnboarding.length})`}
-                subtitle="Live from the onboarding service."
                 action={
                   <Link href="/onboarding" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                     View all
@@ -569,7 +539,6 @@ export default function OrgDashboardPage() {
                   </ul>
                 )}
               </Card>
-            </div>
           </div>
         </div>
       )}
@@ -577,7 +546,7 @@ export default function OrgDashboardPage() {
       {tab === 'analytics' && (
         <div role="tabpanel" aria-label="Analytics">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Headcount by Department" subtitle={loading ? 'Loading…' : 'Live from the employee directory'}>
+            <Card title="Headcount by Department">
               {loading ? (
                 <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
               ) : headcountByDepartment.length === 0 ? (
@@ -597,7 +566,7 @@ export default function OrgDashboardPage() {
                 </div>
               )}
             </Card>
-            <Card title="Breakdown" subtitle={loading ? 'Loading…' : 'Department and location shares from the live directory.'}>
+            <Card title="Breakdown">
               {loading ? (
                 <div className="space-y-2 animate-pulse">
                   <div className="h-24 bg-slate-50 rounded-xl" />
@@ -639,7 +608,7 @@ export default function OrgDashboardPage() {
       {tab === 'reports' && (
         <div role="tabpanel" aria-label="Employee Reports">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <Card title="Quick Reports" subtitle="Links into live pages; nothing here is a dead link.">
+            <Card title="Quick Reports">
               <div className="flex flex-col gap-2">
                 {quickReports.map((r) => (
                   <Link
@@ -653,7 +622,7 @@ export default function OrgDashboardPage() {
                 ))}
               </div>
             </Card>
-            <Card title="Other Reports" subtitle="No backend or export exists for these yet — all disabled, none a dead link.">
+            <Card title="Other Reports">
               <div className="flex flex-col gap-2">
                 {otherReports.map((r) => (
                   <span
@@ -676,7 +645,6 @@ export default function OrgDashboardPage() {
         <div role="tabpanel" aria-label="Audit Logs">
           <Card
             title="Audit Logs"
-            subtitle="The same permanent record the Access-control Activity tab reads, via /api/admin/*. If your role cannot read it, it says so instead of failing silently."
           >
             <ActivityTab />
           </Card>
