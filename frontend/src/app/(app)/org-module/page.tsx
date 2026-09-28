@@ -203,8 +203,8 @@ export default function OrgDashboardPage() {
     { label: 'New Poll', href: '/engage' },
     { label: 'New Announcement', href: '/engage' },
     { label: 'Employee Custom Fields', disabledNote: 'No page yet' },
-    { label: 'Org Directory', href: '/org?tab=directory' },
-    { label: 'Org Tree', href: '/org?tab=chart' },
+    { label: 'Employee Directory', href: '/org?tab=directory' },
+    { label: 'Organisation Chart', href: '/org?tab=chart' },
   ];
 
   const bulkOps: { label: string; disabledNote: string }[] = [

@@ -4,11 +4,11 @@ import { useMemo, useState, type ReactNode } from 'react';
 
 /* ------------------------------ page header ------------------------------ */
 
-export function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {
+export function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="mb-5">
       <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-      <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>
+      {subtitle ? <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p> : null}
     </div>
   );
 }
@@ -161,7 +161,7 @@ export function MasterTable<T extends { id: string }>({
   searchPlaceholder = 'Search…',
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   columns: Column<T>[];
   rows: T[];
   fields: FieldDef[];

@@ -12,17 +12,11 @@ export default function HierarchyRulesPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Hierarchy Rules"
-        subtitle="Relationship and span rules for the hierarchy (defaults — no backend yet, not saved)."
-      />
+      <PageHeader title="Hierarchy Rules" />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
         <div className="px-5 py-3 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-900">Span & relationship rules</h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Guardrails applied when teams, positions and reporting lines change.
-          </p>
         </div>
         <div className="px-5 py-4 space-y-4">
           {hierarchyRuleDefaults.map((f) => (

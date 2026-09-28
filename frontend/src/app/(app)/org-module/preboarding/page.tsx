@@ -48,10 +48,7 @@ export default function PreboardingPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Preboarding"
-        subtitle="Candidates between offer and day one (live onboarding records; new candidates are added through the onboarding module)."
-      />
+      <PageHeader title="Preboarding" />
 
       {loadFailed ? (
         <div className="mb-4 flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">

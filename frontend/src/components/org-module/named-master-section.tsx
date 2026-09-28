@@ -12,7 +12,7 @@ interface Row {
 
 interface NamedMasterSectionProps {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   searchPlaceholder: string;
   load: () => Promise<NamedEntity[]>;
   extraColumns?: { key: string; label: string }[];

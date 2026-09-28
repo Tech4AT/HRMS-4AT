@@ -35,7 +35,7 @@ const CATEGORIES: Category[] = [
     reports: [
       { name: 'Company policies', desc: 'Published policy documents', href: '/policies' },
       { name: 'My documents', desc: 'Files on my own record', href: '/me/documents' },
-      { name: 'Org documents', desc: 'Shared organisation files', href: '/org?tab=documents' },
+      { name: 'Organization documents', desc: 'Shared organisation files', href: '/org?tab=documents' },
       { name: 'Custom fields', desc: 'Employee custom attributes', disabledNote: 'No page yet' },
     ],
   },

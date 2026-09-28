@@ -79,10 +79,7 @@ export default function OnboardingTasksPage() {
   return (
     <div>
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <PageHeader
-          title="Tasks / Templates"
-          subtitle="Reusable onboarding checklists live from the template registry."
-        />
+        <PageHeader title="Tasks / Templates" />
         {canManage ? (
           <button
             type="button"

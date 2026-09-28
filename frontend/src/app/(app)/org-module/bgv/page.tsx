@@ -76,10 +76,7 @@ export default function BgvPage() {
   return (
     <div>
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <PageHeader
-          title="Background Verification"
-          subtitle="Verification cases live from onboarding records (decisions save through the real endpoint)."
-        />
+        <PageHeader title="Background Verification" />
       </div>
 
       {loadFailed ? (

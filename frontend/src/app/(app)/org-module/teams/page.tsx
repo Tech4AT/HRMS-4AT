@@ -78,7 +78,6 @@ export default function TeamsPage() {
   return (
     <MasterTable<TeamRow>
       title="Teams"
-      subtitle="Working groups from the live team registry, lead resolved to a real directory name (reads are live; add/edit not yet wired)."
       rows={rows}
       fields={[]}
       addLabel="Add team"

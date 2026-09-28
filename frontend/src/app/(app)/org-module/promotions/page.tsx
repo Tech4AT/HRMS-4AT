@@ -36,7 +36,6 @@ export default function PromotionsPage() {
     <OrgChangeSection
       changeType="promotion"
       title="Promotions"
-      subtitle="Effective-dated promotion history with audit trail (live from the org-changes log)."
       logLabel="Log promotion"
       toField="designation_id"
       toLabel="To (new title)"

@@ -38,7 +38,6 @@ export default function JobTitlesPage() {
   return (
     <NamedMasterSection
       title="Job Titles / Designations"
-      subtitle="Master list of designations used across positions (live designations; counts from live positions)."
       searchPlaceholder="Search by title…"
       load={orgApi.listDesignations}
       extraColumns={[{ key: 'positions', label: 'Positions' }]}
