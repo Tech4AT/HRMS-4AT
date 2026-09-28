@@ -182,23 +182,24 @@ export function RolesTab() {
       {error && <Notice tone="error">{error}</Notice>}
 
       {!loading && !error && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-3 bg-gray-50 text-xs font-bold uppercase tracking-wide text-gray-500">
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-3 bg-gray-50 text-xs font-bold uppercase tracking-wide text-gray-500 rounded-t-xl">
             <div>User Roles</div>
             <div>Scope</div>
             <div>Permissions</div>
             <div>Users</div>
             <div>Actions</div>
           </div>
-          {shown.map((role) => {
+          {shown.map((role, idx) => {
             const scope = roleScope(role);
             const fullAccess = total > 0 && role.permissions.length === total && scope.global;
             const employeeRole = isEmployeeBaseRole(role);
             const roleUsers = employeeRole ? activeEmployees : (usersByRole.get(role.id) ?? []);
+            const isLast = idx === shown.length - 1;
             return (
               <div
                 key={role.id}
-                className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-4 border-t border-gray-100 items-start"
+                className={`grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-4 border-t border-gray-100 items-start${isLast ? ' rounded-b-xl' : ''}`}
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -267,7 +268,7 @@ export function RolesTab() {
                       />
                       <div
                         role="menu"
-                        className="absolute right-0 z-20 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                        className={`absolute right-0 z-20 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1${isLast ? ' bottom-full mb-1' : ' mt-1'}`}
                       >
                         <button
                           role="menuitem"
