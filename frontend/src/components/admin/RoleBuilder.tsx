@@ -17,8 +17,9 @@ import { Button, Notice, Select, errorText } from './ui';
  * Full-screen role builder (Keka-style "Create / Edit Role"): name +
  * description, a module sidebar, and that module's permissions as checkboxes
  * with a select-all. A single role-level "reach" applies to every permission
- * newly ticked here; fine-grained per-permission reach stays on the role's
- * advanced editor, so editing a role here never clobbers tiers set there.
+ * newly ticked here; each already-granted permission also gets its own reach
+ * select (saved via PATCH role-permissions), so editing a role here never
+ * clobbers tiers — it shows and updates them.
  */
 export function RoleBuilder({
   role,
@@ -39,6 +40,13 @@ export function RoleBuilder({
   const granted = useMemo(
     () => new Map((role?.permissions ?? []).map((g) => [g.permission, g.id])),
     [role],
+  );
+  // Per-permission reach for already-granted permissions, editable in place
+  // (saved via PATCH role-permissions on Save). Mounted fresh per role (the
+  // caller keys this component by role id), so initialising from props here
+  // always reflects the latest server data.
+  const [tiers, setTiers] = useState<Map<number, ScopeTier>>(
+    () => new Map((role?.permissions ?? []).map((g) => [g.permission, g.scopeTier])),
   );
   const [checked, setChecked] = useState<Set<number>>(new Set(granted.keys()));
   const [activeGroup, setActiveGroup] = useState(groups[0]?.label ?? '');
@@ -75,14 +83,25 @@ export function RoleBuilder({
         await adminApi.updateRole(role.id, { name: name.trim(), description, archetype });
       }
       // Diff: add newly-ticked permissions (at the chosen reach), remove
-      // unticked ones. Already-granted-and-still-ticked are left untouched.
+      // unticked ones, and PATCH the reach of still-ticked grants whose
+      // per-permission reach changed. Already-granted-and-unchanged are left
+      // untouched.
       const adds = [...checked].filter((id) => !granted.has(id));
       const removes = [...granted.entries()].filter(([id]) => !checked.has(id));
       for (const id of adds) await adminApi.addGrant(target.id, id, reach);
       for (const [, grantId] of removes) await adminApi.removeGrant(grantId);
+      if (role) {
+        const before = new Map(role.permissions.map((g) => [g.permission, g.scopeTier]));
+        for (const [permId, grantId] of granted.entries()) {
+          if (!checked.has(permId)) continue;
+          const next = tiers.get(permId);
+          if (next && before.get(permId) !== next) await adminApi.changeGrant(grantId, next);
+        }
+      }
       await onSaved();
     } catch (e) {
       setError(errorText(e));
+    } finally {
       setBusy(false);
     }
   };
@@ -155,6 +174,7 @@ export function RoleBuilder({
               <h2 className="font-bold text-gray-900">Permissions</h2>
               <p className="text-sm text-gray-500">
                 Tick the permissions this role should grant. {checked.size} selected.
+                {role ? ' Each granted permission keeps its own reach, changeable here.' : ' Newly-ticked permissions use the reach chosen above.'}
               </p>
             </div>
             <input
@@ -225,7 +245,7 @@ export function RoleBuilder({
                             onChange={() => toggle(p.id)}
                             className="mt-0.5"
                           />
-                          <span>
+                          <span className="min-w-0 flex-1">
                             <span className="text-slate-900">
                               {permissionLabel(p)}{' '}
                               {p.description && (
@@ -240,6 +260,24 @@ export function RoleBuilder({
                             </span>
                             <span className="block text-xs text-gray-500 font-mono">{p.code}</span>
                           </span>
+                          {granted.has(p.id) && checked.has(p.id) && (
+                            <span className="ml-auto shrink-0" onClick={(e) => e.stopPropagation()}>
+                              <Select
+                                aria-label={`Reach for ${p.code}`}
+                                value={tiers.get(p.id) ?? 'all'}
+                                onChange={(e) =>
+                                  setTiers((prev) => new Map(prev).set(p.id, e.target.value as ScopeTier))
+                                }
+                                className="!w-auto !py-1 !px-2 !text-xs"
+                              >
+                                {REACH_OPTIONS.map((o) => (
+                                  <option key={o.value} value={o.value} title={o.hint}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                              </Select>
+                            </span>
+                          )}
                         </label>
                       ))}
                     </div>
