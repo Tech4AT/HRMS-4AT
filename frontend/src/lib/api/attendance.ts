@@ -47,6 +47,13 @@ export interface AttendanceDayView {
   wfh_description?: string | null;
   /** Special calendar events on this date. */
   events?: { name: string; description: string | null }[];
+  /** The employee's assigned Shift, "HH:MM" 24h wall-clock time — null if no
+   *  Shift is assigned (Settings > Shifts). Doesn't vary by date. */
+  shift_start_time?: string | null;
+  shift_end_time?: string | null;
+  /** The shift's scheduled working minutes (span minus break) - null if no
+   *  Shift is assigned. */
+  shift_scheduled_minutes?: number | null;
 }
 
 export interface AttendanceSummary {

@@ -72,7 +72,16 @@ class RequestViewSet(FrontendEnvelopeMixin, viewsets.ModelViewSet):
         self._require_manage()
         from django.contrib.auth import get_user_model
 
-        new_approver = get_user_model().objects.filter(pk=request.data.get("approver")).first()
+        approver_id = request.data.get("approver")
+        try:
+            approver_id = int(approver_id) if approver_id is not None else None
+        except (TypeError, ValueError):
+            # A raw `pk=` filter with a non-numeric string reaches the DB
+            # before Django validates it and 500s there instead of behaving
+            # like any other not-found id — found during a comprehensive
+            # audit of the modules built on this engine (Steps 3-6).
+            approver_id = None
+        new_approver = get_user_model().objects.filter(pk=approver_id).first()
         return self._act(pk, lambda r: service.reassign(r, new_approver))
 
     @action(detail=True, methods=["post"])

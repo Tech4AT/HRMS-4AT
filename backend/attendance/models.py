@@ -28,8 +28,9 @@ class AttendanceRecord(models.Model):
     record itself asserts (checked in, or set by an approved WFH/regularisation
     request) — the day-and-a-half/holiday/weekend/leave overlay the frontend's
     AttendanceDayView also shows is computed at read time (views.py), not stored
-    here. late/early_leave/overtime minutes need an assigned Shift to compute
-    against (PLAN.md Step 6, not yet built) — left null until then."""
+    here. late/early_leave/overtime minutes are computed against the employee's
+    assigned Shift at check-in/check-out time (see timing.py) — null for an
+    employee with no Shift assigned, since there's nothing to compare against."""
 
     employee = models.ForeignKey(
         "employees.Employee", on_delete=models.CASCADE, related_name="attendance_records"
@@ -134,3 +135,96 @@ class AttendanceRequest(models.Model):
 
     def __str__(self):
         return f"{self.request_type} [{self.status}] for {self.employee_id}"
+
+
+class Shift(models.Model):
+    """PLAN.md Step 6. Matches `lib/attendance/shifts.ts`'s `Shift` shape
+    exactly (`name`, `startTime`, `endTime`, `breakMinutes`, `employeeIds`) —
+    there's no existing wire contract to match here (that file is still
+    frontend-only local state, no API client yet), so this app's normal
+    snake_case + the project's default CamelCase renderer produce the exact
+    field names the frontend already uses, with no translation layer needed
+    once a client is wired up (Step 11).
+
+    `employees` is a plain M2M, not a FK from Employee — nothing in the
+    frontend enforces "one shift per employee" either (the assignment modal
+    doesn't check whether someone is already on another shift), and adding a
+    FK the other way would mean editing `employees.Employee`, which is off
+    limits (PLAN.md §0). The M2M's through-table lives entirely in this app's
+    own migrations."""
+
+    name = models.CharField(max_length=100, unique=True)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    break_minutes = models.PositiveIntegerField(default=0)
+    employees = models.ManyToManyField("employees.Employee", related_name="shifts", blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class PolicySettings(models.Model):
+    """PLAN.md Step 6. A single row (enforced by `PolicySettings.load()` below,
+    not a DB constraint — matches `RecurringWfhRule`-style admin config, just
+    with exactly one row instead of one per weekday). Matches
+    `lib/attendance/penalisation.ts`'s `PolicizationSettings` shape — flat
+    fields here, nested in the API response (see `settings_serializers.py`)
+    since the frontend groups them as `noAttendance: {enabled,
+    leaveDaysDeducted}` etc., not flat `noAttendanceEnabled`.
+
+    Only the settings themselves live here — the actual per-employee
+    `PenalisationRecord` and its auto-apply/overturn lifecycle are PLAN.md
+    Step 8, not this one."""
+
+    regularisation_grace_days = models.PositiveIntegerField(default=3)
+    absconding_threshold_days = models.PositiveIntegerField(default=5)
+
+    no_attendance_enabled = models.BooleanField(default=True)
+    no_attendance_leave_days_deducted = models.DecimalField(
+        max_digits=4, decimal_places=1, default=1
+    )
+
+    late_arrival_enabled = models.BooleanField(default=False)
+    late_arrival_leave_days_deducted = models.DecimalField(
+        max_digits=4, decimal_places=1, default=0.5
+    )
+    late_arrival_threshold_count = models.PositiveIntegerField(default=3)
+
+    early_leaving_enabled = models.BooleanField(default=False)
+    early_leaving_leave_days_deducted = models.DecimalField(
+        max_digits=4, decimal_places=1, default=0.5
+    )
+    early_leaving_threshold_count = models.PositiveIntegerField(default=3)
+
+    work_hours_enabled = models.BooleanField(default=False)
+    work_hours_leave_days_deducted = models.DecimalField(
+        max_digits=4, decimal_places=1, default=0.5
+    )
+    work_hours_min_work_hours = models.DecimalField(max_digits=4, decimal_places=1, default=8)
+
+    comp_off_accrual_enabled = models.BooleanField(default=True)
+    comp_off_accrual_overtime_hours_per_comp_off = models.DecimalField(
+        max_digits=5, decimal_places=1, default=8
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def load(cls) -> "PolicySettings":
+        """The one row, created with defaults on first access. Every view goes
+        through this rather than a bare `.objects.get()`/`.first()`, so
+        nothing has to separately handle "no settings configured yet"."""
+        obj, _created = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return "Policy Settings"

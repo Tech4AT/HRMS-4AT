@@ -149,3 +149,17 @@ def test_a_decision_for_another_modules_request_type_is_ignored():
     approvals.decide(req, manager, RequestStatus.APPROVED)
 
     assert not AttendanceRequest.objects.exists()
+
+
+@pytest.mark.django_db
+def test_a_malformed_payload_id_does_not_crash_the_deciders_request():
+    """The generic engine's payload is free-form JSON anyone can raise via the
+    "raise a request" form — a non-numeric attendance_request_id must not
+    crash the manager's decide call. Found during a comprehensive audit."""
+    manager, emp_user = _pair("bad-mgr@x.com", "bad-emp@x.com", "BM1", "BE1")
+    req = approvals.create_request(emp_user, "wfh", {"attendance_request_id": "not-a-number"})
+
+    approvals.decide(req, manager, RequestStatus.APPROVED)  # must not raise
+
+    req.refresh_from_db()
+    assert req.status == RequestStatus.APPROVED  # the engine's own state still updates

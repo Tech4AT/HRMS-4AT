@@ -104,6 +104,16 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
+# The organisation's real-world wall-clock timezone — distinct from TIME_ZONE
+# (which stays UTC for how Django stores/queries datetimes). Shift start/end
+# times (attendance/models.py's Shift) are entered and displayed as this
+# org's local wall-clock time (e.g. "9:30 AM"), and the frontend renders every
+# UTC timestamp back to the viewer's local time the same way — so comparing a
+# clock-in/out against a Shift for late/early-leave/overtime must convert to
+# this timezone too (attendance/timing.py), not Django's UTC. Single-org
+# deployment, so one fixed zone rather than a per-org setting.
+ORG_TIMEZONE = "Asia/Kolkata"
+
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

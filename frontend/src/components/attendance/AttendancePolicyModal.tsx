@@ -15,8 +15,8 @@ const RULE_TITLES = {
 
 /** Read-only view of Settings > Policy Settings, opened from the "Attendance
  *  Policy" button on My Attendance so employees can see the rules that apply
- *  to them without being able to change anything. Reads the same
- *  localStorage-backed settings HR configures there - see
+ *  to them without being able to change anything. Reads the same real,
+ *  backend-persisted settings HR configures there - see
  *  usePenalizationSettings. */
 export function AttendancePolicyModal({ onClose }: { onClose: () => void }) {
   const [settings] = usePenalizationSettings();

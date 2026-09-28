@@ -41,6 +41,17 @@ def test_reshapes_calendar_entries_into_the_holiday_contract():
     assert data[0]["description"] == "National holiday"
 
 
+def test_a_non_numeric_year_is_a_400_not_a_500():
+    """Found during a comprehensive audit: `int(year_param)` was unguarded,
+    so a malformed year crashed with an unhandled 500 instead of a
+    validation error."""
+    client = _client()
+
+    response = client.get(URL, {"year": "abc"})
+
+    assert response.status_code == 400
+
+
 def test_defaults_to_the_current_year_when_year_is_omitted():
     from django.utils import timezone
 

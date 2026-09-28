@@ -81,6 +81,11 @@ def test_hr_admin_creates_an_entry():
     assert entry["name"] == "Republic Day"
     assert entry["description"] == "National holiday"
     assert entry["id"] and entry["created_at"] and entry["updated_at"]
+    # lib/api/calendar.ts types id as `string` — a plain SerializerMethodField
+    # mixin silently didn't do this (DRF's metaclass ignores declared fields
+    # on a base class that isn't itself a Serializer), caught only by
+    # checking this, not by any existing "is the response is 201" test.
+    assert isinstance(entry["id"], str)
     assert AuditLog.objects.filter(
         action="CalendarEntry.created", entity_id=str(entry["id"])
     ).exists()

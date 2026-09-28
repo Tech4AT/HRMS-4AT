@@ -45,6 +45,7 @@ def test_create_without_label_defaults_to_every_weekday():
     data = response.json()["data"]
     assert data["label"] == "Every Wednesday"
     assert data["active"] is True
+    assert isinstance(data["id"], str)  # see test_calendar_entries.py's identical assertion
     assert AuditLog.objects.filter(
         action="RecurringWfhRule.created", entity_id=str(data["id"])
     ).exists()

@@ -44,6 +44,14 @@ def apply_attendance_decision(sender, request, actor, status, **kwargs):
     row_id = (request.payload or {}).get("attendance_request_id")
     if not row_id:
         return
+    try:
+        row_id = int(row_id)
+    except (TypeError, ValueError):
+        # payload is free-form JSON on the generic engine (anyone can raise a
+        # request with any request_type/payload via the generic "raise a
+        # request" form) — a malformed id here must not crash the manager's
+        # decide request; found during a comprehensive audit, not reported.
+        return
     row = AttendanceRequest.objects.filter(pk=row_id).first()
     if row is None:
         return

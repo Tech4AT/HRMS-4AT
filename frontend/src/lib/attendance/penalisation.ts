@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
+import { policySettingsApi } from '@/lib/api/policySettings';
 
-/** Sample (frontend-only) data for the Penalisation approvals tab and the
- *  Penalization Settings panel. There's no backend for this yet — a
+/** Sample (frontend-only) data for the Penalisation approvals tab. There's no
+ *  backend for Penalisation records themselves yet (PLAN.md Step 8) — a
  *  penalisation is meant to be raised automatically (no approval step) when
  *  an employee is absent and doesn't submit a regularisation request within
  *  the grace period configured below, and an employee who stays absent past
@@ -117,47 +118,37 @@ export function penalisationRuleSentence(
   }
 }
 
-const SETTINGS_STORAGE_KEY = 'hrms-mock-penalization-settings-v1';
-
-function readSettingsStore(): PenalizationSettings {
-  if (typeof window === 'undefined') return DEFAULT_PENALIZATION_SETTINGS;
-  try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as PenalizationSettings;
-  } catch {
-    // Corrupt or inaccessible storage (private mode, quota) - fall back to defaults.
-  }
-  return DEFAULT_PENALIZATION_SETTINGS;
-}
-
-function writeSettingsStore(settings: PenalizationSettings) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Ignore - the in-memory state still works for the rest of the session.
-  }
-}
-
-/** Shared client-side "store" for Penalization Settings, so the read-only
- *  policy popup (Attendance Policy, on My Attendance) shows whatever HR
- *  actually configured on the Settings > Policy Settings page, instead of
- *  each holding its own disconnected copy. Same localStorage-backed pattern
- *  as {@link usePenalisations}. */
+/** Shared hook for Policy Settings — real backend now (PLAN.md Step 6/11):
+ *  `policySettingsApi` reads/writes the one `PolicySettings` row through
+ *  `/api/attendance/policy-settings`. `settings` starts at the same defaults
+ *  used before, then updates once the real value loads, so the read-only
+ *  policy popup (Attendance Policy, on My Attendance) and the Settings >
+ *  Policy Settings page both end up showing whatever HR actually configured,
+ *  same as the localStorage version did — just fed from the network. Consumers
+ *  that only read `settings` (the popup) are unaffected by `updateSettings`
+ *  becoming async; `PenalizationSettingsPanel.tsx` (the only writer) awaits it. */
 export function usePenalizationSettings() {
-  const [settings, setSettingsState] = useState<PenalizationSettings>(() => readSettingsStore());
+  const [settings, setSettingsState] = useState<PenalizationSettings>(DEFAULT_PENALIZATION_SETTINGS);
 
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === SETTINGS_STORAGE_KEY) setSettingsState(readSettingsStore());
+    let cancelled = false;
+    policySettingsApi
+      .get()
+      .then((loaded) => {
+        if (!cancelled) setSettingsState(loaded);
+      })
+      .catch(() => {
+        // Leave the defaults in place — the popup/panel still render something
+        // sensible rather than an error state for what's a read-mostly settings object.
+      });
+    return () => {
+      cancelled = true;
     };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  const updateSettings = (next: PenalizationSettings) => {
-    setSettingsState(next);
-    writeSettingsStore(next);
+  const updateSettings = async (next: PenalizationSettings) => {
+    const saved = await policySettingsApi.update(next);
+    setSettingsState(saved);
   };
 
   return [settings, updateSettings] as const;

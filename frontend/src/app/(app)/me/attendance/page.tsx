@@ -19,16 +19,22 @@ import {
 } from '@/lib/api/attendance';
 import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
 import { AttendancePolicyModal } from '@/components/attendance/AttendancePolicyModal';
-import { fmtHM, isoToHM, toAttendanceRow, toLocalISODate } from '@/lib/attendance/view';
+import { fmtHM, isoToHM, toAttendanceRow, toLocalISODate, type AttendanceRow } from '@/lib/attendance/view';
 
 function AttendanceVisual({
   checkIn,
   checkOut,
   breakMinutes,
+  shiftStart,
+  shiftEnd,
 }: {
   checkIn?: string;
   checkOut?: string;
   breakMinutes?: number;
+  /** The employee's assigned shift, "HH:MM" 24h - drawn as start/end markers
+   *  on the timeline so the logged-in bar has a schedule to read against. */
+  shiftStart?: string;
+  shiftEnd?: string;
 }) {
   if (!checkIn) {
     return <div className="h-2 w-full min-w-[140px] bg-slate-100 rounded-full" />;
@@ -69,6 +75,11 @@ function AttendanceVisual({
 
   const ticks = Array.from({ length: 11 }, (_, i) => ((i + 1) / 12) * 100); // every 2h across 24h
 
+  const shiftMarkers = [
+    shiftStart ? { pct: (toMinutes(shiftStart) / 1440) * 100, label: `Shift starts ${fmtMin(toMinutes(shiftStart))}` } : null,
+    shiftEnd ? { pct: (toMinutes(shiftEnd) / 1440) * 100, label: `Shift ends ${fmtMin(toMinutes(shiftEnd))}` } : null,
+  ].filter((m): m is { pct: number; label: string } => m !== null);
+
   return (
     <div className="relative w-full min-w-[140px] py-2">
       <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -76,6 +87,22 @@ function AttendanceVisual({
           <span key={pct} className="absolute top-0 bottom-0 w-px bg-white/80" style={{ left: `${pct}%` }} />
         ))}
       </div>
+
+      {shiftMarkers.map((m, i) => (
+        <div
+          key={`shift-${i}`}
+          className="group/shift absolute -top-1 h-4 w-0.5 bg-indigo-400 rounded-full"
+          title={m.label}
+          style={{ left: `${m.pct}%` }}
+        >
+          <div className="hidden group-hover/shift:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
+            <div className="bg-slate-700 text-white text-xs font-semibold rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
+              {m.label}
+            </div>
+            <div className="w-2 h-2 bg-slate-700 rotate-45 mx-auto -mt-1" />
+          </div>
+        </div>
+      ))}
 
       {segments.map((seg, i) => {
         const isLast = i === segments.length - 1;
@@ -128,6 +155,39 @@ function AttendanceVisual({
             );
           })()
         : null}
+    </div>
+  );
+}
+
+/** For an in-progress day (checked in, not out yet) `effectiveMinutes` is
+ *  undefined - `working_minutes` is only computed at checkout - so the
+ *  progress bar would otherwise sit empty all day. Estimate it live from
+ *  check-in to `now` instead, same idea as AttendanceVisual's own "now" bar. */
+function liveEffectiveMinutes(row: AttendanceRow, now: Date): number | undefined {
+  if (row.effectiveMinutes != null) return row.effectiveMinutes;
+  if (row.status !== 'inprogress' || !row.checkIn) return undefined;
+  const [h, m] = row.checkIn.split(':').map(Number);
+  const start = new Date(row.date);
+  start.setHours(h, m, 0, 0);
+  return Math.max(0, Math.round((now.getTime() - start.getTime()) / 60000));
+}
+
+/** Fills up as the day's actual worked minutes approach the shift's scheduled
+ *  minutes - the "how much of the working day is done" visual. Renders
+ *  nothing when the employee has no assigned shift, since there's no
+ *  scheduled total to measure progress against. */
+function EffectiveHoursBar({ minutes, scheduledMinutes }: { minutes?: number; scheduledMinutes?: number }) {
+  if (!scheduledMinutes) return null;
+  const pct = Math.max(0, Math.min(100, Math.round(((minutes ?? 0) / scheduledMinutes) * 100)));
+  return (
+    <div
+      className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5"
+      title={`${pct}% of ${fmtHM(scheduledMinutes)} scheduled`}
+    >
+      <div
+        className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
@@ -419,7 +479,9 @@ function AttendanceTab() {
     }
   };
 
-  const rows = historyViews.map(toAttendanceRow);
+  // historyViews comes back oldest-first (the range query); the log table
+  // should read like a feed, most recent day on top.
+  const rows = [...historyViews].reverse().map(toAttendanceRow);
 
   const meHrs = summary ? fmtHM(summary.total_working_minutes) : '—';
   const meOnTime =
@@ -545,6 +607,8 @@ function AttendanceTab() {
                 checkIn={isoToHM(today.check_in)}
                 checkOut={today.check_out ? isoToHM(today.check_out) : undefined}
                 breakMinutes={today.break_minutes ?? undefined}
+                shiftStart={today.shift_start_time ?? undefined}
+                shiftEnd={today.shift_end_time ?? undefined}
               />
               <div className="flex items-center justify-between text-xs text-slate-500 mt-3">
                 <span>Duration: {fmtHM(today.working_minutes ?? undefined)}</span>
@@ -798,7 +862,12 @@ function AttendanceTab() {
                           ) : (
                             <>
                               <td className="px-5 py-4">
-                                <AttendanceVisual checkIn={row.checkIn} checkOut={row.checkOut} />
+                                <AttendanceVisual
+                                  checkIn={row.checkIn}
+                                  checkOut={row.checkOut}
+                                  shiftStart={row.shiftStart}
+                                  shiftEnd={row.shiftEnd}
+                                />
                               </td>
                               <td className="px-5 py-4 text-sm font-semibold text-slate-900">
                                 {fmtHM(row.effectiveMinutes)}
@@ -808,6 +877,10 @@ function AttendanceTab() {
                                     +{fmtHM(row.overtimeMinutes)} OT
                                   </span>
                                 ) : null}
+                                <EffectiveHoursBar
+                                  minutes={liveEffectiveMinutes(row, now)}
+                                  scheduledMinutes={row.shiftScheduledMinutes}
+                                />
                               </td>
                               <td className="px-5 py-4">
                                 <span

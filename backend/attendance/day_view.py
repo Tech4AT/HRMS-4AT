@@ -30,19 +30,28 @@ regardless of what `status` says — the granular facts are the source of truth
 read one field."""
 
 from attendance.day_facts import get_day_facts
+from attendance.timing import scheduled_minutes_for, shift_for
 
 
 def _events_payload(facts):
     return [{"name": e.name, "description": e.description} for e in facts.events]
 
 
-def build_day_view(the_date, record, *, today, employee=None, facts=None) -> dict:
+_UNSET = object()
+
+
+def build_day_view(the_date, record, *, today, employee=None, facts=None, shift=_UNSET) -> dict:
     """`facts` lets a multi-day caller pass an already-computed DayFacts (from
     day_facts.get_day_facts_range(), fetched once for the whole range) instead
     of this function fetching it per date — pass `employee` alone for a single
-    date and it's fetched here."""
+    date and it's fetched here. Same idea for `shift` (an employee's Shift
+    assignment doesn't vary by date, so a range caller fetches it once too;
+    `_UNSET` — not `None` — means "look it up", since `None` is the valid,
+    common "no shift assigned" case)."""
     if facts is None:
         facts = get_day_facts(the_date, employee=employee)
+    if shift is _UNSET:
+        shift = shift_for(employee) if employee is not None else None
 
     if facts.is_holiday:
         status = "holiday"
@@ -87,4 +96,7 @@ def build_day_view(the_date, record, *, today, employee=None, facts=None) -> dic
         "wfh_note": facts.org_wfh_note,
         "wfh_description": facts.org_wfh_description,
         "events": _events_payload(facts),
+        "shift_start_time": shift.start_time.strftime("%H:%M") if shift else None,
+        "shift_end_time": shift.end_time.strftime("%H:%M") if shift else None,
+        "shift_scheduled_minutes": scheduled_minutes_for(shift) if shift else None,
     }

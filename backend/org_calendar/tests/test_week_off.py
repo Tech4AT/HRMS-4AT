@@ -64,7 +64,9 @@ def test_create_a_new_weekday_as_off():
     response = client.post(URL, {"weekday": 5}, format="json")  # Friday
 
     assert response.status_code == 201
-    assert response.json()["data"]["weekday"] == 5
+    data = response.json()["data"]
+    assert data["weekday"] == 5
+    assert isinstance(data["id"], str)  # see test_calendar_entries.py's identical assertion
 
 
 def test_weekday_out_of_range_is_rejected():

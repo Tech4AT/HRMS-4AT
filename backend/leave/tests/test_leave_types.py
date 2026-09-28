@@ -67,6 +67,7 @@ def test_hr_admin_creates_a_type_with_an_auto_derived_code():
     data = response.json()["data"]
     assert data["code"] == "ANN"
     assert data["status"] == "active"
+    assert isinstance(data["id"], str)  # found returning a bare int during a comprehensive audit
     assert AuditLog.objects.filter(action="LeaveType.created", entity_id=str(data["id"])).exists()
 
 

@@ -718,38 +718,65 @@ cycle. Recorded here since they changed already-"done" earlier steps.
 
 ---
 
-## Step 6 — Shifts and policy settings backend
+## Step 6 — Shifts and policy settings backend (built)
 
-### Models
+Built inside the existing `attendance` app (`settings_views.py`/
+`settings_serializers.py`, kept separate from the self-service check-in/request
+files), not a new app — Shifts is directly attendance-domain (late/early/
+overtime will compute against an assigned Shift once that wiring lands), and a
+third one-model app for this would've been unnecessary given `attendance`
+already exists.
 
-- `Shift`: name, start time, end time, break minutes.
-- Shift assignment: either an `employee` FK directly on a join model or a M2M —
-  matches the frontend's `Shift { ..., employeeIds }` shape either way; pick
-  whichever is more idiomatic once building (not dictated by the frontend).
-- `PolicySettings`: a single-row (or singleton-pattern) model — regularisation
-  grace period, absconding threshold, and per-rule (No Attendance / Late Arrival
-  / Early Leaving / Work Hours) enabled flag + numeric fields, plus Comp Off
-  accrual enabled flag + rate — matches `PolicySettings`/`PenalizationSettings` in
-  `lib/attendance/penalisation.ts` exactly.
+### Models (`attendance/models.py`)
+
+- `Shift`: name (unique), start time, end time, break minutes, `employees`
+  (a plain M2M, not a FK from `Employee` — nothing in the frontend enforces
+  "one shift per employee" either, and a FK the other way would mean editing
+  `employees.Employee`, off limits per §0; the M2M's through-table lives
+  entirely in `attendance`'s own migrations).
+- `PolicySettings`: a genuine singleton — `PolicySettings.load()` does
+  `get_or_create(pk=1)` and `save()` forces `pk=1`, so there is exactly one
+  row, always. Flat fields (`no_attendance_enabled`,
+  `no_attendance_leave_days_deducted`, ...); nested in the API response (below).
 
 ### CRUD / API endpoints
 
-Full CRUD on Shifts and assignment; read + update on the single Policy Settings
-row. Not employee-keyed data (Shifts/Settings themselves — assignment involves
-employee references but the shift record isn't scoped per-employee the way
-`AttendanceRecord` is) — follow `org_calendar`'s `HasPermissionCode` +
-`EnvelopeMixin` pattern (Step 2/1.4), not `ScopedEmployeePermission`.
+`Shift`: full CRUD at `/attendance/shifts` (`HasPermissionCode`, flat, not
+employee-keyed data — same reasoning as `org_calendar`, Step 2/1.4).
+`employee_ids` fully replaces the assignment on every write, matching
+`ShiftsSettingsPanel.tsx`'s own behaviour (its assignment modal always returns
+the complete selected list, never a delta).
+
+`PolicySettings`: **not** a router-registered resource — there's exactly one
+row, so `/attendance/policy-settings` is a plain `APIView` (GET reads the
+singleton, PUT replaces it wholesale, matching `PenalizationSettingsPanel.tsx`'s
+own save flow, which always sends the complete settings object). The nested
+shape (`noAttendance: {enabled, leaveDaysDeducted}`) doesn't map onto the flat
+model via ordinary `ModelSerializer` field mapping, so `PolicySettingsSerializer`
+is a plain `Serializer` with hand-written `to_representation`/`update` —
+routed through the declared nested sub-serializers' own `to_representation`
+(not a hand-built dict of raw model values), since a raw `Decimal` slipping
+through isn't just a display bug: it's a hard crash the moment it reaches the
+audit-log `JSONField` write (found by the test suite, not by inspection).
+
+**A genuinely different rendering choice from Steps 2–5, and why**: `Shift`/
+`PolicySettings` have no existing API client (`lib/attendance/shifts.ts` and
+`penalisation.ts` are still local component state, unlike calendar/attendance/
+leave, which all had to preserve an *existing* snake_case wire contract a real
+client already called). So these use the project's **default** CamelCase
+renderer/parser, not the snake_case-preserving `EnvelopeMixin` those three
+modules needed — normal Django snake_case fields already come out as
+`startTime`, `employeeIds`, `noAttendance`, etc. for free, matching the
+frontend's existing TS field names exactly with no translation layer to build
+in Step 11.
 
 ### RBAC
 
-`attendance.settings.manage` — **already the exact hardcoded frontend string**
-gating Shifts, Leave Settings, and Policy Settings (1.6). Per the registry rule
-(one owning registration; identical duplicate registrations are harmless,
-conflicting ones raise at import time — Step 10), exactly one app should
-register this code; the others reference it in their own views without
-re-registering it. Which app owns the registration is an implementation detail
-to settle when app boundaries are drawn (this plan describes by frontend feature
-area, not by fixed Python app count).
+`attendance.settings.manage` — **referenced here, not re-registered**. Leave
+(Step 4) already owns the registration (it needed the code first, among the
+three areas that share it); per the registry's one-owning-registration rule,
+this module's views set `required_permission = "attendance.settings.manage"`
+as a plain string and nothing else.
 
 ### Approvals integration
 
@@ -757,17 +784,88 @@ None — Shifts and Policy Settings are admin configuration, not a request/decis
 
 ### Notifications / audit
 
-`write_audit` on every create/update/destroy, same as `org_calendar`. No notifications.
+`write_audit` on every Shift create/update/destroy and every Policy Settings
+update, same pattern as `org_calendar`. No notifications.
 
-### Tests
+### Tests (14 new tests, all passing)
 
-Same shape as `org_calendar`'s suite: permission wiring, CRUD, RBAC wiring checks.
+`test_shifts.py` (permissions incl. 401/403, camelCase field round-trip, an
+overnight shift stored as-is with no special wrap-around handling, whole-list
+assignment replacement, list/delete + audit); `test_policy_settings.py`
+(permissions, lazy singleton creation with defaults, full-object PUT replacing
+the one row, rejecting an incomplete nested payload).
 
-### Definition of done
+### Definition of done — met
 
-Shifts CRUD + assignment and Policy Settings match their frontend contracts;
-`attendance.settings.manage` gates all of it with a single owning registration;
-verified live against Settings → Shifts / Policy Settings with `MOCK_AUTH` off.
+Shifts CRUD + assignment and Policy Settings match their frontend contracts
+exactly (camelCase field names verified live, not just asserted); 
+`attendance.settings.manage` gates all of it via the single registration Leave
+already owns; verified live against the real endpoints directly (no frontend
+proxy/client exists for these yet — that's Step 11, when
+`ShiftsSettingsPanel.tsx`/`PenalizationSettingsPanel.tsx` stop being local
+state); 463 tests pass repo-wide, `manage.py check`/`ruff`/`black` clean.
+
+---
+
+## Comprehensive audit (post-Step 6)
+
+A deliberate pass over everything built so far (Steps 1–6), specifically
+hunting for the same *classes* of bug already found by accident during manual
+verification (id serialization, unguarded input parsing) rather than waiting
+for the next one to surface that way. Six real, confirmed bugs found and
+fixed, all with regression tests — none were caught by the 463 tests already
+passing, because none of those tests asserted the specific thing that was wrong.
+
+1. **`org_calendar`'s three serializers (`CalendarEntry`/`RecurringWfhRule`/
+   `WeekOff`) returned a bare integer `id`**, though `lib/api/calendar.ts`
+   types it as `string` — the same class of bug already fixed in attendance/
+   leave/Shift's serializers, just missed here since `org_calendar` (Step 2)
+   was built first, before that pattern was established. `LeaveType.id` had
+   the identical gap despite every *other* id in that same file already being
+   fixed. A first attempt at fixing `org_calendar` with a shared
+   `_StringIdMixin` **silently did not work** — DRF's `SerializerMetaclass`
+   only collects declared fields from base classes that themselves went
+   through that metaclass (have their own `_declared_fields`); a plain mixin
+   class doesn't, so `id` fell straight back to the auto-generated
+   `IntegerField` with no error anywhere. Caught only by checking the actual
+   live response after the "fix," not by reading the code or running the
+   existing tests. Fixed by declaring `id`/`get_id` directly on each
+   serializer instead (matching every other serializer in this codebase);
+   verified this time with `cls().get_fields()['id']` before trusting it.
+   `AttendanceRecordSerializer.marked_by` had the same latent gap (currently
+   always `null` — nothing sets it yet — so not a live bug, but fixed
+   pre-emptively since it was a two-line change).
+2. **A non-numeric `year` on `GET /leave/holidays` crashed with an unhandled
+   500** (`int(year_param)` with no guard). Fixed with a try/except raising a
+   clean `ValidationError`.
+3. **A non-numeric `leave_type_id` on `POST /leave/requests` crashed with an
+   unhandled 500** — a raw `pk=` filter reached Postgres before Django
+   validated the type, and `DataError` isn't one of `core.exceptions`'s
+   recognized exception types. Fixed the same way as #2.
+4. **A non-numeric id embedded in a *decided* request's payload crashed the
+   approver's decide call**, in both `attendance/handlers.py` and
+   `leave/handlers.py`. The generic engine's `payload` is free-form JSON —
+   anything reachable through the "Raise a request" form on `/approvals` can
+   put an arbitrary string in `attendance_request_id`/`leave_request_id`, and
+   the manager who later approves or rejects it would 500, not the person who
+   raised it. Fixed by guarding the `int()` cast and treating a malformed id
+   the same as a not-found one (silent no-op, matching the existing "row is
+   None" branch).
+5. **A non-numeric `approver` on `POST /requests/{id}/reassign` (the
+   `approvals.manage` escape hatch) crashed with an unhandled 500** — same
+   root cause as #3, in `backend/approvals/views.py`. This is the second
+   place this plan edited `approvals/` despite §0's "build on it, don't edit
+   it" (the first was the `trailing_slash` fix, Step 5's corrections) —
+   justified the same way: a narrow, mechanical crash fix, not a design
+   change, using a pattern already applied four times elsewhere in this pass.
+
+None of the six needed a design change — every fix is a guard clause or a
+field declaration. All are covered by a new regression test in the relevant
+app's test suite. 468 tests pass repo-wide (463 + 5 new: the four crash
+guards plus the org_calendar/LeaveType id-type lock-in, several of which
+cover more than one of the six bugs), `manage.py check`/`ruff`/`black` clean,
+`tsc --noEmit` clean, and all six were re-verified live against the running
+dev server (not just via pytest) before being marked fixed.
 
 ---
 
@@ -1003,15 +1101,38 @@ table holds exactly when tested (Step 12) as three real accounts, one per tier.
 
 ## Step 11 — API / proxy integration
 
-- New Next.js proxy routes for Shifts and Penalisation, using the existing
-  `createBackendProxyRoute(prefix)` one-liner already used by `leave`/
-  `attendance`/`calendar` — no new pattern to invent.
-- `lib/attendance/shifts.ts` + its employee picker: replace local sample data
-  with a real API client and the existing, already-real `/api/v1/employees` list
-  — Shifts should not get its own duplicate employee directory.
-- `lib/attendance/penalisation.ts`: replace the `localStorage`-backed hooks with
-  a real API client; every consumer keeps its current shape, fed from the
-  network instead.
+**Shifts and Policy Settings pieces done already, pulled forward** — the user
+hit the still-mock Shifts UI right after Step 6 shipped and asked "shouldn't
+this work now?", so this part of Step 11 happened immediately rather than
+waiting: no new proxy route was even needed (`attendance/[...path]/route.ts`'s
+existing catch-all already forwards `/api/attendance/shifts` and
+`/api/attendance/policy-settings` — both are just sub-paths of the already-proxied
+`attendance` prefix), except adding `DELETE` to that route's exported methods
+(nothing under this prefix had ever needed it before Shifts). Built:
+`lib/api/shifts.ts` (real CRUD client, replacing `SAMPLE_SHIFTS`),
+`lib/api/employees.ts` (a small real-directory read client — `/api/employees`
++ `/api/departments`, both already real — for the assignment picker, which now
+groups by actual department instead of the sample roster's fake "team"),
+`lib/api/policySettings.ts` (maps the backend's nested/string-decimal wire
+shape to the exact existing `PenalizationSettings` TS type), and
+`usePenalizationSettings()` rewired to that client instead of localStorage —
+kept the same `[settings, updateSettings]` shape so both existing consumers
+(`AttendancePolicyModal`, read-only; `PenalizationSettingsPanel`, the only
+writer) needed only `updateSettings` becoming `async`, exactly per the plan
+below. One real regression caught before it shipped: `PenalizationSettingsPanel`
+initialized its edit draft from `saved` via `useState(saved)`, which only reads
+that value once — safe when `saved` loaded synchronously from localStorage,
+broken once it loads asynchronously from the network (the draft would always
+start at hardcoded defaults). Fixed with a one-time sync effect.
+
+Still pending — Penalisation itself (the records, Step 8, not Policy
+Settings) and Dashboard:
+
+- `lib/attendance/penalisation.ts`'s `PenalisationRecord`/`usePenalisations`
+  (the applied/overturn-requested/overturned records) are still
+  `localStorage`-backed — that's Step 8's backend, not built yet. A new proxy
+  route *will* be needed for that one, since Penalisation doesn't live under
+  an already-proxied prefix the way Shifts/Policy Settings did.
 - `approvals/page.tsx`: add the new permission gate to the Penalisation tab
   (Step 8/10.1) — currently ungated.
 - `lib/attendance/dashboard.ts`/`AttendanceLeaderboard.tsx`: replace sample-roster

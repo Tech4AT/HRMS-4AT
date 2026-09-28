@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   compOffAccrualSentence,
   penalisationRuleSentence,
@@ -167,10 +167,11 @@ function CompOffAccrualRow({
   );
 }
 
-/** Settings > Policy Settings. Frontend-only for now (no real backend to
- *  persist to - settings round-trip through localStorage via
- *  {@link usePenalizationSettings} instead) - configures the rules that
- *  drive the sample data shown under Approvals > Penalisation: the
+/** Settings > Policy Settings. Real data now (PLAN.md Step 6/11) — settings
+ *  persist via {@link usePenalizationSettings}, backed by
+ *  `/api/attendance/policy-settings`, not localStorage. Configures the rules
+ *  that drive the sample data still shown under Approvals > Penalisation
+ *  (the Penalisation records themselves are PLAN.md Step 8, still mock): the
  *  regularisation grace period, the absconding threshold, a penalty (or "no
  *  penalization") for each of No Attendance, Late Arrival, Early Leaving,
  *  and Work Hours, and the Comp Off accrual rate (the one reward rule
@@ -180,14 +181,36 @@ function CompOffAccrualRow({
 export function PenalizationSettingsPanel() {
   const [saved, setSaved] = usePenalizationSettings();
   const [draft, setDraft] = useState<PenalizationSettings>(saved);
+  const [initialized, setInitialized] = useState(false);
   const [savedMessage, setSavedMessage] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // `saved` now loads from the real API asynchronously (PLAN.md Step 6/11),
+  // starting at the same defaults it always had — sync the draft once the
+  // real value arrives, since useState(saved)'s initial value is only used
+  // on the very first render.
+  useEffect(() => {
+    if (!initialized) {
+      setDraft(saved);
+      setInitialized(true);
+    }
+  }, [saved, initialized]);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
 
-  const handleSave = () => {
-    setSaved(draft);
-    setSavedMessage(true);
-    setTimeout(() => setSavedMessage(false), 3000);
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await setSaved(draft);
+      setSavedMessage(true);
+      setTimeout(() => setSavedMessage(false), 3000);
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not save policy settings');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const setRule = (kind: RuleKind, next: PenalisationRuleConfig) => {
@@ -271,12 +294,13 @@ export function PenalizationSettingsPanel() {
       <div className="flex items-center gap-3 pt-2 border-t border-slate-100">
         <button
           onClick={handleSave}
-          disabled={!dirty}
+          disabled={!dirty || saving}
           className="text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Save changes
+          {saving ? 'Saving…' : 'Save changes'}
         </button>
         {savedMessage ? <span className="text-sm text-emerald-600 font-medium">Settings saved.</span> : null}
+        {saveError ? <span className="text-sm text-rose-600 font-medium">{saveError}</span> : null}
       </div>
     </div>
   );
