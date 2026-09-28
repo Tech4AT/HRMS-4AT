@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   const text = await req.text();
   return passthrough(
     req,
-    '/employees',
+    '/employees/',
     { method: 'POST', body: text },
     'Failed to create employee',
   );
