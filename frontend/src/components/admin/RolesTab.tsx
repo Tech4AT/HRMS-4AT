@@ -70,6 +70,7 @@ export function RolesTab() {
   const [opError, setOpError] = useState<string | null>(null);
   const [builder, setBuilder] = useState<{ role: Role | null } | null>(null);
   const [addUsersTarget, setAddUsersTarget] = useState<Role | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ role: Role; user: AdminUser } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -145,6 +146,7 @@ export function RolesTab() {
     setOpError(null);
     try {
       await adminApi.removeUsersFromRole(role.id, [user.id]);
+      setRemoveTarget(null);
       await load();
     } catch (e) {
       setOpError(errorText(e));
@@ -230,7 +232,14 @@ export function RolesTab() {
                         key={u.id}
                         user={u}
                         color={AVATAR_COLORS[i % AVATAR_COLORS.length]}
-                        onRemove={employeeRole ? undefined : () => removeUserFromRole(role, u)}
+                        onRemove={
+                          employeeRole
+                            ? undefined
+                            : () => {
+                                setOpError(null);
+                                setRemoveTarget({ role, user: u });
+                              }
+                        }
                       />
                     ))}
                     {roleUsers.length > 5 && (
@@ -367,6 +376,22 @@ export function RolesTab() {
           onConfirm={() => remove(deleteTarget)}
           onCancel={() => {
             setDeleteTarget(null);
+            setOpError(null);
+          }}
+        />
+      )}
+
+      {removeTarget && (
+        <ConfirmModal
+          title={`Remove “${`${removeTarget.user.firstName} ${removeTarget.user.lastName}`.trim() || removeTarget.user.email}” from “${removeTarget.role.name}”?`}
+          body={<p>They will lose everything this role grants immediately, even if they are signed in.</p>}
+          confirmLabel="Remove"
+          danger
+          busy={opBusy}
+          error={opError}
+          onConfirm={() => removeUserFromRole(removeTarget.role, removeTarget.user)}
+          onCancel={() => {
+            setRemoveTarget(null);
             setOpError(null);
           }}
         />
