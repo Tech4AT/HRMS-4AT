@@ -14,7 +14,7 @@ export default function NamingCodesPage() {
     <div>
       <PageHeader
         title="Naming / Codes"
-        subtitle="Code conventions for every master (mock values, stub save)."
+        subtitle="Code conventions for every master (defaults — no backend yet, not saved)."
       />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">

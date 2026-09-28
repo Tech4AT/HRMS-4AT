@@ -39,6 +39,29 @@ export interface CostCenter {
   code: string;
 }
 
+export type PositionStatus = 'filled' | 'vacant' | 'hiring' | 'on_hold';
+
+export interface OrgPosition {
+  id: string;
+  name: string;
+  department_id: string | null;
+  job_title_id: string | null;
+  level_id: string | null;
+  grade_id: string | null;
+  business_unit_id: string | null;
+  reports_to_id: string | null;
+  status: PositionStatus;
+  incumbent_id: string | null;
+  is_active: boolean;
+}
+
+export interface OrgTeam {
+  id: string;
+  name: string;
+  department_id: string | null;
+  lead_id: string | null;
+}
+
 interface Envelope<T> {
   success: boolean;
   data?: T;
@@ -94,12 +117,63 @@ export function fullName(e: Pick<OrgEmployee, 'first_name' | 'last_name'>): stri
   return `${e.first_name ?? ''} ${e.last_name ?? ''}`.trim() || '—';
 }
 
+export interface CreateEmployeeInput {
+  first_name: string;
+  last_name?: string;
+  work_email: string;
+  employee_code: string;
+  department_id?: string | null;
+  designation_id?: string | null;
+  location_id?: string | null;
+  manager_id?: string | null;
+  employment_type?: string;
+  date_of_joining?: string | null;
+}
+
+async function mutate<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  let json: Envelope<T> | null = null;
+  try {
+    json = (await res.json()) as Envelope<T>;
+  } catch {
+    json = null;
+  }
+
+  if (!res.ok || !json?.success) {
+    const raw = json?.error?.message;
+    const message = Array.isArray(raw)
+      ? raw.join(', ')
+      : raw || `Request failed (${res.status})`;
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new OrgApiError(message, res.status);
+  }
+  return json.data as T;
+}
+
 export const orgApi = {
   listEmployees: () => request<OrgEmployee[]>('/api/employees'),
+  /** Company-wide directory (unscoped): the same rows the /org chart and
+   * directory render, so overview headcounts match them exactly. */
+  listDirectory: () => request<OrgEmployee[]>('/api/org-directory'),
   listDepartments: () => request<NamedEntity[]>('/api/departments'),
   listDesignations: () => request<NamedEntity[]>('/api/designations'),
   listLocations: () => request<NamedEntity[]>('/api/locations'),
   listLegalEntities: () => request<NamedEntity[]>('/api/legal-entities'),
   listBusinessUnits: () => request<NamedEntity[]>('/api/business-units'),
   listCostCenters: () => request<CostCenter[]>('/api/cost-centers'),
+  listTeams: () => request<OrgTeam[]>('/api/teams'),
+  listJobFamilies: () => request<NamedEntity[]>('/api/job-families'),
+  listLevels: () => request<NamedEntity[]>('/api/levels'),
+  listGrades: () => request<NamedEntity[]>('/api/grades'),
+  listPositions: () => request<OrgPosition[]>('/api/positions'),
+  createEmployee: (input: CreateEmployeeInput) =>
+    mutate<OrgEmployee>('/api/employees', input),
 };

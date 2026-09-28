@@ -1,43 +1,72 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useAuth } from '@/lib/auth/useAuth';
-import { newJoiners } from '@/lib/mock/org/phase3';
-import { PageHeader, StatusPill, StubModal } from '@/components/org-module/ui';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { onboardingApi, type OnboardingRecordListItem } from '@/lib/api/onboarding';
+import { PageHeader, StatusPill } from '@/components/org-module/ui';
 
+function isUpcoming(r: OnboardingRecordListItem): boolean {
+  if (r.stage === 'completed') return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return r.joiningDate >= today;
+}
+
+/** Day-one joiners, live from onboarding records: upcoming vs recently
+ * completed. Every name shown is a real record — never sample data. */
 export default function NewJoinersPage() {
-  const { hasPermission } = useAuth();
-  const canManage = hasPermission('org.manage') || hasPermission('employees.write');
+  const [rows, setRows] = useState<OnboardingRecordListItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [group, setGroup] = useState<'Upcoming' | 'Recent'>('Upcoming');
   const [search, setSearch] = useState('');
-  const [showAdd, setShowAdd] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
+    try {
+      setRows(await onboardingApi.getRecords());
+    } catch {
+      setRows([]);
+      setLoadFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return newJoiners.filter((j) => {
-      if (j.group !== group) return false;
+    return rows.filter((r) => {
+      if (group === 'Upcoming' ? !isUpcoming(r) : isUpcoming(r)) return false;
       if (!q) return true;
-      return [j.name, j.position, j.department, j.buddy, j.manager].join(' ').toLowerCase().includes(q);
+      return [r.employee.name, r.employee.employeeCode, r.employee.workEmail]
+        .join(' ')
+        .toLowerCase()
+        .includes(q);
     });
-  }, [group, search]);
+  }, [rows, group, search]);
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <PageHeader
-          title="New Joiners"
-          subtitle="Day-one joiners moving into onboarding (mock data, stub actions)."
-        />
-        {canManage ? (
+      <PageHeader
+        title="New Joiners"
+        subtitle="Day-one joiners moving into onboarding (live onboarding records)."
+      />
+
+      {loadFailed ? (
+        <div className="mb-4 flex items-center justify-between gap-3 flex-wrap bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <p className="text-sm text-amber-800">Couldn&apos;t reach the onboarding records.</p>
           <button
             type="button"
-            onClick={() => setShowAdd(true)}
-            className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            onClick={refresh}
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 transition-colors"
           >
-            Add joiner
+            Retry
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
         <div className="flex flex-wrap items-end gap-3">
@@ -53,19 +82,17 @@ export default function NewJoinersPage() {
                     : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {g} ({newJoiners.filter((j) => j.group === g).length})
+                {g}
               </button>
             ))}
           </div>
-          <div className="min-w-[200px] flex-1 max-w-md">
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, position, buddy…"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            />
-          </div>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, code or email…"
+            className="flex-1 min-w-[200px] px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
+          />
         </div>
       </div>
 
@@ -73,41 +100,48 @@ export default function NewJoinersPage() {
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
           <h3 className="text-sm font-bold text-slate-900">{group} joiners</h3>
           <span className="text-xs text-slate-500">
-            Showing {visible.length} of {newJoiners.filter((j) => j.group === group).length}
+            {loading ? 'Loading…' : `Showing ${visible.length} of ${rows.length}`}
           </span>
         </div>
-        {visible.length === 0 ? (
-          <p className="px-5 py-12 text-center text-sm text-slate-500">No joiners match.</p>
+        {loading ? (
+          <div className="p-5 space-y-2 animate-pulse">
+            <div className="h-10 bg-slate-50 rounded-xl" />
+            <div className="h-10 bg-slate-50 rounded-xl" />
+          </div>
+        ) : visible.length === 0 ? (
+          <p className="px-5 py-12 text-center text-sm text-slate-500">
+            No {group.toLowerCase()} joiners.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  {['Joiner', 'Start date', 'Position', 'Org assignment', 'Buddy', 'Manager', 'Readiness'].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
+                  {['Joiner', 'Joining date', 'Progress', 'Stage'].map((h) => (
+                    <th
+                      key={h}
+                      className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase"
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {visible.map((j) => (
-                  <tr key={j.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-3 text-sm font-semibold text-slate-900">{j.name}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{j.doj}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{j.position}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">
-                      {j.department} · {j.location}
-                    </td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{j.buddy}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{j.manager}</td>
+                {visible.map((r) => (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3">
-                      <StatusPill value={j.readiness} />
+                      <p className="text-sm font-semibold text-slate-900">{r.employee.name}</p>
+                      <p className="text-xs text-slate-500">{r.employee.workEmail}</p>
+                    </td>
+                    <td className="px-5 py-3 text-sm text-slate-700">{r.joiningDate}</td>
+                    <td className="px-5 py-3 text-sm text-slate-700">
+                      {r.progress.total === 0
+                        ? '—'
+                        : `${r.progress.completed}/${r.progress.total} (${r.progress.percent}%)`}
+                    </td>
+                    <td className="px-5 py-3">
+                      <StatusPill value={r.stage === 'completed' ? 'Completed' : 'Pending'} />
                     </td>
                   </tr>
                 ))}
@@ -116,19 +150,6 @@ export default function NewJoinersPage() {
           </div>
         )}
       </div>
-
-      {showAdd ? (
-        <StubModal
-          title="Add joiner"
-          fields={[
-            { name: 'name', label: 'Joiner name', placeholder: 'e.g. Farhan Qureshi' },
-            { name: 'doj', label: 'Start date', placeholder: 'YYYY-MM-DD' },
-            { name: 'buddy', label: 'Buddy', placeholder: 'e.g. Kiran Shah' },
-            { name: 'manager', label: 'Manager', placeholder: 'e.g. Arjun Mehta' },
-          ]}
-          onClose={() => setShowAdd(false)}
-        />
-      ) : null}
     </div>
   );
 }

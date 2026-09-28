@@ -14,7 +14,7 @@ export default function OrgConfigurationPage() {
     <div>
       <PageHeader
         title="Org Configuration"
-        subtitle="Top-level hierarchy configuration (mock values, stub save)."
+        subtitle="Top-level hierarchy configuration (defaults — no backend yet, not saved)."
       />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">

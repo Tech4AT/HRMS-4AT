@@ -338,6 +338,8 @@ const pillStyles: Record<string, string> = {
   Vacant: 'bg-rose-100 text-rose-700',
   Hiring: 'bg-indigo-100 text-indigo-700',
   'On Hold': 'bg-amber-100 text-amber-700',
+  Effective: 'bg-emerald-100 text-emerald-700',
+  Cancelled: 'bg-slate-100 text-slate-600',
 };
 
 export function StatusPill({ value }: { value: string }) {

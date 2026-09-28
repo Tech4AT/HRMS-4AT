@@ -1,164 +1,48 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useAuth } from '@/lib/auth/useAuth';
-import { departmentTransfers } from '@/lib/mock/org/phase2';
-import type { ChangeRecord } from '@/lib/mock/org/phase2';
-import { PageHeader, StatusPill, StubModal, type FieldDef } from '@/components/org-module/ui';
-
-const fields: FieldDef[] = [
-  { name: 'employee', label: 'Employee', placeholder: 'e.g. Amit Joshi' },
-  { name: 'from', label: 'From (department)', placeholder: 'e.g. Consulting' },
-  { name: 'to', label: 'To (department)', placeholder: 'e.g. Engineering' },
-  { name: 'effectiveDate', label: 'Effective date', placeholder: 'e.g. 2026-10-01' },
-];
-
-const STATUSES: ChangeRecord['status'][] = ['Completed', 'Pending', 'Scheduled'];
+import { useEffect, useState } from 'react';
+import { fullName, orgApi, type OrgEmployee } from '@/lib/api/org';
+import { OrgChangeSection, type IdOption } from '@/components/org-module/org-change-section';
 
 export default function DeptTransfersPage() {
-  const { hasPermission } = useAuth();
-  const canManage = hasPermission('org.manage') || hasPermission('employees.write');
+  const [departments, setDepartments] = useState<IdOption[]>([]);
+  const [directory, setDirectory] = useState<OrgEmployee[]>([]);
 
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [depts, emps] = await Promise.all([
+          orgApi.listDepartments(),
+          orgApi.listDirectory(),
+        ]);
+        if (!cancelled) {
+          setDepartments(depts);
+          setDirectory(emps);
+        }
+      } catch {
+        /* section shows its own load error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return departmentTransfers.filter((c) => {
-      if (statusFilter && c.status !== statusFilter) return false;
-      if (fromDate && c.effectiveDate < fromDate) return false;
-      if (toDate && c.effectiveDate > toDate) return false;
-      if (!q) return true;
-      return [c.employee, c.from, c.to, c.changedBy].join(' ').toLowerCase().includes(q);
-    });
-  }, [search, statusFilter, fromDate, toDate]);
+  const deptNames = new Map(departments.map((d) => [d.id, d.name]));
+  const empNames = new Map(directory.map((e) => [e.id, fullName(e)]));
 
   return (
-    <div>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <PageHeader
-          title="Department Transfers"
-          subtitle="Moves between departments with effective dates (mock data, stub actions)."
-        />
-        {canManage ? (
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-          >
-            Log transfer
-          </button>
-        ) : null}
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-xl p-4 mb-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[200px] flex-1">
-            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
-              Search
-            </label>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by employee, department or changed-by…"
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            />
-          </div>
-          <div className="min-w-[150px]">
-            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
-              Status
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            >
-              <option value="">All</option>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
-              Effective from
-            </label>
-            <input
-              type="date"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              className="px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
-              Effective to
-            </label>
-            <input
-              type="date"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              className="px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-slate-900">Department Transfers</h3>
-          <span className="text-xs text-slate-500">
-            Showing {visible.length} of {departmentTransfers.length}
-          </span>
-        </div>
-        {visible.length === 0 ? (
-          <p className="px-5 py-12 text-center text-sm text-slate-500">No records match.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  {['Employee', 'From', 'To', 'Effective date', 'Status', 'Changed by', 'Recorded (audit)'].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {visible.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-5 py-3 text-sm font-semibold text-slate-900">{c.employee}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{c.from}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{c.to}</td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{c.effectiveDate}</td>
-                    <td className="px-5 py-3">
-                      <StatusPill value={c.status} />
-                    </td>
-                    <td className="px-5 py-3 text-sm text-slate-700">{c.changedBy}</td>
-                    <td className="px-5 py-3 text-xs text-slate-500">{c.updatedAt}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {modalOpen ? (
-        <StubModal title="Log department transfer" fields={fields} onClose={() => setModalOpen(false)} />
-      ) : null}
-    </div>
+    <OrgChangeSection
+      changeType="dept_transfer"
+      title="Department Transfers"
+      subtitle="Moves between departments with effective dates (live from the org-changes log)."
+      logLabel="Log transfer"
+      toField="department_id"
+      toLabel="To (department)"
+      toOptions={departments}
+      currentValue={(e) => e.department_id}
+      resolveName={(id) => deptNames.get(id) ?? empNames.get(id) ?? id}
+    />
   );
 }
