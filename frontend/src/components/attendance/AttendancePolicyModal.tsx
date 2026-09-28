@@ -29,6 +29,7 @@ export function AttendancePolicyModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   const penaltyLeaveTypeName = leaveTypes.find((t) => t.id === settings.penaltyLeaveTypeId)?.name;
+  const compOffLeaveTypeName = leaveTypes.find((t) => t.id === settings.compOffLeaveTypeId)?.name;
 
   if (!loaded) {
     // Don't show the hardcoded defaults even briefly while the real fetch is
@@ -94,6 +95,11 @@ export function AttendancePolicyModal({ onClose }: { onClose: () => void }) {
           <div className="pt-2 border-t border-slate-100">
             <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Comp Off accrual</p>
             <p className="text-sm text-slate-700">{compOffAccrualSentence(settings.compOffAccrual)}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {compOffLeaveTypeName
+                ? `Earned Comp Offs are credited to your ${compOffLeaveTypeName} balance.`
+                : 'No leave type is currently configured to credit Comp Offs to.'}
+            </p>
           </div>
         </div>
 

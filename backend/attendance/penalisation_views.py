@@ -8,6 +8,7 @@ self-service already uses (`attendance.read` at `SELF` scope)."""
 
 from decimal import Decimal
 
+from django.db import transaction
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
@@ -16,6 +17,7 @@ from rest_framework.views import APIView
 
 from audit.service import write_audit
 from core.permissions import HasPermissionCode, ScopedEmployeePermission
+from leave.models import LeaveBalance
 from notifications.service import notify
 
 from .models import PenalisationRecord, PenalisationStatus
@@ -42,47 +44,63 @@ class PenalisationViewSet(viewsets.ViewSet):
 
     @action(detail=True, methods=["post"], url_path="overturn")
     def overturn(self, request, pk=None):
-        record = (
-            PenalisationRecord.objects.filter(pk=pk)
-            .select_related("employee__user", "overturned_by__user", "leave_balance")
-            .first()
-        )
-        if record is None:
-            raise NotFound("Penalisation record not found.")
-        if record.status == PenalisationStatus.OVERTURNED:
-            raise ValidationError("This penalisation has already been overturned.")
-
         reason = (request.data.get("reason") or "").strip()
         if not reason:
             raise ValidationError({"reason": "A reason is required to overturn a penalisation."})
 
-        # Credit back to the *exact* balance row debited at creation time —
-        # not a fresh lookup of "the employee's current balance", which could
-        # resolve to a different financial year's row by the time HR overturns.
-        if record.leave_balance_id and record.leave_days_deducted:
-            balance = record.leave_balance
-            balance.used = max(Decimal("0"), balance.used - record.leave_days_deducted)
-            balance.save(update_fields=["used", "updated_at"])
-            write_audit(
-                request.user,
-                "LeaveBalance.penalisation_reversed",
-                "LeaveBalance",
-                balance.pk,
-                {"leave_days_restored": str(record.leave_days_deducted)},
+        # Locked (PLAN.md Step 12): select_for_update() on the record itself
+        # guards against two simultaneous overturn calls both passing the
+        # "not already overturned" check before either commits (a
+        # double-reversal would credit the leave back twice); locking the
+        # balance row too protects the same mutation as views.py's and
+        # penalisation.py's — a concurrent write to the same balance can't
+        # silently overwrite this reversal.
+        with transaction.atomic():
+            # `of=("self",)`: Postgres refuses to lock across a LEFT OUTER
+            # JOIN on a nullable FK (`overturned_by`/`leave_balance` both
+            # are) - restricts the row lock to PenalisationRecord itself
+            # while still eagerly joining the rest for the serializer below.
+            record = (
+                PenalisationRecord.objects.select_for_update(of=("self",))
+                .filter(pk=pk)
+                .select_related("employee__user", "overturned_by__user", "leave_balance")
+                .first()
+            )
+            if record is None:
+                raise NotFound("Penalisation record not found.")
+            if record.status == PenalisationStatus.OVERTURNED:
+                raise ValidationError("This penalisation has already been overturned.")
+
+            # Credit back to the *exact* balance row debited at creation time —
+            # not a fresh lookup of "the employee's current balance", which
+            # could resolve to a different financial year's row by now.
+            if record.leave_balance_id and record.leave_days_deducted:
+                balance = LeaveBalance.objects.select_for_update().get(pk=record.leave_balance_id)
+                balance.used = max(Decimal("0"), balance.used - record.leave_days_deducted)
+                balance.save(update_fields=["used", "updated_at"])
+                write_audit(
+                    request.user,
+                    "LeaveBalance.penalisation_reversed",
+                    "LeaveBalance",
+                    balance.pk,
+                    {"leave_days_restored": str(record.leave_days_deducted)},
+                )
+
+            record.status = PenalisationStatus.OVERTURNED
+            record.overturned_by = getattr(request.user, "employee", None)
+            record.overturned_reason = reason
+            record.save(
+                update_fields=["status", "overturned_by", "overturned_reason", "updated_at"]
             )
 
-        record.status = PenalisationStatus.OVERTURNED
-        record.overturned_by = getattr(request.user, "employee", None)
-        record.overturned_reason = reason
-        record.save(update_fields=["status", "overturned_by", "overturned_reason", "updated_at"])
+            write_audit(
+                request.user,
+                "PenalisationRecord.overturned",
+                "PenalisationRecord",
+                record.pk,
+                {"reason": reason},
+            )
 
-        write_audit(
-            request.user,
-            "PenalisationRecord.overturned",
-            "PenalisationRecord",
-            record.pk,
-            {"reason": reason},
-        )
         notify(
             record.employee.user,
             "penalisation.overturned",

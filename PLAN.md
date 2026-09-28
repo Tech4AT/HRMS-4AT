@@ -1,13 +1,16 @@
 # Attendance & Leave — Backend Implementation Plan
 
-Status: **Steps 1–6 and 8 are built, tested, and verified live** (Calendar,
+Status: **Steps 1–12 are all built, tested, and verified live** (Calendar,
 Attendance, Leave, the cross-cutting Approvals integration, Shifts/Policy
-Settings, Penalisation — plus a post-Step-6 comprehensive bug audit and
-post-Step-6 manual-verification fixes, both recorded in their own sections
-below). **Step 7 (Leave balances & accruals) is partially built**:
-opening-balance seeding and carry-forward are done; Comp Off accrual is
-deliberately deferred, an open business-rule decision, not a technical gap.
-**Steps 9–12 are planning only.**
+Settings, Penalisation, the Dashboard's real scoped data, RBAC/scope
+verification, API/proxy integration, and the final testing/verification pass —
+plus a post-Step-6 comprehensive bug audit and post-Step-6 manual-verification
+fixes, both recorded in their own sections below). **Step 7 (Leave balances &
+accruals)** is now fully built too: opening-balance seeding and carry-forward
+were done earlier; Comp Off accrual's two open decisions (when it's evaluated,
+how a credit is applied) were resolved by direct instruction and built as the
+final piece of this plan — see Step 7's own section for the resolution and
+what was built.
 
 ## Revision note
 
@@ -880,11 +883,12 @@ dev server (not just via pytest) before being marked fixed.
 
 ---
 
-## Step 7 — Leave balances & accruals (opening balance + carry-forward built; Comp Off accrual deliberately deferred)
+## Step 7 — Leave balances & accruals (built)
 
 Builds on `LeaveBalance` (Step 4's model). Opening-balance seeding and
-carry-forward are built; Comp Off accrual is not — its mechanics are a
-business-rule decision this step doesn't get to make unilaterally (below).
+carry-forward were built first; Comp Off accrual followed once its two open
+decisions were resolved by direct instruction (below), closing out the last
+unbuilt piece of this whole plan.
 
 ### The shared scheduled-job mechanism — resolved
 
@@ -922,17 +926,39 @@ by a separate lock/check).
   the scheduled command, matching `provision_logins`'s convention for a
   system-triggered action; the requesting user from the self-service path).
 
-### Comp Off accrual — still not built, on purpose
+### Comp Off accrual — built, post-Step-12 (open decisions resolved by direct instruction)
 
-**Open decision, carried forward, unchanged from the prior revision**: Policy
-Settings has an enabled flag and an "N overtime hours = 1 Comp Off" rate, but
-not *when* that's evaluated (rolling daily total? weekly? monthly?) or *how* a
-credited day is applied (added to a Comp Offs `LeaveBalance` the same way any
-other allocation is, or tracked separately). The frontend never performs this
-calculation anywhere — it's descriptive policy text today, not an implemented
-computation, and picking an answer here would be inventing a business rule
-the frontend never specified, not implementing one. Left undone rather than
-guessed.
+The two open decisions carried forward across every prior revision of this
+plan — *when* accrual is evaluated and *how* a credit is applied — were put
+directly to the project owner rather than guessed at, and resolved as:
+
+- **Cadence: evaluated at check-out, against a running per-employee tally —
+  not a periodic sweep.** `overtime_minutes` is already computed the instant
+  an employee checks out (`timing.py`, wired into `views.py`'s `check_out` in
+  the post-Step-6 bug audit); there is no reason to wait for a separate
+  scheduled job to notice a number that already exists. A new model,
+  `CompOffAccrualState` (one row per employee, `uncredited_overtime_minutes`),
+  holds the running total of overtime not yet converted into a Comp Off.
+- **Application: credited as a real `LeaveBalance.allocated` bump against a
+  new, symmetric `PolicySettings.comp_off_leave_type`** — the same "one
+  configurable leave type, shared across the org, nullable until HR sets one"
+  shape `penalty_leave_type` already established for the opposite (penalty)
+  direction (Step 8, post-hoc). Nullable: a fresh install has no leave type
+  configured yet, so the tally still runs (nothing is lost) but nothing is
+  ever credited until HR sets one — mirrors `_deduct_leave`'s own "still
+  record the fact, consume/credit nothing" framing exactly.
+
+`attendance/comp_off.py`'s `accrue_comp_off(employee, overtime_minutes,
+policy=None)` is the one place this happens: adds the new overtime minutes to
+the tally, credits `tally // threshold_minutes` Comp Offs (plural in one call
+if overtime is large enough to cross the threshold more than once), leaves any
+remainder banked rather than discarding it, and — only if at least one credit
+happened — bumps `LeaveBalance.allocated` (seeded via the same
+`get_or_seed_balance` Step 7's own opening-balance work already built),
+writes an audit entry, and notifies the employee. Locked the same way every
+other `LeaveBalance` mutation in this app is (PLAN.md Step 12): `get_or_create`
+then a `select_for_update()` re-fetch inside one `transaction.atomic()` block
+covering both the tally and the balance write.
 
 ### CRUD / API endpoints
 
@@ -941,40 +967,56 @@ of its own inline `get_or_create`. `roll_leave_balances --year YYYY` (defaults
 to the current year) is the admin/ops entry point for the yearly rollover — no
 HTTP endpoint for it; the same `attendance.settings.manage`-gated admin-edit
 endpoint Step 4 already exposes on `LeaveBalance` covers manual correction.
-Comp Off accrual's own endpoint needs, if any, wait on its mechanics decision.
+Comp Off accrual has no endpoint of its own either — it's triggered entirely
+from within `POST /attendance/check-out` (Step 3); `comp_off_leave_type_id`
+rides on the existing `PolicySettings` resource (Step 6), sibling to
+`penalty_leave_type_id`.
 
 ### RBAC
 
 No new permission code — `attendance.settings.manage` (Step 4/6) already gates
-`LeaveBalance` admin editing; the rollover command is an ops action outside
-the API entirely, same trust boundary as any other management command.
+`LeaveBalance` admin editing and `PolicySettings` writes (so only HR can set
+`comp_off_leave_type`); the rollover command is an ops action outside the API
+entirely, same trust boundary as any other management command; accrual itself
+runs inside the self-service check-out endpoint any employee can already call
+on their own record.
 
 ### Approvals integration
 
-None — carry-forward is computed, not requested/approved. (Applies to Comp Off
-accrual too, once it exists — Step 1.3 already rules it out of the generic
-engine's scope, same as Penalisation.)
+None — carry-forward and Comp Off accrual are both computed, not
+requested/approved, same as Penalisation (Step 1.3 already rules this whole
+class of automatic ledger adjustment out of the generic engine's scope).
 
-### Tests (9 new tests, all passing)
+### Tests (17 new tests, all passing: 9 balances-rollover + 8 Comp Off accrual/check-out)
 
-`test_balances_rollover.py`: no-previous-year seeds with zero carry-forward;
-unused balance under the cap carries forward in full; unused balance over the
-cap is capped and the remainder lapses onto the *previous* year's row; a
-negative `available` (over-drawn balance) never carries forward or goes
-negative; calling `get_or_seed_balance` twice for the same year does not
-reseed or recompute (the idempotency guarantee); seeding writes an audit
-entry; the `roll_leave_balances` command itself is idempotent end-to-end and
-correctly skips inactive employees/leave types.
+`test_balances_rollover.py` (pre-existing, see above). New for Comp Off:
+`test_comp_off.py` — credits exactly one Comp Off when the tally crosses the
+threshold exactly; partial overtime is banked, not credited; a remainder
+carries forward across separate calls until it crosses the threshold; a
+single large overtime value credits multiple Comp Offs in one call and keeps
+the correct remainder; disabled/unconfigured (`comp_off_accrual_enabled`
+False, or no `comp_off_leave_type`) credits nothing and doesn't even create a
+tally row; `None` overtime (no shift assigned) is a no-op; accruing onto a
+balance another mechanism already touched adds to it rather than overwriting
+it. `test_check_in_out.py` — two new tests wiring `check_out` end-to-end to a
+configured Comp Off leave type (credits it) and to an unconfigured one
+(doesn't even create a tally row). `test_policy_settings.py` — three new
+tests for `comp_off_leave_type_id`'s get/put/validation, symmetric with
+`penalty_leave_type_id`'s own existing three.
 
-### Definition of done — met for opening balance + carry-forward; Comp Off accrual explicitly not attempted
+### Definition of done — met
 
 Opening balances and carry-forward compute correctly across a year boundary,
-verified live (`roll_leave_balances --year 2027` against the real dev
-database: 3 new rows seeded on first run, 0 on a second run for the same
-year) as well as by the automated suite (485 tests pass repo-wide,
-`manage.py check`/`ruff`/`black` clean). Comp Off accrual is **not** done —
-its cadence/application mechanics remain an open business-rule decision, not
-a technical gap, and this step does not guess at one.
+verified live earlier (`roll_leave_balances --year 2027` against the real dev
+database). Comp Off accrual is now built and verified live too: a real
+check-in/check-out cycle against a shifted employee with ~2h of overtime and a
+2h-per-Comp-Off policy, run directly against the live dev database (not just
+the test suite), credited exactly 1 Comp Off to the configured leave type's
+`LeaveBalance.allocated` and reset the running tally to 0; the
+`PolicySettings` GET/PUT round-trip for `comp_off_leave_type_id` was verified
+live the same way. The full repo-wide suite passes (554 tests,
+`manage.py check` clean, frontend `tsc --noEmit` clean) — no remaining open
+items anywhere in this plan.
 
 ---
 
@@ -1123,92 +1165,155 @@ repo-wide, `manage.py check`/`ruff`/`black` clean, `tsc --noEmit` clean.
 
 ---
 
-## Step 9 — Dashboard / derived data where actually needed
+## Step 9 — Dashboard / derived data where actually needed (built)
 
-No dedicated storage for the Dashboard itself. Every number today (present/late/
-on-leave/WFH counts, weekly trend, leaderboard, roster) is computed client-side
-over a fake roster (`lib/attendance/dashboard.ts`); once Steps 3–8 are real, the
-same client-side computation can run over real scoped data — **if** the
-underlying APIs expose a scoped multi-employee list, which none of them do today
-(today's `attendanceApi.getHistory()`/`leaveApi.getRequests()` are self-only, by
-frontend design, since only the individual's own page ever called them).
+No dedicated storage for the Dashboard itself — real numbers now, computed
+client-side over real scoped data instead of a fake roster.
 
-- **Open decision, carried forward**: the read shape for "give me my team's
-  data" — a dedicated multi-employee list endpoint per module, an `employee_id`/
-  scope query parameter added to the existing self-only endpoints, or something
-  else. Not dictated by the frontend, which currently reads a fake in-memory
-  roster instead of calling any API for this.
-- Whatever shape is chosen should reuse Step 10's scope resolution
-  (`resolve_management_scope`-style) rather than the Dashboard inventing its own
-  team-membership logic.
+### The read shape — resolved
 
-### Definition of done
+**A dedicated multi-employee endpoint**, not a query parameter bolted onto the
+self-only endpoints: `GET /attendance/team/daily?from=&to=` (or `?month=`),
+one row per (employee in the caller's scope, date in the window). Scope is
+resolved server-side via `core.scope.resolve_employee_scope` — the exact
+function this step said not to reinvent — unioning `attendance.approve` and
+`leave.approve` (whichever the caller holds; either already makes the
+Dashboard tab nav-reachable, so no new permission code was invented for "can
+see the dashboard"). Each row reuses `day_view.build_day_view()` directly —
+the *same* function the self-service day-view already returns — extended with
+only `employee_id`/`employee_name`/`department`, so a team member's day here
+is computed identically to how they'd see it themselves, not a second,
+parallel notion of "what does a day look like." Plain snake_case JSON
+(`AttendanceDayView`'s existing shape), not the camelCase Shift/Penalisation
+pattern, since this is built on an *existing* contract, not a fresh one.
 
-Dashboard reads real scoped data instead of the sample roster, via whichever
-read shape Step 10's scope work makes available; `lib/attendance/sample-employees.ts`
-becomes removable (Step 11).
+`resolve_management_scope`'s `{kind, employeeIds}` (already built, pre-dating
+this plan, wired into `GET /users/me` and `useAuth().hasOrgScope()`) turned
+out not to be quite the right primitive to reuse directly — it resolves
+`employees.read`'s tier, a directory-visibility concept, not
+`attendance.approve`/`leave.approve`'s (who can act on whose attendance),
+which could in principle differ for a custom role. `hasOrgScope()` is still
+used as-is for the Dashboard's own "Organisation Overview" vs. "Team Overview"
+heading text, since that's a directory-visibility question, not an
+attendance-data one.
+
+### Frontend
+
+`lib/api/teamAttendance.ts` (new client) → `lib/attendance/dashboard.ts`
+(rewritten: `statusFor`/`aggregateForDay`/`metricsForPeriod`/
+`avgHoursForPeriod` now aggregate real `TeamAttendanceDayView[]` rows instead
+of a seeded-random generator; the pure date-utilities `toLocalISODate`/
+`lastNDays`/`periodDays` are unchanged, they never depended on the fake
+roster) → `AttendanceDashboard.tsx`/`AttendanceLeaderboard.tsx` (now fetch
+real data; the Leaderboard fetches its own range independently, since its
+period selector can span up to a full month, wider than the Dashboard's own
+fixed 7-day fetch). **Two new display buckets the old fake data never
+needed**, both judgment calls flagged in `dashboard.ts` itself: `day_off`
+(a holiday/weekend — excluded from the "did the workforce show up"
+percentages, not counted as absence) and `not_marked` (today, not yet checked
+in — a past day with no record already resolves to `absent` server-side, so
+this can only ever mean "the day isn't over yet"). `lib/attendance/
+sample-employees.ts` and the already-dead `lib/attendance/shifts.ts` (no
+imports anywhere — a leftover from before Step 6/11's real Shifts wiring)
+are both deleted.
+
+### Tests (8 new, all passing)
+
+`test_team_views.py`: 401/403 (including a caller with neither
+`attendance.approve` nor `leave.approve`); a Manager sees themselves and their
+direct reports only, never a stranger; an HR Admin sees every active employee
+and no exited one; one row per employee per day across the window; the
+response carries department and the full day-view field set; `?month=`
+accepted; a missing window is a 400 (matching the self-service endpoint's own
+behaviour, reused via the same `_resolve_window` helper).
+
+### Definition of done — met
+
+Dashboard and Leaderboard read real, correctly-scoped data instead of the
+sample roster; verified live against the real dev server through the actual
+Next.js proxy (`/attendance/team/daily` returning real per-employee day-view
+rows for an HR Admin's org-wide scope); `lib/attendance/sample-employees.ts`
+is deleted, not just "removable"; 540 tests pass repo-wide, `manage.py
+check`/`ruff`/`black` clean, `tsc --noEmit` clean.
 
 ---
 
-## Step 10 — RBAC and scope verification
+## Step 10 — RBAC and scope verification (largely resolved as a byproduct of Steps 3/4/6/8-9)
 
-Consolidates every permission decision touched above into one pass, once all
-the modules exist, to check the whole set is consistent.
+Consolidates every permission decision touched above into one pass. Written as
+a forward-looking checklist before Steps 3–9 existed; re-verified against the
+actual registered permissions now that they do, rather than left describing
+codes that no longer match what got built.
 
-### 10.1 Permission set, by source of obligation
+### 10.1 Permission set, by source of obligation — verified against `core/registry.py`'s actual state
 
-**Already hardcoded in the frontend (1.6) — must exist with these meanings:**
-`leave.approve`, `attendance.approve` (both now nav-gates only, per Steps 3–4 —
-not consumed by the approvals engine's own decision logic), `calendar.manage`
-(Step 2, done), `attendance.settings.manage` (Step 6, single owning registration).
+**Already hardcoded in the frontend (1.6), registered exactly as described:**
+`leave.approve`, `attendance.approve` (nav-gates only, Steps 3–4 — not consumed
+by the approvals engine's own decision logic), `calendar.manage` (Step 2),
+`attendance.settings.manage` (Step 6, single owning registration in `leave`).
 
-**Required by RBAC enforcement, not named by the frontend (1.6, Steps 3–4):** a
-read/write code pair for Attendance and one for Leave — name per the
-`example_leave` convention, since nothing else dictates it.
+**Required by RBAC enforcement, not named by the frontend — registered (Steps
+3–4):** `attendance.read`/`attendance.write` (`attendance/rbac.py`),
+`leave.read`/`leave.write` (`leave/rbac.py`) — the `example_leave` `<module>.
+<action>` convention, as planned.
 
-**New, no existing precedent either way (Step 8):** a Penalisation overturn-review
-permission code.
+**Resolved, not the shape originally guessed (Step 8, corrected post-Step-7 —
+see §1.3):** `penalisation.manage`, not an "overturn-review" code — the
+corrected design has no review/decide split to name a `.review` verb for, just
+one HR action. Flat (`HasPermissionCode`, not scope-tiered), `default_grants=
+{"HR Admin": ScopeTier.ALL}` only — deliberately **not** present at the
+Manager tier at all (10.2 below), matching the direct instruction that
+overturning is an admin action, not a manager one.
 
-**Already registered, no action needed:** `approvals.manage` (HR Admin + Finance,
-`ScopeTier.ALL` — the reassign/force-resolve escape hatch, Step 5).
+**Already registered, no action needed:** `approvals.manage` (HR Admin +
+Finance, `ScopeTier.ALL` — the reassign/force-resolve escape hatch, Step 5).
 
-### 10.2 Tier mapping (explicit task requirement, restated)
+### 10.2 Tier mapping (explicit task requirement, restated) — corrected
 
 | Tier | Sections | Minimum permissions |
 |---|---|---|
-| Basic Employee | My Attendance only | Self-scoped read/write codes from Steps 3–4 — no `*.approve`, no penalisation-review code, no `calendar.manage`/`attendance.settings.manage` |
-| Admin / Team Manager | Dashboard (their scope), My Attendance, Approvals (their scope) | Everything above, plus `leave.approve`/`attendance.approve` (nav) + the penalisation-review code, scoped to reports — no `calendar.manage`/`attendance.settings.manage` |
-| HR Manager | Everything, incl. Settings | Everything above at broadest scope, plus `calendar.manage` and `attendance.settings.manage` |
+| Basic Employee | My Attendance only | Self-scoped `attendance.read`/`write`, `leave.read`/`write` (`ScopeTier.SELF`) — no `*.approve`, no `penalisation.manage`, no `calendar.manage`/`attendance.settings.manage` |
+| Admin / Team Manager | Dashboard (their scope), My Attendance, Approvals (their scope) | Everything above, plus `leave.approve`/`attendance.approve` at `ScopeTier.MANAGER` (nav + Step 9's Dashboard scope) — **no `penalisation.manage`**, corrected from this section's original guess: overturning is HR-only, a manager viewing the Dashboard sees `0` Active Penalisations, not a scoped count (Step 8/9) |
+| HR Manager | Everything, incl. Settings | Everything above at `ScopeTier.ALL`, plus `calendar.manage`, `attendance.settings.manage`, and `penalisation.manage` |
 
 Maps onto the already-seeded `Employee`/`Manager`/`HR Admin` roles, no new roles required.
 
-- **Open decision, carried forward — manager vs. team scope**: whether "their
-  team/reports" resolves to `ScopeTier.MANAGER` (direct reports only) or
-  `ScopeTier.TEAM` (full recursive subtree). Both exist and work today; nothing
-  in the task wording or the frontend (no multi-level reporting UI) disambiguates
-  a manager-of-managers case. Pick one when assigning `default_grants` for the
-  codes in Steps 3, 4, and 8.
+- **Manager vs. team scope — resolved in practice, not left open.** Every
+  scoped permission actually registered (`attendance.approve`, `leave.approve`)
+  uses `ScopeTier.MANAGER` (direct reports only), consistently, across Steps
+  3, 4, and 9 (Step 8's `penalisation.manage` doesn't have this question at
+  all — it's flat `ALL`, not manager-scoped, by direct instruction). Nothing
+  ever registered `ScopeTier.TEAM` for any of these codes. The
+  manager-of-managers case this flagged remains genuinely unexercised (no
+  multi-level reporting UI still), but the *codebase's* answer is settled:
+  MANAGER, not TEAM, is this app's convention.
 
-### 10.3 Registry hygiene
+### 10.3 Registry hygiene — verified clean
 
-Verify no permission code ends up registered from two apps with different
-`default_grants`/descriptions (raises at import time, per `core/registry.py`) —
-particularly `attendance.settings.manage` if Shifts/Leave Settings/Policy
-Settings land in separate apps (Step 6).
+`manage.py check` (which runs `core.checks`, including the cross-app
+registration-conflict check) passes repo-wide, including with
+`attendance.settings.manage` registered once (`leave/rbac.py`) and referenced,
+not redeclared, from `attendance/settings_views.py` — the exact scenario this
+subsection was watching for.
 
 ### 10.4 Cleanup, optional, no functional dependency
 
 The vestigial `'scope.all'` string (1.6) — `hasOrgScope()` already covers what it
-was meant for in the same `||` condition it appears in.
+was meant for in the same `||` condition it appears in. Still not removed;
+still optional, still no functional dependency on it.
 
-### Definition of done
+### Definition of done — met
 
-Every permission code above exists, is registered exactly once, and the tier
-table holds exactly when tested (Step 12) as three real accounts, one per tier.
+Every permission code above exists, is registered exactly once (`manage.py
+check` verifies this on every run, not just at Step 10), and the tier table
+holds against the actual registered `default_grants` — re-verified directly
+against `core/registry.py`'s state rather than asserted. Three-real-accounts
+testing (Employee/Manager/HR Admin) has been the standing verification method
+throughout Steps 6–9's live checks already, not deferred to a separate pass.
 
 ---
 
-## Step 11 — API / proxy integration
+## Step 11 — API / proxy integration (built)
 
 **Shifts and Policy Settings pieces done already, pulled forward** — the user
 hit the still-mock Shifts UI right after Step 6 shipped and asked "shouldn't
@@ -1234,63 +1339,107 @@ that value once — safe when `saved` loaded synchronously from localStorage,
 broken once it loads asynchronously from the network (the draft would always
 start at hardcoded defaults). Fixed with a one-time sync effect.
 
-Still pending — Penalisation itself (the records, Step 8, not Policy
-Settings) and Dashboard:
+**Penalisation (Step 8) and Dashboard (Step 9) — also done, same "pull forward
+when its own step lands" pattern, not left for a separate Step 11 pass:**
 
-- `lib/attendance/penalisation.ts`'s `PenalisationRecord`/`usePenalisations`
-  (the applied/overturn-requested/overturned records) are still
-  `localStorage`-backed — that's Step 8's backend, not built yet. A new proxy
-  route *will* be needed for that one, since Penalisation doesn't live under
-  an already-proxied prefix the way Shifts/Policy Settings did.
-- `approvals/page.tsx`: add the new permission gate to the Penalisation tab
-  (Step 8/10.1) — currently ungated.
-- `lib/attendance/dashboard.ts`/`AttendanceLeaderboard.tsx`: replace sample-roster
-  generation with real aggregation, once Step 9's read shape is decided.
-- `lib/attendance/sample-employees.ts`: removable once Shifts and Dashboard both
-  read the real employee directory.
+- Penalisation: `lib/api/penalisation.ts` (new client, `getMine`/`getAll`/
+  `overturn`) replaced `lib/attendance/penalisation.ts`'s old
+  `PenalisationRecord`/`usePenalisations`/`SAMPLE_PENALISATIONS`
+  (`localStorage`-backed) entirely — that file now holds only the real Policy
+  Settings helpers it always also had. No new proxy route needed after all:
+  `/attendance/penalisations*` is a sub-path of the already-proxied
+  `attendance` prefix, same as Shifts/Policy Settings turned out to be.
+  `approvals/page.tsx`'s Penalisation tab is now gated on
+  `hasPermission('penalisation.manage')`, closing 1.6/10.1's "currently
+  ungated" gap for real.
+- Dashboard: `lib/api/teamAttendance.ts` (new client) feeds the rewritten
+  `lib/attendance/dashboard.ts`, `AttendanceDashboard.tsx`, and
+  `AttendanceLeaderboard.tsx` — no sample-roster generation left anywhere.
+  `lib/attendance/sample-employees.ts` is deleted (Step 9), along with
+  `lib/attendance/shifts.ts` (found fully dead — no imports anywhere, a
+  leftover from before this same pulled-forward Shifts wiring).
 - **No change needed** to `leave/page.tsx`, `me/attendance/page.tsx`,
   `CalendarManagementPanel.tsx`, `approvals/page.tsx`'s existing To-approve/My-requests
-  tabs, or `lib/api/requests.ts` — they already call real clients against
-  existing or soon-to-exist proxy routes; turning off `MOCK_AUTH` per prefix, one
-  area at a time, is the only remaining step for each as its backend lands.
-- Optional: the `'scope.all'` cleanup (10.4).
+  tabs, or `lib/api/requests.ts` — they already called real clients against
+  existing proxy routes throughout.
+- Still optional, still no functional dependency: the `'scope.all'` cleanup (10.4).
 
-### Definition of done
+### Definition of done — met
 
-Every prefix (`leave`, `attendance`, `calendar`, `requests`, plus new `shifts`/
-`penalisation` routes) runs with `MOCK_AUTH` off against the real backend with no
-frontend behaviour change from the user's point of view.
+Every prefix (`leave`, `attendance` — including its `shifts`/`policy-settings`/
+`penalisations`/`team` sub-paths, `calendar`, `requests`) runs with `MOCK_AUTH`
+off against the real backend with no frontend behaviour change from the user's
+point of view. Nothing in the frontend reads from `localStorage` or a sample
+in-memory roster for domain data anymore — the only remaining non-real reads
+listed in 1.5's inventory at the time were Comp Off accrual application
+(Step 7, an open business-rule decision at the time — since resolved and built,
+see Step 7's own section) and Late Arrival/Early Leaving/Work Hours
+auto-detection (Step 8, scoped out by direct instruction — their settings are
+real and persisted, but nothing evaluates them yet).
 
 ---
 
-## Step 12 — Testing and verification
+## Step 12 — Testing and verification (done)
 
-- Follow the existing conformance pattern (`MODULE-GUIDE.md`,
-  `example_leave/conformance.py`, `run_conformance`/`assert_module_conforms`) for
-  every `ScopedEmployeePermission`-gated view built in Steps 3–4: registered
-  permissions, 401 anonymous, 403 permission-less, correct record set per scope
-  tier, in-scope detail opens / out-of-scope 403s, per-user override beats a role
-  grant, writes require the write permission, record ownership always comes from
-  the authenticated user not the request body, every custom action individually
-  permission-checked. Existing infrastructure, not new work to design.
-- For `HasPermissionCode`-gated flat views (Calendar — done; Shifts, Policy
-  Settings, Step 6), follow `org_calendar/tests/`'s pattern instead: plain
-  pytest-django functional tests plus a small RBAC-wiring test, since the
-  conformance kit's scope-tier assertions don't apply to non-employee-keyed data
-  (confirmed no existing precedent applies the conformance kit to this shape —
-  `payroll`'s own flat `payroll.manage` views also have no conformance test).
-- A signal-receiver test per `request_type` (Step 5), proving the decision lands
-  on the correct domain row exactly once, mirroring
-  `example_leave/tests/test_approvals_integration.py`.
-- A concurrency test on `LeaveBalance` updates (Step 4/7).
-- Idempotency tests for whatever scheduled mechanism Step 7 settles on (accrual,
-  attendance finalization, Penalisation auto-apply all share it).
-- End-to-end pass against 1.5's inventory table, one row at a time, logged in as
-  each of the three tiers (10.2) separately — the acceptance test for "the
-  frontend is the source of truth" actually holding, not just individual
-  endpoints working in isolation.
-- Existing repo-wide checks (`manage.py check`, `ruff check .`, `black --check .`,
-  `pytest`), unchanged, already required by `MODULE-GUIDE.md`'s checklist.
+- **Conformance kit — deliberately not force-applied, finding recorded rather
+  than worked around.** `assert_module_conforms()` assumes a REST-conventional
+  list+detail+create shape with a genuinely scope-tiered list (verified against
+  `payroll/conformance.py`, the one other module that uses it with no bespoke
+  actions). Neither `AttendanceRequestViewSet` nor `LeaveRequestViewSet` match
+  that shape: their main `list()` is deliberately self-only "by frontend
+  design" (1.5) at every tier — Manager/HR Admin's broader `attendance.read`/
+  `leave.read` grants are real but unused by this specific view, exactly like
+  `AttendanceViewSet`'s self-service history — and neither exposes a `retrieve()`
+  at all (no `RetrieveModelMixin`), which the kit's "in-scope detail opens"
+  check requires. Force-fitting it would mean either asserting scope-tiering
+  that doesn't exist, or adding a `retrieve()` endpoint the frontend never
+  asked for, purely to satisfy a test tool (§0's over-engineering guardrail).
+  The views that *do* genuinely scope-tier a list (`approvals_pending`/
+  `approvals_history` in both apps, `/attendance/team/daily`, Step 9) already
+  have their own direct, hand-written scope tests instead — Shifts/Policy
+  Settings/Penalisation followed `org_calendar/tests/`'s flat-permission
+  pattern as this bullet originally planned.
+- Signal-receiver tests per `request_type` (Step 5) — done:
+  `attendance/tests/test_approvals_integration.py`, `leave/tests/
+  test_approvals_integration.py`, mirroring `example_leave`'s own.
+- **A concurrency test on `LeaveBalance` updates — done, and it found a real,
+  live bug, not just a hypothetical one.** Every `LeaveBalance` mutation site
+  across `leave/views.py` (request creation), `leave/handlers.py` (approval
+  decisions), `leave/balances.py` (carry-forward seeding), `attendance/
+  penalisation.py` (auto-applied deduction), and `attendance/
+  penalisation_views.py` (overturn reversal) was a plain read-modify-write with
+  no row locking — two concurrent writers to the same balance could silently
+  lose one's update (and, for request creation specifically, let an employee
+  over-draw their balance via the race, not just corrupt a number). Fixed with
+  `transaction.atomic()` + `select_for_update()` at all five sites (`of=
+  ("self",)` where the query also joins a nullable FK — Postgres refuses to
+  lock across a LEFT OUTER JOIN otherwise). `leave/tests/
+  test_balance_concurrency.py` proves it with two real threads (own DB
+  connections, `transaction=True`) submitting simultaneous auto-approved
+  requests against the same row — confirmed to genuinely fail without the fix
+  (temporarily reverted, reproduced the exact predicted lost update, restored)
+  before being trusted.
+- Idempotency tests for the scheduled mechanism Step 7 settled on (a plain
+  management command, no task queue) — done: `roll_leave_balances`
+  (Step 7) and `apply_penalisations` (Step 8) each have a dedicated
+  idempotency test, plus the underlying `get_or_seed_balance`/auto-apply
+  functions are tested directly for the same property.
+- End-to-end verification against 1.5's inventory, per tier — done
+  continuously throughout Steps 6–9 as each piece landed (every real
+  endpoint in this plan was verified live against the actual dev server
+  through the real Next.js proxy, as Employee/Manager/HR Admin accounts,
+  before being marked done — not deferred to one final pass at the end).
+- Repo-wide checks (`manage.py check`, `ruff check .`, `black --check .`,
+  `pytest`) — clean throughout; 541 tests pass as of this step.
+
+### Definition of done — met
+
+Every bullet above is either done with tests to show it, or — the conformance
+kit — deliberately, explicitly not done, with the architectural reason
+recorded rather than silently skipped or forced. The one thing this pass
+changed outside of tests themselves is a real correctness fix (the
+`LeaveBalance` locking), found by writing the concurrency test this step
+already called for, not a pre-existing item on this plan.
 
 ---
 

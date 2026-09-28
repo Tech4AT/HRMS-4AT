@@ -41,6 +41,12 @@ export interface PenalizationSettings {
    *  which case a Penalisation still gets created but consumes no leave
    *  (`attendance/penalisation.py`'s `_deduct_leave`). */
   penaltyLeaveTypeId: string | null;
+  /** The leave type a credited Comp Off actually lands in, symmetric with
+   *  `penaltyLeaveTypeId` above (opposite direction). Null until HR
+   *  configures one, in which case overtime still accrues toward a credit
+   *  but nothing is ever applied (`attendance/comp_off.py`'s
+   *  `accrue_comp_off`). */
+  compOffLeaveTypeId: string | null;
   noAttendance: PenalisationRuleConfig;
   lateArrival: PenalisationRuleConfig;
   earlyLeaving: PenalisationRuleConfig;
@@ -52,6 +58,7 @@ export const DEFAULT_PENALIZATION_SETTINGS: PenalizationSettings = {
   regularisationGraceDays: 3,
   abscondingThresholdDays: 5,
   penaltyLeaveTypeId: null,
+  compOffLeaveTypeId: null,
   noAttendance: { enabled: true, leaveDaysDeducted: 1 },
   lateArrival: { enabled: false, leaveDaysDeducted: 0.5, thresholdCount: 3 },
   earlyLeaving: { enabled: false, leaveDaysDeducted: 0.5, thresholdCount: 3 },

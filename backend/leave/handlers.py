@@ -3,6 +3,7 @@ INTEGRATION.md), for the requires_approval=True path only — see
 apps.py/views.py for why an auto-approved LeaveType never raises a Request at
 all and so never reaches this receiver."""
 
+from django.db import transaction
 from django.dispatch import receiver
 from django.utils import timezone
 
@@ -42,12 +43,20 @@ def apply_leave_decision(sender, request, actor, status, **kwargs):
 
     # Release the pending hold raised at submission time; approved additionally
     # converts it into a real deduction. Rejected/withdrawn just releases it.
-    balance = LeaveBalance.objects.filter(
-        employee=row.employee, leave_type=row.leave_type, financial_year=row.financial_year
-    ).first()
-    if balance is None:
-        return
-    balance.pending = max(balance.pending - row.duration_days, 0)
-    if row.status == LeaveRequestStatus.APPROVED:
-        balance.used += row.duration_days
-    balance.save(update_fields=["pending", "used", "updated_at"])
+    # Locked (PLAN.md Step 12) for the same reason views.py's create() is -
+    # this can race against a *different* request's create() or another
+    # decision touching the same balance row.
+    with transaction.atomic():
+        balance = (
+            LeaveBalance.objects.select_for_update()
+            .filter(
+                employee=row.employee, leave_type=row.leave_type, financial_year=row.financial_year
+            )
+            .first()
+        )
+        if balance is None:
+            return
+        balance.pending = max(balance.pending - row.duration_days, 0)
+        if row.status == LeaveRequestStatus.APPROVED:
+            balance.used += row.duration_days
+        balance.save(update_fields=["pending", "used", "updated_at"])

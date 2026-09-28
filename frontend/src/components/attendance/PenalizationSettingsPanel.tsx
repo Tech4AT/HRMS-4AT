@@ -334,11 +334,31 @@ export function PenalizationSettingsPanel() {
         <label className="block text-sm font-semibold text-slate-800 mb-1">Comp Off accrual</label>
         <p className="text-xs text-slate-500 mb-2">
           The one reward rule here - grants a Comp Off once an employee's overtime hours cross this threshold.
+          Evaluated the moment an employee checks out, not on a schedule.
         </p>
         <CompOffAccrualRow
           rule={draft.compOffAccrual}
           onChange={(next) => setDraft((d) => ({ ...d, compOffAccrual: next }))}
         />
+        <div className="mt-3">
+          <label className="block text-xs font-semibold text-slate-700 mb-1">Comp Off leave type</label>
+          <p className="text-xs text-slate-500 mb-2">
+            The leave type a credited Comp Off is added to. Leaving this unset means overtime still accrues, but no
+            leave is ever credited.
+          </p>
+          <select
+            value={draft.compOffLeaveTypeId ?? ''}
+            onChange={(e) => setDraft((d) => ({ ...d, compOffLeaveTypeId: e.target.value || null }))}
+            className="w-full sm:w-64 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+          >
+            <option value="">None — don&apos;t credit leave</option>
+            {leaveTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex items-center gap-3 pt-2 border-t border-slate-100">

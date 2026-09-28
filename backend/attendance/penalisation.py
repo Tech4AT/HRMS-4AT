@@ -27,12 +27,14 @@ deduct a real LeaveBalance" open decision, post-Step-8) — see
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db import transaction
 from django.utils import timezone
 
 from audit.service import write_audit
 from core.enums import EmployeeStatus
 from employees.models import Employee
 from leave.balances import get_or_seed_balance
+from leave.models import LeaveBalance
 from notifications.service import notify
 
 from .day_facts import get_day_facts_range
@@ -61,17 +63,24 @@ def _deduct_leave(employee, policy: PolicySettings, today):
         return Decimal("0"), None
 
     financial_year = str(today.year)
-    balance, _created = get_or_seed_balance(employee, policy.penalty_leave_type, financial_year)
     days = policy.no_attendance_leave_days_deducted
-    balance.used = balance.used + days
-    balance.save(update_fields=["used", "updated_at"])
-    write_audit(
-        None,
-        "LeaveBalance.penalised",
-        "LeaveBalance",
-        balance.pk,
-        {"leave_days_deducted": str(days)},
-    )
+    # Locked (PLAN.md Step 12): `get_or_seed_balance` is safe on its own, but
+    # the mutation below is a separate statement against the row it returns -
+    # re-fetched with select_for_update() inside its own transaction so a
+    # concurrent write to the same balance (another penalisation, a leave
+    # request) can't silently overwrite this deduction.
+    with transaction.atomic():
+        balance, _created = get_or_seed_balance(employee, policy.penalty_leave_type, financial_year)
+        balance = LeaveBalance.objects.select_for_update().get(pk=balance.pk)
+        balance.used = balance.used + days
+        balance.save(update_fields=["used", "updated_at"])
+        write_audit(
+            None,
+            "LeaveBalance.penalised",
+            "LeaveBalance",
+            balance.pk,
+            {"leave_days_deducted": str(days)},
+        )
     return days, balance
 
 
