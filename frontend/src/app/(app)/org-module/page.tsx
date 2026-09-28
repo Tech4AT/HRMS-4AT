@@ -92,30 +92,29 @@ export default function OrgOverviewPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
-    try {
-      const [directory, depts, locs, poss, chgs] = await Promise.all([
-        orgApi.listDirectory(),
-        orgApi.listDepartments(),
-        orgApi.listLocations(),
-        orgApi.listPositions(),
-        orgChangesApi.list(),
-      ]);
-      setEmployees(directory);
-      setDepartments(depts);
-      setLocations(locs);
-      setPositions(poss);
-      setChanges(chgs);
-    } catch {
-      // Never an error screen: empty states with a banner + retry, no sample data.
-      setEmployees(null);
-      setDepartments(null);
-      setLocations(null);
-      setPositions(null);
-      setChanges(null);
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
+    // Each source is independent: a failing card (e.g. positions or org-changes)
+    // must not blank the headcount that loaded fine. Only a core-directory
+    // failure raises the banner.
+    const [directory, depts, locs, poss, chgs] = await Promise.allSettled([
+      orgApi.listDirectory(),
+      orgApi.listDepartments(),
+      orgApi.listLocations(),
+      orgApi.listPositions(),
+      orgChangesApi.list(),
+    ]);
+    const val = <T,>(r: PromiseSettledResult<T>): T | null =>
+      r.status === 'fulfilled' ? r.value : null;
+    setEmployees(val(directory));
+    setDepartments(val(depts));
+    setLocations(val(locs));
+    setPositions(val(poss));
+    setChanges(val(chgs));
+    setLoadFailed(
+      directory.status === 'rejected' &&
+        depts.status === 'rejected' &&
+        locs.status === 'rejected',
+    );
+    setLoading(false);
   }, []);
 
   useEffect(() => {

@@ -114,14 +114,18 @@ function query(params: OrgChangeListParams): string {
 }
 
 export const orgChangesApi = {
+  // The collection root lives at the bare `/api/org-changes` route (backend
+  // `/org-changes/`); detail/cancel go through the [...path] route as
+  // `/org-changes/<id>/`. The old doubled `org-changes/org-changes/` resolved
+  // to orgchange-detail(pk="org-changes") and 404'd every call.
   list: (params: OrgChangeListParams = {}) =>
-    request<OrgChange[]>(`/api/org-changes/org-changes/${query(params)}`),
-  get: (id: string) => request<OrgChange>(`/api/org-changes/org-changes/${id}/`),
+    request<OrgChange[]>(`/api/org-changes${query(params)}`),
+  get: (id: string) => request<OrgChange>(`/api/org-changes/${id}/`),
   create: (payload: OrgChangeCreate) =>
-    mutate<OrgChange>('/api/org-changes/org-changes/', 'POST', payload),
+    mutate<OrgChange>('/api/org-changes', 'POST', payload),
   /** Cancelling is a PATCH to `cancelled`; effective rows are history. */
   cancel: (id: string) =>
-    mutate<OrgChange>(`/api/org-changes/org-changes/${id}/`, 'PATCH', { status: 'cancelled' }),
+    mutate<OrgChange>(`/api/org-changes/${id}/`, 'PATCH', { status: 'cancelled' }),
 };
 
 export const ORG_CHANGE_TYPE_LABELS: Record<OrgChangeType, string> = {
