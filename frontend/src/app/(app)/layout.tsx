@@ -114,7 +114,7 @@ const navItems: NavItem[] = [
   {
     // Org menu: directory/chart visible to all; admin sections gated to admin+.
     id: 'org',
-    label: 'Org',
+    label: 'Organization',
     icon: GlobeIcon,
     href: '/org-module',
     roles: ['admin', 'superadmin'],
@@ -182,7 +182,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
-  '/org-module': { title: 'Org', subtitle: 'Structure, roles and changes across the organisation' },
+  '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
