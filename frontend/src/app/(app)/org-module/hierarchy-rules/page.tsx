@@ -14,7 +14,7 @@ export default function HierarchyRulesPage() {
     <div>
       <PageHeader
         title="Hierarchy Rules"
-        subtitle="Relationship and span rules for the hierarchy (mock values, stub save)."
+        subtitle="Relationship and span rules for the hierarchy (defaults — no backend yet, not saved)."
       />
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden max-w-2xl">
