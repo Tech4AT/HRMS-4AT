@@ -1,7 +1,12 @@
 # Attendance & Leave — Backend Implementation Plan
 
-Status: **Calendar (Step 2) is built, tested, and verified live. Steps 3–12 are
-planning only** — nothing else described below has been implemented.
+Status: **Steps 1–6 are built, tested, and verified live** (Calendar, Attendance,
+Leave, the cross-cutting Approvals integration, Shifts/Policy Settings — plus a
+post-Step-6 comprehensive bug audit and post-Step-6 manual-verification fixes,
+both recorded in their own sections below). **Step 7 (Leave balances &
+accruals) is partially built**: opening-balance seeding and carry-forward are
+done; Comp Off accrual is deliberately deferred, an open business-rule
+decision, not a technical gap. **Steps 8–12 are planning only.**
 
 ## Revision note
 
@@ -869,65 +874,101 @@ dev server (not just via pytest) before being marked fixed.
 
 ---
 
-## Step 7 — Leave balances & accruals
+## Step 7 — Leave balances & accruals (opening balance + carry-forward built; Comp Off accrual deliberately deferred)
 
-Builds on `LeaveBalance` (Step 4's model) — this step is specifically opening
-balance seeding, carry-forward computation, and Comp Off accrual, none of which
-the frontend actually computes anywhere today.
+Builds on `LeaveBalance` (Step 4's model). Opening-balance seeding and
+carry-forward are built; Comp Off accrual is not — its mechanics are a
+business-rule decision this step doesn't get to make unilaterally (below).
 
-### Services / business logic
+### The shared scheduled-job mechanism — resolved
 
-- Opening-balance seeding (new financial year, new employee) and carry-forward
-  computation at year-end.
-- **Open decision, carried forward — Comp Off accrual mechanics**: Policy
-  Settings has an enabled flag and an "N overtime hours = 1 Comp Off" rate, but
-  not *when* that's evaluated (rolling daily total? weekly? monthly?) or *how* a
-  credited day is applied (added to a Comp Offs `LeaveBalance` the same way any
-  other allocation is, or tracked separately). The frontend never performs this
-  calculation anywhere — it's descriptive policy text today, not an implemented
-  computation.
-- **Open decision, carried forward — scheduled/background work**, shared with
-  Steps 3 and 8: no task queue, Celery, or cron mechanism exists anywhere in this
-  repo (`docker-compose.yml`/`requirements.txt` confirmed clean of any, still
-  true post-merge). Accrual evaluation, attendance-day finalization (Step 3), and
-  Penalisation auto-apply (Step 8) all need *something* to run outside a single
-  HTTP request. What triggers it (management command + external cron, a
-  scheduled container, a task queue introduced for this purpose), at what
-  cadence, and covering exactly which of these three moments, is undecided —
-  resolve once, as shared infrastructure, not three separate times per step.
+No task queue, Celery, or cron mechanism existed anywhere in this repo
+(confirmed clean in `docker-compose.yml`/`requirements.txt`). Introducing one
+for what is, today, a once-a-year job would be a disproportionate new
+dependency. **Resolved as: a plain Django management command
+(`leave/management/commands/roll_leave_balances.py`), invoked by an external
+scheduler** (OS cron / Windows Task Scheduler) — the same pattern this repo
+already uses for `verify_rbac`, `seed_demo_org`, etc. This is now the shared
+mechanism Steps 3 (attendance-day finalization) and 8 (Penalisation auto-apply)
+should reuse rather than each inventing their own.
+
+### Opening balance + carry-forward (`leave/balances.py`) — built
+
+`get_or_seed_balance(employee, leave_type, financial_year, *, actor=None)` is
+the one place a `LeaveBalance` row is ever created — both the self-service
+read (`LeaveBalanceViewSet.list()`) and `roll_leave_balances` call it, so
+whichever runs first for a given employee/type/year does the real seeding and
+the other just finds the row already there (idempotent by construction, not
+by a separate lock/check).
+
+- `allocated` seeds from the leave type's current `annual_allocation`.
+- `carry_forward` is the previous year's unused balance (`available`, floored
+  at 0), capped at the type's `carry_forward_limit`; 0 if no previous-year row
+  exists (a new employee/type has nothing to carry forward — **proration for a
+  mid-year joiner is still explicitly out of scope**, same as Step 4 left it).
+- The portion that exceeded the cap is written back onto the *previous* year's
+  row as `lapsed` — computed once, at the new year's first seed, and never
+  revisited afterward (matches `LeaveRequest.duration_days`'s "computed once
+  at creation, stored" precedent: a later policy change must not retroactively
+  rewrite an already-closed year). This is what finally gives the `lapsed`
+  field (present on the model since Step 4, never set by anything) real data.
+- Every seed and every `lapsed` write calls `write_audit` (`actor=None` from
+  the scheduled command, matching `provision_logins`'s convention for a
+  system-triggered action; the requesting user from the self-service path).
+
+### Comp Off accrual — still not built, on purpose
+
+**Open decision, carried forward, unchanged from the prior revision**: Policy
+Settings has an enabled flag and an "N overtime hours = 1 Comp Off" rate, but
+not *when* that's evaluated (rolling daily total? weekly? monthly?) or *how* a
+credited day is applied (added to a Comp Offs `LeaveBalance` the same way any
+other allocation is, or tracked separately). The frontend never performs this
+calculation anywhere — it's descriptive policy text today, not an implemented
+computation, and picking an answer here would be inventing a business rule
+the frontend never specified, not implementing one. Left undone rather than
+guessed.
 
 ### CRUD / API endpoints
 
-Admin edit on `LeaveBalance` (already in Step 4's endpoint set) plus whatever
-read/write Comp Off accrual needs once its mechanics are decided.
+`GET /leave/balance` (Step 4) now seeds through `get_or_seed_balance` instead
+of its own inline `get_or_create`. `roll_leave_balances --year YYYY` (defaults
+to the current year) is the admin/ops entry point for the yearly rollover — no
+HTTP endpoint for it; the same `attendance.settings.manage`-gated admin-edit
+endpoint Step 4 already exposes on `LeaveBalance` covers manual correction.
+Comp Off accrual's own endpoint needs, if any, wait on its mechanics decision.
 
 ### RBAC
 
-Same `attendance.settings.manage` gate as Leave Balances admin editing already
-implies (1.6, Step 6) — no new permission code needed unless Comp Off accrual
-ends up as a separate concern.
+No new permission code — `attendance.settings.manage` (Step 4/6) already gates
+`LeaveBalance` admin editing; the rollover command is an ops action outside
+the API entirely, same trust boundary as any other management command.
 
 ### Approvals integration
 
-None — accrual and carry-forward are computed, not requested/approved.
+None — carry-forward is computed, not requested/approved. (Applies to Comp Off
+accrual too, once it exists — Step 1.3 already rules it out of the generic
+engine's scope, same as Penalisation.)
 
-### Notifications / audit
+### Tests (9 new tests, all passing)
 
-`write_audit` on every balance mutation, including accrual credits (so "why did
-this balance change" stays answerable per row, same standard as everywhere else).
+`test_balances_rollover.py`: no-previous-year seeds with zero carry-forward;
+unused balance under the cap carries forward in full; unused balance over the
+cap is capped and the remainder lapses onto the *previous* year's row; a
+negative `available` (over-drawn balance) never carries forward or goes
+negative; calling `get_or_seed_balance` twice for the same year does not
+reseed or recompute (the idempotency guarantee); seeding writes an audit
+entry; the `roll_leave_balances` command itself is idempotent end-to-end and
+correctly skips inactive employees/leave types.
 
-### Tests
+### Definition of done — met for opening balance + carry-forward; Comp Off accrual explicitly not attempted
 
-Idempotency of whatever scheduled mechanism gets chosen (running it twice must
-not double-credit); accrual math once the cadence/application decision is made.
-
-### Definition of done
-
-Opening balances and carry-forward compute correctly across a year boundary;
-Comp Off accrual (once its mechanics are decided) credits exactly once per
-qualifying period; the shared scheduled-job mechanism is decided and in place
-before this step is considered complete, since it has no other consumer yet at
-this point in the build order.
+Opening balances and carry-forward compute correctly across a year boundary,
+verified live (`roll_leave_balances --year 2027` against the real dev
+database: 3 new rows seeded on first run, 0 on a second run for the same
+year) as well as by the automated suite (485 tests pass repo-wide,
+`manage.py check`/`ruff`/`black` clean). Comp Off accrual is **not** done —
+its cadence/application mechanics remain an open business-rule decision, not
+a technical gap, and this step does not guess at one.
 
 ---
 

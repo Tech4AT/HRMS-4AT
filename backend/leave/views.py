@@ -8,9 +8,12 @@ stays `[HasPermissionCode]` at the class level so core.checks still verifies
 `required_permission` is registered.
 
 LeaveBalanceViewSet: self-service read of the caller's own balances, lazily
-creating a row per active LeaveType for the current financial year on first
-reference (PLAN.md Step 7 owns real accrual/proration; this just makes the
-feature work end-to-end today).
+seeding a row per active LeaveType for the current financial year on first
+reference via `balances.get_or_seed_balance()` (PLAN.md Step 7) — the same
+seeding the scheduled `roll_leave_balances` command performs, so whichever
+happens first (an employee's own read, or the yearly job) does the real work
+and the other just finds the row already there. Proration for a mid-year
+joiner is still out of scope (see `balances.py`).
 
 LeaveRequestViewSet: create validates through conflicts.py (overlap, holiday/
 week-off spanning rules, balance sufficiency) before ever raising a request.
@@ -43,6 +46,7 @@ from core.scope import resolve_employee_scope
 from org_calendar.models import CalendarEntry, CalendarEntryType
 
 from . import conflicts
+from .balances import get_or_seed_balance
 from .models import (
     HalfDayOption,
     LeaveBalance,
@@ -156,11 +160,8 @@ class LeaveBalanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         financial_year = str(timezone.localdate().year)
         balances = []
         for leave_type in LeaveType.objects.filter(status=LeaveTypeStatus.ACTIVE):
-            balance, _created = LeaveBalance.objects.get_or_create(
-                employee=employee,
-                leave_type=leave_type,
-                financial_year=financial_year,
-                defaults={"allocated": leave_type.annual_allocation},
+            balance, _created = get_or_seed_balance(
+                employee, leave_type, financial_year, actor=request.user
             )
             balances.append(balance)
         return Response({"success": True, "data": LeaveBalanceSerializer(balances, many=True).data})

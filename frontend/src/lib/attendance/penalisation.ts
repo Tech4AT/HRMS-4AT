@@ -9,15 +9,15 @@ import { policySettingsApi } from '@/lib/api/policySettings';
  *  the absconding threshold gets flagged as absconded.
  *
  *  HR can't "approve" a penalisation since it already took effect on its own
- *  - HR can overturn one directly from the Applied list, or an employee can
- *  submit an overturn request (with a required reason) from their own Leave
- *  Management page, which HR then approves or rejects from the "Overturn
- *  Requested" list. Until real automation exists on the backend, records
+ *  - HR can overturn one directly from the Applied list. An employee only
+ *  ever sees whether they've been penalised (and, once decided, whether it
+ *  was overturned) - they can't request an overturn themselves; only HR
+ *  decides that. Until real automation exists on the backend, records
  *  round-trip through localStorage via {@link usePenalisations} so the
- *  employee-request and HR-decision sides of the flow see the same data
- *  within a browser session. */
+ *  employee and HR sides of the flow see the same data within a browser
+ *  session. */
 
-export type PenalisationStatus = 'applied' | 'overturn_requested' | 'overturned';
+export type PenalisationStatus = 'applied' | 'overturned';
 
 export interface PenalisationRecord {
   id: string;
@@ -27,10 +27,7 @@ export interface PenalisationRecord {
   daysOverdue: number;
   reason: string;
   status: PenalisationStatus;
-  /** Set once the employee submits a request to overturn this penalisation. */
-  overturnRequestReason?: string;
-  overturnRequestedOn?: string;
-  /** Set once HR finalizes the overturn (directly, or by approving a request). */
+  /** Set once HR overturns this penalisation directly. */
   overturnedBy?: string;
   overturnedReason?: string;
 }
@@ -182,9 +179,7 @@ export const SAMPLE_PENALISATIONS: PenalisationRecord[] = [
     regularisationDeadline: '2026-08-31',
     daysOverdue: 4,
     reason: 'No regularisation request submitted within 3 days of the unexplained absence.',
-    status: 'overturn_requested',
-    overturnRequestReason: 'Was hospitalized and unable to submit a regularisation request in time. Discharge summary attached.',
-    overturnRequestedOn: '2026-09-02',
+    status: 'applied',
   },
   {
     id: 'pen-4',

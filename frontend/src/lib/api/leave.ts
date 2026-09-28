@@ -25,6 +25,30 @@ export interface LeaveType {
   status: string;
 }
 
+/** The backend's actual wire shape for `LeaveType`/`LeaveBalanceItem`/
+ *  `LeaveRequest` below — `DecimalField`s (`annual_allocation`,
+ *  `carry_forward_limit`, every `LeaveBalanceItem` money-like field,
+ *  `duration_days`) serialize as JSON *strings* by DRF default
+ *  (`COERCE_DECIMAL_TO_STRING`, unset here so it stays the default `True` —
+ *  the same reason `lib/api/policySettings.ts` and `lib/api/leaveBalanceAdmin.ts`
+ *  convert at this same boundary), not numbers. Calling `.toFixed()` on one of
+ *  these straight off the wire throws ("n.toFixed is not a function") — the
+ *  `toLeaveType`/`toLeaveBalanceItem`/`toLeaveRequest` converters below exist
+ *  so every other component in this app can keep treating these fields as
+ *  plain numbers, as their types already promise. */
+type RawLeaveType = Omit<LeaveType, 'annual_allocation' | 'carry_forward_limit'> & {
+  annual_allocation: string;
+  carry_forward_limit: string;
+};
+
+function toLeaveType(raw: RawLeaveType): LeaveType {
+  return {
+    ...raw,
+    annual_allocation: Number(raw.annual_allocation),
+    carry_forward_limit: Number(raw.carry_forward_limit),
+  };
+}
+
 export interface LeaveTypeInput {
   name: string;
   category: string;
@@ -47,6 +71,34 @@ export interface LeaveBalanceItem {
   lapsed: number;
   entitled: number;
   available: number;
+}
+
+type RawLeaveBalanceItem = Omit<
+  LeaveBalanceItem,
+  'opening_balance' | 'allocated' | 'used' | 'pending' | 'carry_forward' | 'lapsed' | 'entitled' | 'available'
+> & {
+  opening_balance: string;
+  allocated: string;
+  used: string;
+  pending: string;
+  carry_forward: string;
+  lapsed: string;
+  entitled: string;
+  available: string;
+};
+
+function toLeaveBalanceItem(raw: RawLeaveBalanceItem): LeaveBalanceItem {
+  return {
+    ...raw,
+    opening_balance: Number(raw.opening_balance),
+    allocated: Number(raw.allocated),
+    used: Number(raw.used),
+    pending: Number(raw.pending),
+    carry_forward: Number(raw.carry_forward),
+    lapsed: Number(raw.lapsed),
+    entitled: Number(raw.entitled),
+    available: Number(raw.available),
+  };
 }
 
 export interface LeaveRequest {
@@ -78,6 +130,12 @@ export interface LeaveRequest {
   /** The generic approvals engine's own request id — decide through
    *  requestsApi.approve/reject(this id), never a per-module endpoint. */
   approval_request_id?: string | null;
+}
+
+type RawLeaveRequest = Omit<LeaveRequest, 'duration_days'> & { duration_days: string };
+
+function toLeaveRequest(raw: RawLeaveRequest): LeaveRequest {
+  return { ...raw, duration_days: Number(raw.duration_days) };
 }
 
 export interface Holiday {
@@ -147,36 +205,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const leaveApi = {
-  getTypes: () => request<LeaveType[]>('/types'),
-  createType: (input: LeaveTypeInput) =>
-    request<LeaveType>('/types', { method: 'POST', body: JSON.stringify(input) }),
-  updateType: (id: string, input: Partial<LeaveTypeInput>) =>
-    request<LeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+  getTypes: async () => (await request<RawLeaveType[]>('/types')).map(toLeaveType),
+  createType: async (input: LeaveTypeInput) =>
+    toLeaveType(await request<RawLeaveType>('/types', { method: 'POST', body: JSON.stringify(input) })),
+  updateType: async (id: string, input: Partial<LeaveTypeInput>) =>
+    toLeaveType(
+      await request<RawLeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    ),
   deleteType: (id: string) => request<{ id: string }>(`/types/${id}`, { method: 'DELETE' }),
-  getBalance: () => request<LeaveBalanceItem[]>('/balance'),
-  getRequests: () => request<LeaveRequest[]>('/requests'),
-  getRequest: (id: string) => request<LeaveRequest>(`/requests/${id}`),
-  createRequest: (input: CreateLeaveRequestInput) =>
-    request<LeaveRequest>('/requests', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    }),
-  cancelRequest: (id: string) =>
-    request<LeaveRequest>(`/requests/${id}/cancel`, { method: 'POST' }),
-  getPendingApprovals: () => request<LeaveRequest[]>('/approvals/pending'),
-  getApprovalHistory: () => request<LeaveRequest[]>('/approvals/history'),
-  decide: (id: string, approve: boolean, rejectionReason?: string, remarks?: string) =>
-    request<LeaveRequest>(`/requests/${id}/approve`, {
-      method: 'PUT',
-      body: JSON.stringify(
-        approve
-          ? { approve: true, remarks }
-          : { approve: false, rejection_reason: rejectionReason, remarks },
-      ),
-    }),
+  getBalance: async () => (await request<RawLeaveBalanceItem[]>('/balance')).map(toLeaveBalanceItem),
+  getRequests: async () => (await request<RawLeaveRequest[]>('/requests')).map(toLeaveRequest),
+  getRequest: async (id: string) => toLeaveRequest(await request<RawLeaveRequest>(`/requests/${id}`)),
+  createRequest: async (input: CreateLeaveRequestInput) =>
+    toLeaveRequest(
+      await request<RawLeaveRequest>('/requests', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    ),
+  cancelRequest: async (id: string) =>
+    toLeaveRequest(await request<RawLeaveRequest>(`/requests/${id}/cancel`, { method: 'POST' })),
+  getPendingApprovals: async () =>
+    (await request<RawLeaveRequest[]>('/approvals/pending')).map(toLeaveRequest),
+  getApprovalHistory: async () =>
+    (await request<RawLeaveRequest[]>('/approvals/history')).map(toLeaveRequest),
+  decide: async (id: string, approve: boolean, rejectionReason?: string, remarks?: string) =>
+    toLeaveRequest(
+      await request<RawLeaveRequest>(`/requests/${id}/approve`, {
+        method: 'PUT',
+        body: JSON.stringify(
+          approve
+            ? { approve: true, remarks }
+            : { approve: false, rejection_reason: rejectionReason, remarks },
+        ),
+      }),
+    ),
   getHolidays: (year: number) => request<Holiday[]>(`/holidays?year=${year}`),
-  getCalendar: (from: string, to: string) =>
-    request<LeaveRequest[]>(`/calendar?from=${from}&to=${to}`),
+  getCalendar: async (from: string, to: string) =>
+    (await request<RawLeaveRequest[]>(`/calendar?from=${from}&to=${to}`)).map(toLeaveRequest),
 };
 
 // ---- small formatting helpers shared by the leave UI ----

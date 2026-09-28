@@ -41,6 +41,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             "break_minutes",
             "late_minutes",
             "early_leave_minutes",
+            "overtime_minutes",
             "status",
             "source",
             "notes",
