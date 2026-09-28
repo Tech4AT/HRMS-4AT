@@ -11,7 +11,15 @@ role: it scopes the read-only "requests awaiting my decision" list
 (`/attendance/requests/approvals/pending`, used by the Dashboard's pending-count
 tile) to a manager's reports, via the same resolve_employee_scope() every other
 scoped permission uses. It is not a write permission and is not in this view's
-action_permissions for any mutation."""
+action_permissions for any mutation.
+
+`penalisation.manage` (PLAN.md Step 8) is new — the Approvals → Penalisation
+tab has no existing hardcoded frontend permission string (1.6 flagged this as
+a gap). Flat, `HasPermissionCode` (not scoped), `<module>.manage` naming
+matching `attendance.settings.manage`'s own admin-only convention, since the
+corrected design (§1.3) has no review/decide split — just one HR action,
+overturn — not a `.review`/`.approve` verb that would imply deciding someone
+else's routed request."""
 
 from core.enums import ScopeTier
 from core.registry import PermissionSpec, register_permissions
@@ -39,5 +47,10 @@ register_permissions(
         "attendance.approve",
         "See WFH/regularisation requests awaiting decision within the holder's scope",
         default_grants={"Manager": ScopeTier.MANAGER, "HR Admin": ScopeTier.ALL},
+    ),
+    PermissionSpec(
+        "penalisation.manage",
+        "View every employee's Penalisations and overturn one directly",
+        default_grants={"HR Admin": ScopeTier.ALL},
     ),
 )

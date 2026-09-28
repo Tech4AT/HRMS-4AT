@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
-import { useAuth } from '@/lib/auth/useAuth';
-import { usePenalisations, type PenalisationStatus } from '@/lib/attendance/penalisation';
+import { penalisationApi, type PenalisationRecord, type PenalisationStatus } from '@/lib/api/penalisation';
 import {
   leaveApi,
   LeaveApiError,
@@ -143,7 +142,6 @@ function penalisationStatusPillClass(status: PenalisationStatus): string {
 
 export default function LeaveManagementPage() {
   const searchParams = useSearchParams();
-  const { user } = useAuth();
 
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([]);
@@ -172,29 +170,23 @@ export default function LeaveManagementPage() {
   // per-row action state
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
-  // Sample-data only — penalisations aren't automated on the backend yet.
-  // Shared (localStorage-backed) with Approvals > Penalisation - see
-  // lib/attendance/penalisation.ts. Read-only here: an employee can see
-  // whether they've been penalised (and whether HR later overturned it), but
-  // can't request an overturn themselves - only HR decides that, directly
-  // from Approvals > Penalisation.
-  const [penalisations] = usePenalisations();
-
-  const myName = user ? `${user.firstName} ${user.lastName}`.trim() : null;
-  const myPenalisations = useMemo(
-    () => (myName ? penalisations.filter((p) => p.employeeName === myName) : []),
-    [penalisations, myName],
-  );
+  // Real backend since PLAN.md Step 8 — the caller's own records only,
+  // read-only: an employee can see whether they've been penalised (and
+  // whether HR later overturned it), but can't request an overturn
+  // themselves - only HR decides that, directly, from Approvals > Penalisation.
+  const [myPenalisations, setMyPenalisations] = useState<PenalisationRecord[]>([]);
 
   const refresh = useCallback(async () => {
-    const [t, b, r] = await Promise.all([
+    const [t, b, r, p] = await Promise.all([
       leaveApi.getTypes(),
       leaveApi.getBalance(),
       leaveApi.getRequests(),
+      penalisationApi.getMine(),
     ]);
     setTypes(t);
     setBalances(b);
     setRequests(r);
+    setMyPenalisations(p);
   }, []);
 
   useEffect(() => {
@@ -430,11 +422,13 @@ export default function LeaveManagementPage() {
                       <p className="text-sm font-semibold text-slate-900">Absent {fmtDate(p.absentDate)}</p>
                       <p className="text-xs text-slate-500 mt-0.5">
                         {p.reason} · {p.daysOverdue} day(s) overdue
+                        {p.leaveDaysDeducted ? ` · ${p.leaveDaysDeducted} day(s) leave deducted` : ''}
                       </p>
                       {p.status === 'overturned' ? (
                         <p className="text-xs text-slate-400 mt-1">
                           Overturned by {p.overturnedBy}
                           {p.overturnedReason ? ` — ${p.overturnedReason}` : ''}
+                          {p.leaveDaysDeducted ? ` (${p.leaveDaysDeducted} day(s) leave restored)` : ''}
                         </p>
                       ) : null}
                     </div>

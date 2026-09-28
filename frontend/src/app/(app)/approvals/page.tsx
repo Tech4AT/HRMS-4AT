@@ -20,7 +20,7 @@ import {
   type LeaveRequest,
   type LeaveType,
 } from '@/lib/api/leave';
-import { usePenalisations, type PenalisationRecord, type PenalisationStatus } from '@/lib/attendance/penalisation';
+import { penalisationApi, PenalisationApiError, type PenalisationRecord, type PenalisationStatus } from '@/lib/api/penalisation';
 
 /* ============================== shared: approvals review (pending + history) ==============================
  *
@@ -354,11 +354,13 @@ function PenalisationSection({
                     </p>
                     <p className="text-xs text-slate-500 mt-0.5">
                       {r.reason} · {r.daysOverdue} day(s) overdue
+                      {r.leaveDaysDeducted ? ` · ${r.leaveDaysDeducted} day(s) leave deducted` : ''}
                     </p>
                     {filter === 'overturned' ? (
                       <p className="text-xs text-slate-400 mt-1">
                         Overturned by {r.overturnedBy}
                         {r.overturnedReason ? ` — ${r.overturnedReason}` : ''}
+                        {r.leaveDaysDeducted ? ` (${r.leaveDaysDeducted} day(s) leave restored)` : ''}
                       </p>
                     ) : null}
                   </div>
@@ -420,22 +422,25 @@ export default function ApprovalsPage() {
   const { user, isLoading: authLoading, hasPermission } = useAuth();
   const canApproveLeave = hasPermission('leave.approve');
   const canApproveAttendance = hasPermission('attendance.approve');
-  const canApprove = canApproveLeave || canApproveAttendance;
+  const canManagePenalisations = hasPermission('penalisation.manage');
+  const canApprove = canApproveLeave || canApproveAttendance || canManagePenalisations;
 
   useEffect(() => {
     if (!authLoading && !canApprove) router.replace('/');
   }, [authLoading, canApprove, router]);
 
   // Order matches the original product design: WFH, Regularisation, Leave,
-  // Penalisation. Penalisation has no permission of its own yet (not
-  // implemented on the backend) - visible to anyone who can see Approvals.
+  // Penalisation. Penalisation now has its own real permission (PLAN.md
+  // Step 8) - closes the "visible to anyone who can see Approvals" gap.
   const tabs: SectionTab[] = [
     ...(canApproveAttendance ? [{ id: 'wfh', label: 'WFH', href: '/approvals?tab=wfh' }] : []),
     ...(canApproveAttendance
       ? [{ id: 'regularisation', label: 'Regularisation', href: '/approvals?tab=regularisation' }]
       : []),
     ...(canApproveLeave ? [{ id: 'leave', label: 'Leave', href: '/approvals?tab=leave' }] : []),
-    { id: 'penalisation', label: 'Penalisation', href: '/approvals?tab=penalisation' },
+    ...(canManagePenalisations
+      ? [{ id: 'penalisation', label: 'Penalisation', href: '/approvals?tab=penalisation' }]
+      : []),
   ];
   const requestedTab = searchParams.get('tab');
   const activeTab: ApprovalTabId = (tabs.some((t) => t.id === requestedTab) ? requestedTab : tabs[0]?.id) as ApprovalTabId;
@@ -459,10 +464,8 @@ export default function ApprovalsPage() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveRemarks, setApproveRemarks] = useState('');
 
-  // Sample-data only — penalisations aren't automated on the backend yet, so
-  // decisions here just update this shared (localStorage-backed) state rather
-  // than calling an API. See lib/attendance/penalisation.ts.
-  const [penalisations, updatePenalisations] = usePenalisations();
+  // Real backend since PLAN.md Step 8.
+  const [penalisations, setPenalisations] = useState<PenalisationRecord[]>([]);
 
   const refresh = useCallback(async () => {
     const tasks: Promise<unknown>[] = [];
@@ -485,8 +488,11 @@ export default function ApprovalsPage() {
         }),
       );
     }
+    if (canManagePenalisations) {
+      tasks.push(penalisationApi.getAll().then(setPenalisations));
+    }
     await Promise.all(tasks);
-  }, [canApproveLeave, canApproveAttendance]);
+  }, [canApproveLeave, canApproveAttendance, canManagePenalisations]);
 
   useEffect(() => {
     if (!canApprove) return;
@@ -551,14 +557,20 @@ export default function ApprovalsPage() {
   // lapses - there's no approval step. An employee can't request an overturn
   // themselves (Leave Management only shows them whether they've been
   // penalised); HR overturns an Applied one directly, here.
-  const directOverturnPenalisation = (id: string) => {
-    updatePenalisations((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, status: 'overturned', overturnedBy: 'You', overturnedReason: rejectReason.trim() } : p,
-      ),
-    );
-    setActionMessage('Penalisation overturned.');
-    clearDecisionState();
+  const directOverturnPenalisation = async (id: string) => {
+    setDecidingId(id);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const updated = await penalisationApi.overturn(id, rejectReason.trim());
+      setPenalisations((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      setActionMessage('Penalisation overturned.');
+      clearDecisionState();
+    } catch (e) {
+      setActionError(e instanceof PenalisationApiError ? e.message : 'Could not overturn this penalisation');
+    } finally {
+      setDecidingId(null);
+    }
   };
 
   const typeName = (r: LeaveRequest) => leaveTypes.find((t) => t.id === r.leave_type_id)?.name ?? r.leave_type_name ?? 'Leave';

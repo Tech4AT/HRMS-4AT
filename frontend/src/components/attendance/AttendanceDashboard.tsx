@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
 import { leaveApi } from '@/lib/api/leave';
 import { attendanceApi } from '@/lib/api/attendance';
-import { usePenalisations } from '@/lib/attendance/penalisation';
+import { penalisationApi } from '@/lib/api/penalisation';
 import { SAMPLE_EMPLOYEES } from '@/lib/attendance/sample-employees';
 import { AttendanceLeaderboard } from '@/components/attendance/AttendanceLeaderboard';
 import {
@@ -130,10 +130,11 @@ export function AttendanceDashboard() {
   const { hasPermission, hasOrgScope } = useAuth();
   const canApproveLeave = hasPermission('leave.approve');
   const canApproveAttendance = hasPermission('attendance.approve');
+  const canManagePenalisations = hasPermission('penalisation.manage');
   const orgWide = hasOrgScope();
 
   const [pendingApprovals, setPendingApprovals] = useState<number | null>(null);
-  const [penalisations] = usePenalisations();
+  const [activePenalisations, setActivePenalisations] = useState<number>(0);
 
   useEffect(() => {
     let active = true;
@@ -156,13 +157,34 @@ export function AttendanceDashboard() {
     };
   }, [canApproveLeave, canApproveAttendance]);
 
+  // Penalisation has no manager/team scope (PLAN.md Step 8 - it's a flat,
+  // HR-only concern, `penalisation.manage`), unlike Pending Approvals above -
+  // a manager viewing this dashboard simply sees 0 here, not a 403.
+  useEffect(() => {
+    let active = true;
+    if (!canManagePenalisations) {
+      setActivePenalisations(0);
+      return;
+    }
+    penalisationApi
+      .getAll('applied')
+      .then((rows) => {
+        if (active) setActivePenalisations(rows.length);
+      })
+      .catch(() => {
+        if (active) setActivePenalisations(0);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canManagePenalisations]);
+
   const today = toLocalISODate(new Date());
   const week = useMemo(() => lastNDays(7), []);
   const todayAgg = useMemo(() => aggregateForDay(today), [today]);
   const weekAgg = useMemo(() => week.map((d) => aggregateForDay(d)), [week]);
   const avgWork = useMemo(() => avgHoursForPeriod(week, 'work'), [week]);
   const avgOvertime = useMemo(() => avgHoursForPeriod(week, 'overtime'), [week]);
-  const activePenalisations = penalisations.filter((p) => p.status === 'applied').length;
   const todayStatuses = useMemo(() => SAMPLE_EMPLOYEES.map((e) => statusFor(e, today)), [today]);
   const attendanceRate = todayAgg.total ? Math.round(((todayAgg.present + todayAgg.late) / todayAgg.total) * 100) : 0;
 

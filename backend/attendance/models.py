@@ -179,10 +179,22 @@ class PolicySettings(models.Model):
 
     Only the settings themselves live here — the actual per-employee
     `PenalisationRecord` and its auto-apply/overturn lifecycle are PLAN.md
-    Step 8, not this one."""
+    Step 8, not this one.
+
+    `penalty_leave_type` (added post-Step-8, resolving the "against which
+    leave type" open decision) is the one leave type every enabled violation
+    rule deducts from — a single shared setting, not one per rule, per direct
+    instruction. Nullable: a fresh install has no leave types yet, and
+    `apply_penalisations()` simply skips the deduction (still creates the
+    Penalisation record itself) until HR configures one. FK into `leave`,
+    not the reverse — matches `day_facts.py`'s existing one-directional
+    `attendance` → `leave` dependency (PLAN.md Step 4), not a new one."""
 
     regularisation_grace_days = models.PositiveIntegerField(default=3)
     absconding_threshold_days = models.PositiveIntegerField(default=5)
+    penalty_leave_type = models.ForeignKey(
+        "leave.LeaveType", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
 
     no_attendance_enabled = models.BooleanField(default=True)
     no_attendance_leave_days_deducted = models.DecimalField(
@@ -228,3 +240,78 @@ class PolicySettings(models.Model):
 
     def __str__(self):
         return "Policy Settings"
+
+
+class PenalisationStatus(models.TextChoices):
+    APPLIED = "applied", "Applied"
+    OVERTURNED = "overturned", "Overturned"
+
+
+class PenalisationRecord(models.Model):
+    """PLAN.md Step 8. Auto-applied by `attendance/penalisation.py`'s
+    `apply_penalisations()` (run via the `apply_penalisations` management
+    command, the same shared scheduled-job mechanism Step 7's
+    `roll_leave_balances` established) once `PolicySettings.
+    regularisation_grace_days` lapses after an unexplained absence with no
+    regularisation request submitted for that date.
+
+    **No overturn-request fields** — corrected during manual verification
+    (PLAN.md §1.3): an employee cannot request an overturn, only see whether
+    they've been penalised. Only HR (`penalisation.manage`) overturns one,
+    directly, from `applied`. `days_overdue` is computed once at creation
+    (today vs. `regularisation_deadline`) and never revisited afterward — the
+    same "compute once, store" precedent as `LeaveRequest.duration_days` and
+    Step 7's carry-forward: a later policy change must not retroactively
+    rewrite an already-applied penalisation.
+
+    `leave_days_deducted`/`leave_balance` (added post-Step-8, resolving the
+    "should a Penalisation deduct a real LeaveBalance" open decision): a
+    Penalisation now really does consume leave, deducted once at creation from
+    `PolicySettings.penalty_leave_type` and recorded here — `leave_days_deducted`
+    stays 0 and `leave_balance` stays null if the No Attendance rule was
+    disabled or no leave type was configured at the time (a later policy
+    change doesn't retroactively deduct anything either, same "compute once"
+    precedent). `leave_balance` points at the *exact* row that was debited
+    (not re-resolved from "the employee's current balance" later), so
+    overturning credits back to the same row even if a financial year has
+    since rolled over."""
+
+    employee = models.ForeignKey(
+        "employees.Employee", on_delete=models.CASCADE, related_name="penalisation_records"
+    )
+    absent_date = models.DateField()
+    regularisation_deadline = models.DateField()
+    days_overdue = models.PositiveIntegerField()
+    reason = models.CharField(max_length=255)
+    status = models.CharField(
+        max_length=20, choices=PenalisationStatus.choices, default=PenalisationStatus.APPLIED
+    )
+    leave_days_deducted = models.DecimalField(max_digits=4, decimal_places=1, default=0)
+    leave_balance = models.ForeignKey(
+        "leave.LeaveBalance",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="penalisations",
+    )
+    overturned_by = models.ForeignKey(
+        "employees.Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    overturned_reason = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-absent_date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["employee", "absent_date"], name="unique_penalisation_per_employee_day"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.employee_id} @ {self.absent_date} ({self.status})"
