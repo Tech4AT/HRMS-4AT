@@ -25,7 +25,7 @@ import {
 import { DetailPanel, UnitDrawer, type DrawerState } from './org-structure-detail';
 
 /** Sub-tabs live on the bar. Extended group by group (one commit each). */
-export const VISIBLE_TABS: UnitKind[] = ['legal-entities', 'business-units', 'locations'];
+export const VISIBLE_TABS: UnitKind[] = ['legal-entities', 'business-units', 'locations', 'departments', 'cost-centers'];
 
 function toItems(entities: NamedEntity[]): UnitItem[] {
   return entities.map((e) => ({ id: e.id, name: e.name }));
