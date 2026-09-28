@@ -68,15 +68,14 @@ class Command(BaseCommand):
                     "username": row["email"],
                     "first_name": row["first_name"],
                     "last_name": row["last_name"],
-                    "role": role,
                 },
             )
             if created:
                 user.set_password(DEMO_PASSWORD)
                 user.save(update_fields=["password"])
-            elif user.role_id != role.id:
-                user.role = role
-                user.save(update_fields=["role"])
+                user.roles.add(role)
+            elif set(user.roles.values_list("pk", flat=True)) != {role.pk}:
+                user.roles.set([role])
 
             employee, _ = Employee.objects.get_or_create(
                 user=user, defaults={"employee_code": row["employee_code"]}

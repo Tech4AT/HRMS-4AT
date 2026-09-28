@@ -1,12 +1,11 @@
 from datetime import date
-import openpyxl
 
 from django.db import transaction
 from django.db.models import Count, Q
 from rest_framework import filters, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
@@ -126,11 +125,7 @@ class EmployeeViewSet(
     permission_classes = [ScopedEmployeePermission]
     required_permission = "employees.read"
     write_permission = "employees.write"
-    action_permissions = {
-        "personal": "employees.personal.read",
-        "bulk_upload": "employees.write",
-        "metadata": "employees.read"
-    }
+    action_permissions = {"personal": "employees.personal.read", "lookup": None}
     http_method_names = ["get", "post", "patch", "head", "options"]
     filter_backends = [filters.SearchFilter]
     search_fields = ["employee_code", "user__first_name", "user__last_name", "user__email"]
@@ -255,6 +250,29 @@ class EmployeeViewSet(
             employee.save(update_fields=["date_of_exit", "exit_reason"])
             write_audit(actor, "Employee.reactivated", "Employee", employee.pk)
 
+    # -- lookup (manager/buddy dropdowns) -----------------------------------
+
+    @action(detail=False, methods=["get"], url_path="lookup", permission_classes=[IsAuthenticated])
+    def lookup(self, request):
+        """Minimal employee list for manager/buddy dropdowns.
+        Returns all non-exited employees regardless of scope — the same people
+        any HR admin would pick from when assigning a manager or buddy."""
+        qs = (
+            Employee.objects.select_related("user")
+            .exclude(status=EmployeeStatus.EXITED)
+            .order_by("first_name", "last_name")
+        )
+        data = [
+            {
+                "id": emp.id,
+                "name": f"{emp.first_name} {emp.last_name}".strip() or emp.work_email,
+                "workEmail": emp.work_email,
+                "employeeCode": emp.employee_code,
+            }
+            for emp in qs
+        ]
+        return Response({"success": True, "data": data})
+
     # -- personal details ---------------------------------------------------
 
     @action(detail=True, methods=["get", "patch"], url_path="personal")
@@ -280,155 +298,6 @@ class EmployeeViewSet(
                 {"fields": changed},
             )
         return Response({"success": True, "data": PersonalSerializer(employee).data})
-
-    # -- bulk upload (superadmin only) -------------------------------------------
-
-    @action(detail=False, methods=["post"], url_path="bulk-upload", parser_classes=[MultiPartParser, FormParser])
-    def bulk_upload(self, request):
-        """Bulk upload employees from Excel file (superadmin only)."""
-        if not user_has_permission(request.user, "employees.write"):
-            raise PermissionDenied("You do not have permission to perform bulk upload.")
-
-        if 'file' not in request.FILES:
-            return Response(
-                {'success': False, 'error': 'No file provided'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        file_obj = request.FILES['file']
-
-        try:
-            wb = openpyxl.load_workbook(file_obj)
-            ws = wb.active
-
-            # Headers are on row 3
-            headers = [cell.value for cell in ws[3]]
-
-            results = {
-                'created': [],
-                'updated': [],
-                'skipped': [],
-                'errors': [],
-                'departments_created': set(),
-                'designations_created': set(),
-            }
-
-            # Helper to find column by name (case-insensitive, handles variations)
-            def get_column(row_dict, *possible_names):
-                for name in possible_names:
-                    for key in row_dict.keys():
-                        if key and key.lower().strip() == name.lower().strip():
-                            val = row_dict[key]
-                            return val.strip() if val and isinstance(val, str) else (val or '')
-                return ''
-
-            # Process each row starting from row 4
-            for row_num, row in enumerate(ws.iter_rows(min_row=4, values_only=True), start=4):
-                row_dict = dict(zip(headers, row))
-
-                emp_code = get_column(row_dict, 'Employee Number', 'Employee Code', 'Code')
-                first_name = get_column(row_dict, 'First Name', 'FirstName', 'first_name')
-                last_name = get_column(row_dict, 'Last Name', 'LastName', 'last_name')
-                email = get_column(row_dict, 'Reporting Manager Email', 'Manager Email', 'Email')
-                job_title = get_column(row_dict, 'Job Title', 'Title', 'Designation')
-                department = get_column(row_dict, 'Department', 'Dept')
-                status_val = get_column(row_dict, 'Employment Status', 'Status') or 'Working'
-                date_joined = get_column(row_dict, 'Date Joined', 'Joining Date', 'DOJ')
-
-                # Validate required fields
-                if not emp_code or not first_name:
-                    results['skipped'].append({'row': row_num, 'reason': 'Missing employee code or name'})
-                    continue
-
-                try:
-                    # Generate email if missing
-                    if not email:
-                        email = f'{first_name.lower()}.{last_name.lower()}@consult-4at.com'
-
-                    # Generate username
-                    username = email.split('@')[0].lower()
-
-                    # Parse date
-                    from datetime import datetime
-                    date_of_joining = None
-                    if date_joined:
-                        try:
-                            if isinstance(date_joined, str):
-                                date_of_joining = datetime.strptime(date_joined.strip(), '%d-%b-%Y').date()
-                            elif hasattr(date_joined, 'date'):
-                                date_of_joining = date_joined.date()
-                        except:
-                            pass
-
-                    # Create/get department
-                    dept = None
-                    if department:
-                        dept, dept_created = Department.objects.get_or_create(
-                            name=department,
-                            defaults={'is_active': True}
-                        )
-                        if dept_created:
-                            results['departments_created'].add(department)
-
-                    # Create/get designation
-                    desig = None
-                    if job_title:
-                        desig, desig_created = Designation.objects.get_or_create(
-                            name=job_title,
-                            defaults={'is_active': True}
-                        )
-                        if desig_created:
-                            results['designations_created'].add(job_title)
-
-                    # Simple: just create/update employee by code
-                    employee, created = Employee.objects.update_or_create(
-                        employee_code=emp_code,
-                        defaults={
-                            'department': dept,
-                            'designation': desig,
-                            'status': 'active' if status_val == 'Working' else 'inactive',
-                            'date_of_joining': date_of_joining,
-                        }
-                    )
-
-                    if created:
-                        results['created'].append({
-                            'employee_code': emp_code,
-                            'name': f'{first_name} {last_name}'
-                        })
-                    else:
-                        results['updated'].append({
-                            'employee_code': emp_code,
-                            'name': f'{first_name} {last_name}'
-                        })
-
-                except Exception as e:
-                    results['errors'].append({
-                        'row': row_num,
-                        'employee_code': emp_code,
-                        'error': str(e)
-                    })
-
-            # Convert sets to lists for JSON
-            results['departments_created'] = list(results['departments_created'])
-            results['designations_created'] = list(results['designations_created'])
-            results['summary'] = {
-                'total_created': len(results['created']),
-                'total_updated': len(results['updated']),
-                'total_skipped': len(results['skipped']),
-                'total_errors': len(results['errors']),
-            }
-
-            return Response({
-                'success': True,
-                'data': results
-            }, status=status.HTTP_200_OK)
-
-        except Exception as e:
-            return Response(
-                {'success': False, 'error': f'Failed to process file: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
 
 class EssProfileView(APIView):

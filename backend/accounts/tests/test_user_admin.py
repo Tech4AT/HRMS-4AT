@@ -45,11 +45,13 @@ def test_admin_can_assign_role_to_a_user(admin_client):
     target_user = UserFactory(role=None)
     EmployeeFactory(user=target_user)
 
-    resp = client.patch(f"/api/v1/users/{target_user.pk}/", {"role": target_role.pk}, format="json")
+    resp = client.patch(
+        f"/api/v1/users/{target_user.pk}/", {"roleIds": [target_role.pk]}, format="json"
+    )
 
     assert resp.status_code == 200
     target_user.refresh_from_db()
-    assert target_user.role_id == target_role.pk
+    assert list(target_user.roles.values_list("pk", flat=True)) == [target_role.pk]
 
 
 def test_role_assignment_is_audited(admin_client):
@@ -58,12 +60,14 @@ def test_role_assignment_is_audited(admin_client):
     target_user = UserFactory(role=None)
     EmployeeFactory(user=target_user)
 
-    client.patch(f"/api/v1/users/{target_user.pk}/", {"role": target_role.pk}, format="json")
+    client.patch(
+        f"/api/v1/users/{target_user.pk}/", {"roleIds": [target_role.pk]}, format="json"
+    )
 
     log = AuditLog.objects.get(action="User.role_changed", entity_id=str(target_user.pk))
     assert log.actor == admin_user
-    assert log.diff["before"]["role"] is None
-    assert log.diff["after"]["role"] == "Audited Role"
+    assert log.diff["before"]["roles"] == []
+    assert log.diff["after"]["roles"] == ["Audited Role"]
 
 
 def test_password_reset_returns_a_working_temporary_password(admin_client):
@@ -178,7 +182,7 @@ def test_role_only_change_does_not_log_active_status_changed(admin_client):
     target = UserFactory(role=None, is_active=True)
     EmployeeFactory(user=target)
 
-    client.patch(f"/api/v1/users/{target.pk}/", {"role": target_role.pk}, format="json")
+    client.patch(f"/api/v1/users/{target.pk}/", {"roleIds": [target_role.pk]}, format="json")
 
     assert not AuditLog.objects.filter(
         action="User.active_status_changed", entity_id=str(target.pk)
@@ -194,7 +198,7 @@ def test_changing_both_role_and_active_status_logs_both_events(admin_client):
 
     client.patch(
         f"/api/v1/users/{target.pk}/",
-        {"role": target_role.pk, "isActive": False},
+        {"roleIds": [target_role.pk], "isActive": False},
         format="json",
     )
 

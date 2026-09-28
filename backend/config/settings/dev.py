@@ -30,5 +30,3 @@ if not _os.environ.get("POSTGRES_HOST") and not env("POSTGRES_HOST", default="")
 # Reference plug-in module (see example_leave/). Never installed in production.
 INSTALLED_APPS = [*INSTALLED_APPS, "example_leave"]  # noqa: F405
 
-# Disable automatic slash appending for POST requests (DRF handles routing)
-APPEND_SLASH = False

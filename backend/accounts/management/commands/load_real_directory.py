@@ -171,8 +171,8 @@ class Command(BaseCommand):
             admin = User(email=ADMIN_EMAIL, username=ADMIN_EMAIL, first_name="Admin",
                          last_name="", is_staff=True, is_superuser=True)
             admin.set_password(ADMIN_PW)
-            admin.role = roles.get("HR Admin")
             admin.save()
+            admin.roles.add(roles.get("HR Admin"))
             logins = [(ADMIN_EMAIL, ADMIN_PW, "HR Admin (superuser)")]
 
             def give(emp, role_name):
@@ -180,8 +180,8 @@ class Command(BaseCommand):
                     return
                 u = emp.user
                 u.set_password(DEMO_PW)
-                u.role = roles.get(role_name)
                 u.save()
+                u.roles.add(roles.get(role_name))
                 logins.append((u.email, DEMO_PW, f"{role_name} — {u.get_full_name()}"))
 
             mgr = max(emps, key=lambda x: Employee.objects.filter(manager=x).count())

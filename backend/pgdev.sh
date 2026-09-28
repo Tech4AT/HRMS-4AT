@@ -5,7 +5,7 @@
 # repo's .env points at it. See backend/README.md for how it was set up.
 set -euo pipefail
 
-PG_BIN="/c/Program Files/PostgreSQL/17/bin"
+PG_BIN="/c/Program Files/PostgreSQL/13/bin"
 DATA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.pgdata"
 LOG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.pglogs/postgres.log"
 PORT=5433

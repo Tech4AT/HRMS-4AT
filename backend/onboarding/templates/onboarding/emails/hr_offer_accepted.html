@@ -1,0 +1,12 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Offer accepted — {{ employee_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">{{ employee_name }} accepted their offer</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  <strong>{{ employee_name }}</strong> ({{ employee_code }}) has electronically signed and accepted their offer letter.
+  Preboarding has started automatically — their checklist is now visible on their onboarding record.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  — {{ company_name }} HRMS
+</p>
+{% endblock %}

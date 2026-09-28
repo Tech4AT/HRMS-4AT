@@ -57,7 +57,9 @@ class Command(BaseCommand):
         roles_by_name = {r.name: r for r in Role.objects.all()}
         updated, unchanged, unmapped = 0, 0, []
 
-        employees = Employee.objects.select_related("user", "designation", "user__role")
+        employees = Employee.objects.select_related("user", "designation").prefetch_related(
+            "user__roles"
+        )
         for employee in employees:
             designation_name = employee.designation.name if employee.designation else None
             role_name = DESIGNATION_TO_ROLE.get(designation_name)
@@ -68,21 +70,20 @@ class Command(BaseCommand):
 
             role = roles_by_name[role_name]
             user = employee.user
-            if user.role_id == role.id:
+            if set(user.roles.values_list("pk", flat=True)) == {role.id}:
                 unchanged += 1
                 continue
 
-            before_role = user.role.name if user.role else None
-            user.role = role
-            user.save(update_fields=["role"])
+            before_roles = sorted(user.roles.values_list("name", flat=True))
+            user.roles.set([role])
             write_audit(
                 None,
                 "User.role_changed",
                 "User",
                 user.pk,
                 {
-                    "before": {"role": before_role},
-                    "after": {"role": role.name},
+                    "before": {"roles": before_roles},
+                    "after": {"roles": [role.name]},
                     "reason": "assign_roles_by_designation",
                 },
             )

@@ -264,8 +264,8 @@ def test_final_approval_prefers_the_payroll_approver_role():
         username="early.hr",
         email="early.hr@example.com",
         password="x",
-        role=Role.objects.get(name="HR Admin"),
     )
+    early_hr.roles.add(Role.objects.get(name="HR Admin"))
     Employee.objects.create(user=early_hr, employee_code="EARLY-HR")
     with override_settings(DEBUG=True):
         call_command("seed_payroll", "--demo", verbosity=0)

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyToBackend, setAuthCookies, clearAuthCookies } from '@/lib/api/proxy';
-import { MOCK_AUTH_ENABLED, MOCK_REFRESH_TOKEN, MOCK_USER, getMockUserByEmail } from '@/lib/api/mock-auth';
+import { MOCK_AUTH_ENABLED, MOCK_REFRESH_TOKEN, MOCK_USER } from '@/lib/api/mock-auth';
 
 // Previously this file guessed the frontend archetype from the backend
 // role's free-text *name* via a hardcoded table (`{employee: 'employee',
@@ -14,10 +14,22 @@ import { MOCK_AUTH_ENABLED, MOCK_REFRESH_TOKEN, MOCK_USER, getMockUserByEmail } 
 // employee/admin/superadmin — see backend/core/enums.py's RoleArchetype), so
 // there's no name-guessing table to keep in sync as roles change or new
 // custom roles get created.
-function archetypeFromRoles(roles: { name?: string; archetype?: string }[] | undefined): string {
-  const archetype = roles?.[0]?.archetype;
-  if (archetype === 'admin' || archetype === 'superadmin' || archetype === 'employee') {
-    return archetype;
+// The backend now sends the single deterministic primary archetype
+// explicitly (`archetype`: the most-privileged active role's archetype —
+// see backend/core/scope.py::primary_archetype), plus `roles` as the sorted
+// list of ACTIVE role names. Older backends sent `roles` as
+// [{name, archetype}]; the fallback below keeps those working.
+function archetypeFromMe(u: {
+  archetype?: string;
+  roles?: ({ name?: string; archetype?: string } | string)[] | undefined;
+}): string {
+  if (u.archetype === 'admin' || u.archetype === 'superadmin' || u.archetype === 'employee') {
+    return u.archetype;
+  }
+  const first = u.roles?.[0];
+  const legacy = typeof first === 'object' ? first?.archetype : undefined;
+  if (legacy === 'admin' || legacy === 'superadmin' || legacy === 'employee') {
+    return legacy;
   }
   return 'employee';
 }
@@ -32,19 +44,16 @@ export async function GET(req: NextRequest) {
           { status: 401 }
         );
       }
-      // Per-role mock users: the email chosen at mock login (see mock-auth.ts).
-      const userEmail = req.cookies.get('mockUserEmail')?.value;
-      const mockUser = userEmail ? getMockUserByEmail(userEmail) : MOCK_USER;
       return NextResponse.json({
         success: true,
         data: {
-          id: mockUser.id,
-          email: mockUser.email,
-          firstName: mockUser.firstName,
-          lastName: mockUser.lastName,
-          role: archetypeFromRoles(mockUser.roles),
-          permissions: mockUser.permissions,
-          scope: mockUser.scope,
+          id: MOCK_USER.id,
+          email: MOCK_USER.email,
+          firstName: MOCK_USER.firstName,
+          lastName: MOCK_USER.lastName,
+          role: archetypeFromMe(MOCK_USER),
+          permissions: MOCK_USER.permissions,
+          scope: MOCK_USER.scope,
           mustChangePassword: false,
         },
       });
@@ -80,7 +89,7 @@ export async function GET(req: NextRequest) {
         email: u.email,
         firstName: u.firstName,
         lastName: u.lastName,
-        role: archetypeFromRoles(u.roles),
+        role: archetypeFromMe(u),
         permissions: u.permissions || [],
         // {kind:'org'} / {kind:'team', employeeIds} / {kind:'self'} - the one
         // resolved scope value for this user's requests (see backend

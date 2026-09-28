@@ -7,6 +7,7 @@ log — no exceptions, per docs/REQUIREMENTS.md's "audit everything.\" """
 
 import secrets
 
+from django.db import transaction
 from django.db.models import Q
 from djangorestframework_camel_case.util import camelize
 from rest_framework import mixins, viewsets
@@ -27,7 +28,7 @@ from audit.mixins import AuditedModelViewSet
 from audit.service import write_audit
 from core.exceptions import Conflict
 from core.permissions import HasPermissionCode
-from core.scope import explain_permission, resolve_employee_scope
+from core.scope import explain_permission, resolve_employee_scope, user_has_permission
 from employees.models import Employee
 
 
@@ -48,17 +49,67 @@ class RoleViewSet(AuditedModelViewSet):
             )
         super().perform_destroy(instance)
 
+    @action(detail=True, methods=["post"], url_path="add-users")
+    def add_users(self, request, pk=None):
+        """Role-side membership grant (docs/MULTI-ROLE-TESTS.md F1): attach
+        users to this role without touching their other memberships.
+        Idempotent — already-members stay members. Body: {userIds: [...]}."""
+        role = self.get_object()
+        user_ids = sorted(set(request.data.get("user_ids") or []))
+        users = list(User.objects.filter(pk__in=user_ids))
+        unknown = sorted(set(user_ids) - {u.pk for u in users})
+        if unknown:
+            raise ValidationError({"user_ids": [f"Unknown user ids: {unknown}."]})
+        role.users.add(*users)
+        write_audit(
+            request.user,
+            "Role.members_added",
+            "Role",
+            role.pk,
+            {"role": role.name, "addedUserIds": [u.pk for u in users]},
+        )
+        serializer = self.get_serializer(role)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="remove-users")
+    def remove_users(self, request, pk=None):
+        """Role-side membership revoke (docs/MULTI-ROLE-TESTS.md F2): remove
+        users from this role; each user keeps every other role they hold.
+        Body: {userIds: [...]}."""
+        role = self.get_object()
+        user_ids = sorted(set(request.data.get("user_ids") or []))
+        users = list(User.objects.filter(pk__in=user_ids))
+        unknown = sorted(set(user_ids) - {u.pk for u in users})
+        if unknown:
+            raise ValidationError({"user_ids": [f"Unknown user ids: {unknown}."]})
+        role.users.remove(*users)
+        write_audit(
+            request.user,
+            "Role.members_removed",
+            "Role",
+            role.pk,
+            {"role": role.name, "removedUserIds": [u.pk for u in users]},
+        )
+        serializer = self.get_serializer(role)
+        return Response(serializer.data)
+
 
 class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     """Read-only — permission codes are declared in code by whichever module
     owns the action, not admin-creatable (docs/REQUIREMENTS.md §0). This
     endpoint exists so a role-management UI can list what's available to
-    assign."""
+    assign. Only permissions of built (`enabled`) modules are listed — a
+    reference or not-yet-enforcing module's codes stay out until it ships."""
 
     queryset = Permission.objects.all()
     serializer_class = PermissionSerializer
     permission_classes = [HasPermissionCode]
     required_permission = "roles.manage"
+
+    def get_queryset(self):
+        from core.registry import enabled_permission_codes
+
+        return super().get_queryset().filter(code__in=enabled_permission_codes())
 
 
 class RolePermissionViewSet(AuditedModelViewSet):
@@ -117,13 +168,14 @@ class UserViewSet(
     mixins.UpdateModelMixin,
     viewsets.GenericViewSet,
 ):
-    """User administration — primarily role assignment (docs/REQUIREMENTS.md
-    §0: a user has exactly one Role, assigned here) and admin-driven password
-    reset (P1-E4-03: the fallback that works regardless of the still-open
-    SSO-vs-password question). Deliberately narrow: UserSerializer exposes
-    `role` and `is_active` as the only writable fields — no email/username/
-    password changes through this endpoint. `?search=` filters by name/email
-    for an admin picking a user to act on.
+    """User administration — primarily role assignment (docs/MULTI-ROLE-TESTS.md
+    §E: a user holds zero, one, or many roles, assigned here via `role_ids`)
+    and admin-driven password reset (P1-E4-03: the fallback that works
+    regardless of the still-open SSO-vs-password question). Deliberately
+    narrow: UserSerializer exposes `role_ids` and `is_active` as the only
+    writable fields — no email/username/password changes through this
+    endpoint. `?search=` filters by name/email for an admin picking a user
+    to act on.
 
     Deliberately list/retrieve/update only — no create, no destroy. User
     creation belongs to `import_employee_directory`/`createinitialadmin`
@@ -133,7 +185,7 @@ class UserViewSet(
     narrow admin surface, and previously went entirely unaudited since
     plain ModelViewSet's create/destroy don't call perform_update."""
 
-    queryset = User.objects.select_related("role").order_by("email")
+    queryset = User.objects.prefetch_related("roles").select_related("employee").order_by("email")
     serializer_class = UserSerializer
     permission_classes = [HasPermissionCode]
     required_permission = "roles.manage"
@@ -149,45 +201,56 @@ class UserViewSet(
             )
         return queryset
 
-    def _refuse_self_lockout(self, serializer):
-        """An administrator may not change their own role or deactivate their own
-        account here: one slip would remove the only person able to fix it. Another
-        administrator does it instead."""
+    def _refuse_self_deactivation(self, serializer):
+        """An administrator may not deactivate their own account here: one
+        slip would remove the only person able to fix it. Another
+        administrator does it instead. Role changes on self are checked
+        after save (see perform_update) — M2M writes persist immediately,
+        so a pre-save check could not roll itself back."""
         instance = serializer.instance
         if instance.pk != self.request.user.pk:
             return
-        data = serializer.validated_data
-        changing_role = "role" in data and data["role"] != instance.role
-        deactivating = data.get("is_active") is False
-        if changing_role or deactivating:
+        if serializer.validated_data.get("is_active") is False:
             raise PermissionDenied(
                 "You cannot change your own role or deactivate your own account. "
                 "Ask another administrator."
             )
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        self._refuse_self_lockout(serializer)
-        before_role = serializer.instance.role
+        self._refuse_self_deactivation(serializer)
+        before_roles = sorted(serializer.instance.roles.values_list("name", flat=True))
         before_active = serializer.instance.is_active
         serializer.save()
-        after_role = serializer.instance.role
-        after_active = serializer.instance.is_active
+        instance = serializer.instance
+        # The resolver memoizes per instance — drop the cache so the
+        # self-lockout check below reads the just-saved memberships.
+        instance._scope_resolution_cache = {}
+        if (
+            instance.pk == self.request.user.pk
+            and "role_ids" in serializer.validated_data
+            and not user_has_permission(instance, "roles.manage")
+        ):
+            raise PermissionDenied(
+                "You cannot remove your own last role granting "
+                "roles.manage. Ask another administrator."
+            )
+        after_roles = sorted(instance.roles.values_list("name", flat=True))
+        after_active = instance.is_active
 
         # Two independent checks, not one blanket "something changed" log —
         # a PATCH that only flips is_active must never be recorded as a
         # role_changed event with identical before/after role values; that
         # would make an access-revocation incident invisible to review.
-        before_role_id = before_role.id if before_role else None
-        after_role_id = after_role.id if after_role else None
-        if before_role_id != after_role_id:
+        if before_roles != after_roles:
             write_audit(
                 self.request.user,
                 "User.role_changed",
                 "User",
                 serializer.instance.pk,
                 {
-                    "before": {"role": before_role.name if before_role else None},
-                    "after": {"role": after_role.name if after_role else None},
+                    "before": {"roles": before_roles},
+                    "after": {"roles": after_roles},
                 },
             )
 

@@ -60,13 +60,19 @@ export interface Role {
   archetype: Archetype;
   isActive: boolean;
   userCount: number;
+  /** Membership list (user ids) — reflects current M2M membership. */
+  users: number[];
   permissions: RoleGrant[];
 }
 
 export interface Permission {
   id: number;
   code: string;
+  /** Short row text (from the module's rbac.py; may be blank on old rows). */
+  label: string;
   description: string;
+  /** Feature area for grouping (from the module's rbac.py). */
+  group: string;
 }
 
 export interface AdminUser {
@@ -74,8 +80,11 @@ export interface AdminUser {
   email: string;
   firstName: string;
   lastName: string;
-  role: number | null;
-  roleName: string | null;
+  /** Every role membership (ordered by name). A user may hold zero, one, or many. */
+  roles: { id: number; name: string }[];
+  /** Size of the user's true effective permission set (union across active
+   * roles + overrides + baseline − denies), as computed by the backend. */
+  permissionCount: number;
   employeeCode: string | null;
   isActive: boolean;
 }
@@ -177,8 +186,12 @@ export const adminApi = {
   // people
   listUsers: (p: { search?: string; page?: number; pageSize?: number }) =>
     request<Page<AdminUser>>(`users/${qs(p)}`),
-  updateUser: (id: number, body: Partial<{ role: number; isActive: boolean }>) =>
+  updateUser: (id: number, body: Partial<{ roleIds: number[]; isActive: boolean }>) =>
     request<AdminUser>(`users/${id}/`, { method: 'PATCH', body }),
+  addUsersToRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/add-users/`, { method: 'POST', body: { userIds } }),
+  removeUsersFromRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/remove-users/`, { method: 'POST', body: { userIds } }),
   resetPassword: (id: number) =>
     request<{ temporaryPassword: string }>(`users/${id}/reset-password/`, { method: 'POST', body: {} }),
   revokeSessions: (id: number) =>

@@ -228,3 +228,52 @@ export const FingerprintIcon = strokeIcon(
     <path d="M15.5 20c.3-.7.55-1.4.75-2.2" />
   </>,
 );
+
+// Onboarding hybrid compat icons (same paths as the teammate's icon set, so
+// his ported onboarding/documents components render unchanged).
+export const DownloadIcon = base(
+  <path d="M12 3v10.586l3.293-3.293 1.414 1.414L12 17.414l-4.707-4.707 1.414-1.414L12 13.586V3h0zM5 19h14v2H5v-2z" />,
+);
+
+export const MoreVerticalIcon = base(
+  <path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z" />,
+);
+
+export const XCircleIcon = strokeIcon(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M15 9l-6 6M9 9l6 6" />
+  </>,
+);
+
+export const UploadCloudIcon = strokeIcon(
+  <>
+    <path d="M16 16l-4-4-4 4" />
+    <path d="M12 12v9" />
+    <path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3" />
+  </>,
+);
+
+export const ZoomInIcon = strokeIcon(
+  <>
+    <circle cx="11" cy="11" r="8" />
+    <path d="M21 21l-4.35-4.35" />
+    <path d="M11 8v6M8 11h6" />
+  </>,
+);
+
+export const ZoomOutIcon = strokeIcon(
+  <>
+    <circle cx="11" cy="11" r="8" />
+    <path d="M21 21l-4.35-4.35" />
+    <path d="M8 11h6" />
+  </>,
+);
+
+export const EyeIcon = base(
+  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />,
+);
+
+export const EyeOffIcon = base(
+  <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" />,
+);

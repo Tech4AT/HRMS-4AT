@@ -10,7 +10,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('employees', '0005_alter_employee_user'),
+        ('employees', '0004_org_structure_and_lifecycle'),
         ('payroll', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]

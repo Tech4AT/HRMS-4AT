@@ -10,7 +10,7 @@ import {
   type Role,
   type ScopeTier,
 } from '@/lib/admin/api';
-import { groupPermissions } from '@/lib/admin/permissionGroups';
+import { groupPermissions, permissionLabel } from '@/lib/admin/permissionGroups';
 import { Button, Notice, Select, errorText } from './ui';
 
 /**
@@ -57,11 +57,10 @@ export function RoleBuilder({
     ? groups
         .map((g) => ({
           ...g,
-          perms: g.perms.filter(
-            (p) =>
-              p.code.toLowerCase().includes(search.toLowerCase()) ||
-              p.description.toLowerCase().includes(search.toLowerCase()),
-          ),
+          perms: g.perms.filter((p) => {
+            const hay = `${p.code} ${p.label ?? ''} ${p.description}`.toLowerCase();
+            return hay.includes(search.toLowerCase());
+          }),
         }))
         .filter((g) => g.perms.length)
     : groups.filter((g) => g.label === activeGroup);
@@ -227,7 +226,18 @@ export function RoleBuilder({
                             className="mt-0.5"
                           />
                           <span>
-                            <span className="text-slate-900">{p.description || p.code}</span>
+                            <span className="text-slate-900">
+                              {permissionLabel(p)}{' '}
+                              {p.description && (
+                                <span
+                                  title={p.description}
+                                  aria-label={p.description}
+                                  className="inline-flex items-center justify-center w-4 h-4 ml-1 text-[10px] font-bold text-gray-400 border border-gray-300 rounded-full cursor-help align-middle"
+                                >
+                                  i
+                                </span>
+                              )}
+                            </span>
                             <span className="block text-xs text-gray-500 font-mono">{p.code}</span>
                           </span>
                         </label>

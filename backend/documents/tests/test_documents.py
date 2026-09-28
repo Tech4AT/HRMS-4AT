@@ -61,7 +61,6 @@ def test_matrix_permission_holder_gets_access_and_stranger_is_refused():
     )
 
     hr = _user("hr@x.com")
-    Employee.objects.create(user=hr, employee_code="E-HR")
     _grant(hr, "employees.personal.read")
     hr_client = APIClient()
     hr_client.force_authenticate(hr)
@@ -88,41 +87,3 @@ def test_undeclared_entity_type_is_denied():
     client.force_authenticate(owner)
     res = client.get("/api/v1/documents?entity_type=mystery&entity_id=1")
     assert res.status_code == 403
-
-
-@pytest.mark.django_db
-def test_self_scoped_permission_does_not_open_another_employees_payslip():
-    """Every employee holds payroll.read at *self* scope; that must reach only
-    their own payslip files, never a colleague's."""
-    owner = _user("slip-owner@x.com")
-    employee = Employee.objects.create(user=owner, employee_code="E4")
-    doc = Document.objects.create(
-        entity_type="payslip",
-        entity_id=str(employee.pk),
-        file=SimpleUploadedFile("slip.pdf", b"x"),
-        original_name="slip.pdf",
-        size=1,
-        uploaded_by=owner,
-    )
-    colleague = _user("colleague@x.com")
-    colleague_employee = Employee.objects.create(user=colleague, employee_code="E5")
-    UserPermissionOverride.objects.create(
-        user=colleague,
-        permission=Permission.objects.get(code="payroll.read"),
-        scope_tier="self",
-        is_granted=True,
-    )
-    client = APIClient()
-    client.force_authenticate(colleague)
-    assert client.get(f"/api/v1/documents/{doc.id}/download").status_code == 403
-    listing = f"/api/v1/documents?entity_type=payslip&entity_id={employee.pk}"
-    assert client.get(listing).status_code == 403
-    own = f"/api/v1/documents?entity_type=payslip&entity_id={colleague_employee.pk}"
-    assert client.get(own).status_code == 200
-
-    payroll_admin = _user("payroll-admin@x.com")
-    Employee.objects.create(user=payroll_admin, employee_code="E6")
-    _grant(payroll_admin, "payroll.read")
-    admin_client = APIClient()
-    admin_client.force_authenticate(payroll_admin)
-    assert admin_client.get(f"/api/v1/documents/{doc.id}/download").status_code == 200

@@ -196,7 +196,9 @@ def test_a_write_action_without_a_write_permission_fails_loudly(action):
 def test_read_only_holder_is_refused_a_write_action(action):
     reader = _holder_of("leave.read")
     view = _view(action)
-    view.write_permission = "leave.write"
+    # A write code nobody holds: when the real leave module is installed,
+    # "leave.write" is part of every employee's self-service baseline.
+    view.write_permission = "widget.write"
 
     assert ScopedEmployeePermission().has_permission(_request_for(reader), view) is False
 

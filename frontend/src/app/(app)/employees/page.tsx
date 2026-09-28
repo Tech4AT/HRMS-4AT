@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useRequireAccess } from '@/lib/auth/useRequireAccess';
-import { useAuth } from '@/lib/auth/useAuth';
-import EmployeeBulkUpload from '@/components/EmployeeBulkUpload';
 
 const SearchIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
@@ -48,9 +46,10 @@ function toNameMap(entities: NamedEntity[]): Record<string, string> {
 }
 
 export default function EmployeesPage() {
-  // Organization-wide employee directory — superadmin has access
+  // Organization-wide employee directory — requires org scope, not a
+  // specific role, since a team-scoped Admin would only ever see their own
+  // resolved set through the underlying API regardless.
   const { hasAccess, isLoading: permissionLoading } = useRequireAccess({ permission: 'employees.read' });
-  const { user } = useAuth();
   const [selectedTab, setSelectedTab] = useState('employees');
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [departments, setDepartments] = useState<Record<string, string>>({});
@@ -129,12 +128,6 @@ export default function EmployeesPage() {
       <div className="p-4 sm:p-8">
         {selectedTab === 'employees' && (
           <>
-            {user?.role === 'superadmin' && (
-              <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <EmployeeBulkUpload />
-              </div>
-            )}
-
             <div className="mb-6 flex items-center gap-3">
               <div className="flex-1 relative">
                 <SearchIcon />

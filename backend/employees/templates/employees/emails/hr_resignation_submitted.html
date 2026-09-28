@@ -1,0 +1,17 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Resignation submitted — {{ employee_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">{{ employee_name }} has resigned</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  <strong>{{ employee_name }}</strong> ({{ employee_code }}) submitted a resignation with a requested last working
+  day of <strong>{{ requested_last_day }}</strong>.
+</p>
+<div style="background-color:#f9fafb; border:1px solid #eef0f3; border-radius:12px; padding:16px 20px; margin:0 0 20px 0;">
+  <p style="margin:0 0 6px 0; font-size:13px; font-weight:700; color:#6b21a8; text-transform:uppercase; letter-spacing:0.4px;">Reason</p>
+  <p style="margin:0; font-size:14px; color:#374151; line-height:22px;">{{ reason|linebreaksbr }}</p>
+</div>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  Review it in the HRMS under <strong>Exits</strong> to accept (and confirm the last working day) or reject it.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">— {{ company_name }} HRMS</p>
+{% endblock %}

@@ -1,12 +1,10 @@
-from django.urls import re_path
+from django.urls import path, re_path
 
-from .views import DocumentDownloadView, DocumentListCreateView
+from .views import DocumentDetailView, DocumentFileView, DocumentListUploadView, MyDocumentsView
 
 urlpatterns = [
-    re_path(r"^documents/?$", DocumentListCreateView.as_view(), name="document-list-create"),
-    re_path(
-        r"^documents/(?P<pk>[0-9a-fA-F-]+)/download/?$",
-        DocumentDownloadView.as_view(),
-        name="document-download",
-    ),
+    re_path(r"^documents/?$", DocumentListUploadView.as_view(), name="document-list-upload"),
+    path("documents/mine", MyDocumentsView.as_view(), name="document-mine"),
+    path("documents/<int:pk>", DocumentDetailView.as_view(), name="document-detail"),
+    path("documents/<int:pk>/file", DocumentFileView.as_view(), name="document-file"),
 ]

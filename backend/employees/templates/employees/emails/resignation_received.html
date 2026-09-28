@@ -1,0 +1,12 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}We received your resignation{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Hi {{ first_name }}, we've received your resignation</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  You requested <strong>{{ requested_last_day }}</strong> as your last working day. HR will review it and confirm
+  your last working day by email. Until then you can withdraw it from your profile in the HRMS portal.
+</p>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Thanks,<br><strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

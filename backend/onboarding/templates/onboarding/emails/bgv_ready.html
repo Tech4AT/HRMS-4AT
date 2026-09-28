@@ -1,0 +1,18 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Ready for review — {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Background verification ready for review</h1>
+<p style="margin:0 0 20px 0; font-size:14px; color:#6b7280;">
+  Hi {{ hr_first_name }}, {{ employee_name }} ({{ employee_code }}) has submitted all {{ document_count }} required document{{ document_count|pluralize }}.
+</p>
+
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  Their onboarding record now shows <strong>Ready for review</strong> under Background Verification. Open it to
+  download everything in one click and record your decision.
+</p>
+
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Thanks,<br>
+  <strong>{{ company_name }} HRMS</strong>
+</p>
+{% endblock %}

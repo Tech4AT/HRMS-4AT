@@ -1,36 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BACKEND_API_URL } from '@/lib/api/backend';
 import { setAuthCookies } from '@/lib/api/proxy';
-import { MOCK_AUTH_ENABLED, MOCK_ACCESS_TOKEN, MOCK_REFRESH_TOKEN, getMockUserByEmail } from '@/lib/api/mock-auth';
+import { MOCK_AUTH_ENABLED, MOCK_ACCESS_TOKEN, MOCK_REFRESH_TOKEN, MOCK_USER } from '@/lib/api/mock-auth';
 
 export async function POST(req: NextRequest) {
   try {
     const { email, password } = await req.json();
 
     if (MOCK_AUTH_ENABLED) {
-      const mockUser = getMockUserByEmail(email || '');
       const resp = NextResponse.json({
         success: true,
         data: {
           user: {
-            id: mockUser.id,
-            email: mockUser.email,
-            firstName: mockUser.firstName,
-            lastName: mockUser.lastName,
-            role: 'employee', // real role comes from /api/auth/me
+            id: MOCK_USER.id,
+            email: email || MOCK_USER.email,
+            firstName: MOCK_USER.firstName,
+            lastName: MOCK_USER.lastName,
+            role: 'employee',
             permissions: [],
             mustChangePassword: false,
           },
         },
       });
       setAuthCookies(resp, MOCK_ACCESS_TOKEN, MOCK_REFRESH_TOKEN);
-      // Remembered so /api/auth/me returns the same per-role mock user.
-      resp.cookies.set('mockUserEmail', mockUser.email, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        path: '/',
-      });
       return resp;
     }
 

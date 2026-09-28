@@ -72,14 +72,15 @@ def choose_approver(approval):
     dedicated = DEDICATED_ROLE.get(approval.stage)
     candidates = [
         user
-        for user in User.objects.filter(is_active=True, role__isnull=False)
-        .select_related("role")
+        for user in User.objects.filter(is_active=True, roles__isnull=False)
+        .distinct()
+        .prefetch_related("roles")
         .order_by("id")
         if user.pk != getattr(preparer, "pk", None)
         and user.pk not in already
         and user_has_permission(user, code)
     ]
-    candidates.sort(key=lambda user: 0 if user.role.name == dedicated else 1)
+    candidates.sort(key=lambda user: 0 if any(r.name == dedicated for r in user.roles.all()) else 1)
     return candidates[0] if candidates else None
 
 
@@ -88,11 +89,19 @@ def approver_candidates():
     from accounts.models import User
     from core.scope import user_has_permission
 
-    users = User.objects.filter(is_active=True, role__isnull=False).select_related("role")
+    users = (
+        User.objects.filter(is_active=True, roles__isnull=False)
+        .distinct()
+        .prefetch_related("roles")
+    )
     out = {}
     for stage, code in STAGE_PERMISSION.items():
         out[stage] = [
-            {"value": u.pk, "label": f"{u.get_full_name() or u.email} ({u.role.name})"}
+            {
+                "value": u.pk,
+                "label": f"{u.get_full_name() or u.email} "
+                f"({', '.join(sorted(r.name for r in u.roles.all()))})",
+            }
             for u in users.order_by("first_name", "email")
             if user_has_permission(u, code)
         ]

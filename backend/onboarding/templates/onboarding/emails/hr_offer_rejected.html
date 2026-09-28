@@ -1,0 +1,18 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Offer declined — {{ employee_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">{{ employee_name }} declined their offer</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  <strong>{{ employee_name }}</strong> ({{ employee_code }}) has declined their offer letter.
+  Reason given: <strong>{{ reason }}</strong>.
+</p>
+<div style="background-color:#fef2f2; border:1px solid #fecaca; border-radius:12px; padding:18px 20px; margin:0 0 20px 0;">
+  <p style="margin:0; font-size:14px; color:#991b1b; line-height:22px;">
+    The onboarding workflow for this record has stopped — no preboarding tasks were created and the employee record
+    will not be activated.
+  </p>
+</div>
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  — {{ company_name }} HRMS
+</p>
+{% endblock %}

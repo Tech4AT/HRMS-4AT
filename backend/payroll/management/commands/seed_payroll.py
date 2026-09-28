@@ -421,8 +421,8 @@ class Command(BaseCommand):
                     password=password,
                     first_name=first,
                     last_name=last,
-                    role=Role.objects.get(name=role_name),
                 )
+                user.roles.add(Role.objects.get(name=role_name))
             if not Employee.objects.filter(user=user).exists():
                 department, _ = Department.objects.get_or_create(name="Corporate")
                 Employee.objects.create(
@@ -444,8 +444,8 @@ class Command(BaseCommand):
                 password=password,
                 first_name=first,
                 last_name=last,
-                role=Role.objects.get(name="Employee"),
             )
+            user.roles.add(Role.objects.get(name="Employee"))
             department, _ = Department.objects.get_or_create(name=dept)
             designation, _ = Designation.objects.get_or_create(name="Consultant")
             employee = Employee.objects.create(

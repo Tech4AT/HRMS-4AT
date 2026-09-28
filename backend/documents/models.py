@@ -15,6 +15,9 @@ def _upload_to(instance, filename):
 
 
 class Document(models.Model):
+    # UUID primary key (matches the real column and migration state 0004; the
+    # Python-side default is what makes creates work — without an explicit
+    # field Django assumes a DB-generated AutoField and inserts NULL).
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # What this file is attached to, e.g. ("payslip", <employee id>).
     entity_type = models.CharField(max_length=64)
@@ -42,6 +45,7 @@ class Document(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name="+"
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    expiry_date = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["-uploaded_at"]
