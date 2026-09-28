@@ -121,8 +121,7 @@ const navItems: NavItem[] = [
     roles: ['admin', 'superadmin'],
     children: [
       { label: 'Dashboard', href: '/org-module', roles: ['admin', 'superadmin'] },
-      { label: 'All Employees', href: '/employees', requireAnyPermission: ['employees.read', 'employees.write'] },
-      { label: 'Employee Directory', href: '/org?tab=directory', roles: ['admin', 'superadmin'] },
+      { label: 'Employee Directory', href: '/org?tab=directory', requireAnyPermission: ['employees.read', 'employees.write'] },
       { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
       { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
       { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },

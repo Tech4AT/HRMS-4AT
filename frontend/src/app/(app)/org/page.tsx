@@ -390,6 +390,7 @@ function Directory({ employees, onChanged }: { employees: Employee[]; onChanged:
   });
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState<'list' | 'gallery'>('list');
 
   const hasActiveFilter = Object.values(filters).some(Boolean) || search.trim() !== '';
 
@@ -415,15 +416,32 @@ function Directory({ employees, onChanged }: { employees: Employee[]; onChanged:
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-lg font-bold text-slate-900">Employee Directory</h2>
-        {canManage ? (
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-          >
-            Add employee
-          </button>
-        ) : null}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div role="group" aria-label="Change view" className="flex rounded-xl border border-gray-200 bg-gray-50 p-0.5">
+            {(['list', 'gallery'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                  view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                {v === 'list' ? 'List' : 'Gallery'}
+              </button>
+            ))}
+          </div>
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              Add employee
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
         <div className="flex flex-wrap items-end gap-3">
@@ -476,6 +494,31 @@ function Directory({ employees, onChanged }: { employees: Employee[]; onChanged:
         </div>
         {rows.length === 0 ? (
           <p className="px-5 py-12 text-center text-sm text-gray-500">No employees match these filters.</p>
+        ) : view === 'gallery' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+            {rows.map((e) => (
+              <div key={e.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-shadow">
+                <div className="flex items-center gap-3 mb-1">
+                  <span
+                    className={`w-10 h-10 rounded-full bg-gradient-to-br ${e.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}
+                  >
+                    {e.initials}
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-gray-900 truncate">{e.name}</h3>
+                    <p className="text-indigo-600 text-sm font-semibold truncate">{e.title}</p>
+                  </div>
+                </div>
+                <div className="space-y-1 text-sm mt-2">
+                  <p className="text-gray-600">{e.department}</p>
+                  <p className="text-gray-500">{e.location}</p>
+                  {e.email ? (
+                    <p className="text-blue-600 truncate">{e.email}</p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
