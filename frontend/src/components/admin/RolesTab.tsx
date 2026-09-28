@@ -70,6 +70,7 @@ export function RolesTab() {
   const [opError, setOpError] = useState<string | null>(null);
   const [builder, setBuilder] = useState<{ role: Role | null } | null>(null);
   const [addUsersTarget, setAddUsersTarget] = useState<Role | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<{ role: Role; user: AdminUser } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -102,6 +103,12 @@ export function RolesTab() {
     }
     return map;
   }, [users]);
+
+  // Every active employee IS an employee: the inbuilt "Employee" base role's
+  // membership is computed from the active-employee list, never persisted
+  // as role-assignment rows.
+  const activeEmployees = useMemo(() => users.filter((u) => u.isActive), [users]);
+  const isEmployeeBaseRole = (role: Role) => role.name === 'Employee';
 
   const total = permissions.length;
   const shown = roles.filter((r) => r.name.toLowerCase().includes(search.trim().toLowerCase()));
@@ -139,6 +146,7 @@ export function RolesTab() {
     setOpError(null);
     try {
       await adminApi.removeUsersFromRole(role.id, [user.id]);
+      setRemoveTarget(null);
       await load();
     } catch (e) {
       setOpError(errorText(e));
@@ -174,22 +182,24 @@ export function RolesTab() {
       {error && <Notice tone="error">{error}</Notice>}
 
       {!loading && !error && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-3 bg-gray-50 text-xs font-bold uppercase tracking-wide text-gray-500">
+        <div className="bg-white rounded-xl border border-gray-200">
+          <div className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-3 bg-gray-50 text-xs font-bold uppercase tracking-wide text-gray-500 rounded-t-xl">
             <div>User Roles</div>
             <div>Scope</div>
             <div>Permissions</div>
             <div>Users</div>
             <div>Actions</div>
           </div>
-          {shown.map((role) => {
+          {shown.map((role, idx) => {
             const scope = roleScope(role);
             const fullAccess = total > 0 && role.permissions.length === total && scope.global;
-            const roleUsers = usersByRole.get(role.id) ?? [];
+            const employeeRole = isEmployeeBaseRole(role);
+            const roleUsers = employeeRole ? activeEmployees : (usersByRole.get(role.id) ?? []);
+            const isLast = idx === shown.length - 1;
             return (
               <div
                 key={role.id}
-                className="grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-4 border-t border-gray-100 items-start"
+                className={`grid grid-cols-[1.6fr_0.9fr_1fr_2fr_auto] gap-4 px-5 py-4 border-t border-gray-100 items-start${isLast ? ' rounded-b-xl' : ''}`}
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-1">
@@ -223,7 +233,14 @@ export function RolesTab() {
                         key={u.id}
                         user={u}
                         color={AVATAR_COLORS[i % AVATAR_COLORS.length]}
-                        onRemove={() => removeUserFromRole(role, u)}
+                        onRemove={
+                          employeeRole
+                            ? undefined
+                            : () => {
+                                setOpError(null);
+                                setRemoveTarget({ role, user: u });
+                              }
+                        }
                       />
                     ))}
                     {roleUsers.length > 5 && (
@@ -251,7 +268,7 @@ export function RolesTab() {
                       />
                       <div
                         role="menu"
-                        className="absolute right-0 z-20 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                        className={`absolute right-0 z-20 w-44 bg-white border border-gray-200 rounded-lg shadow-lg py-1${isLast ? ' bottom-full mb-1' : ' mt-1'}`}
                       >
                         <button
                           role="menuitem"
@@ -263,17 +280,19 @@ export function RolesTab() {
                         >
                           Edit
                         </button>
-                        <button
-                          role="menuitem"
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          onClick={() => {
-                            setMenuId(null);
-                            setOpError(null);
-                            setAddUsersTarget(role);
-                          }}
-                        >
-                          Add users
-                        </button>
+                        {!employeeRole && (
+                          <button
+                            role="menuitem"
+                            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                            onClick={() => {
+                              setMenuId(null);
+                              setOpError(null);
+                              setAddUsersTarget(role);
+                            }}
+                          >
+                            Add users
+                          </button>
+                        )}
                         <button
                           role="menuitem"
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
@@ -358,6 +377,22 @@ export function RolesTab() {
           onConfirm={() => remove(deleteTarget)}
           onCancel={() => {
             setDeleteTarget(null);
+            setOpError(null);
+          }}
+        />
+      )}
+
+      {removeTarget && (
+        <ConfirmModal
+          title={`Remove “${`${removeTarget.user.firstName} ${removeTarget.user.lastName}`.trim() || removeTarget.user.email}” from “${removeTarget.role.name}”?`}
+          body={<p>They will lose everything this role grants immediately, even if they are signed in.</p>}
+          confirmLabel="Remove"
+          danger
+          busy={opBusy}
+          error={opError}
+          onConfirm={() => removeUserFromRole(removeTarget.role, removeTarget.user)}
+          onCancel={() => {
+            setRemoveTarget(null);
             setOpError(null);
           }}
         />
