@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 /* ------------------------------ data ------------------------------ */
@@ -515,6 +515,26 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const [deptFocus, setDeptFocus] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [zoom, setZoom] = useState(1);
+  const chartScrollRef = useRef<HTMLDivElement>(null);
+
+  const zoomIn = () => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10));
+  const zoomOut = () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10));
+  const zoomReset = () => setZoom(1);
+
+  // Ctrl+wheel zooms (native non-passive listener so preventDefault works).
+  useEffect(() => {
+    const el = chartScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else if (e.deltaY > 0) zoomOut();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -617,6 +637,38 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Zoom controls */}
+          <div
+            className="inline-flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white"
+            role="group"
+            aria-label="Chart zoom"
+          >
+            <button
+              onClick={zoomOut}
+              disabled={zoom <= 0.4}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+              title="Zoom out"
+              aria-label="Zoom out"
+            >
+              −
+            </button>
+            <button
+              onClick={zoomReset}
+              className="px-2 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200"
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={zoomIn}
+              disabled={zoom >= 2}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200 disabled:opacity-40"
+              title="Zoom in (or Ctrl+scroll)"
+              aria-label="Zoom in"
+            >
+              +
+            </button>
+          </div>
           <button
             onClick={() => setGroupByDept((v) => !v)}
             className="flex items-center gap-2 text-sm font-medium text-gray-700"
@@ -645,8 +697,11 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-x-auto">
-        <div className="flex justify-center gap-10 min-w-max">
+      <div ref={chartScrollRef} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-auto">
+        <div
+          className="flex justify-center gap-10 min-w-max"
+          style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+        >
           {roots.map((r) => (
             <OrgNode
               key={r.id}
