@@ -6,11 +6,13 @@ in lib/api/leave.ts omits the trailing slash."""
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from leave.balance_admin import LeaveBalanceAdminViewSet
 from leave.views import HolidayViewSet, LeaveBalanceViewSet, LeaveRequestViewSet, LeaveTypeViewSet
 
 router = DefaultRouter(trailing_slash=False)
 router.register("leave/types", LeaveTypeViewSet, basename="leave-type")
 router.register("leave/balance", LeaveBalanceViewSet, basename="leave-balance")
+router.register("leave/balances/admin", LeaveBalanceAdminViewSet, basename="leave-balance-admin")
 router.register("leave/requests", LeaveRequestViewSet, basename="leave-request")
 router.register("leave/holidays", HolidayViewSet, basename="leave-holiday")
 

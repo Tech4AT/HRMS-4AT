@@ -1,10 +1,12 @@
+from datetime import time
+
 import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.factories import UserFactory
 from accounts.models import Role
-from attendance.models import AttendanceRecord
+from attendance.models import AttendanceRecord, Shift
 from audit.models import AuditLog
 from employees.factories import EmployeeFactory
 
@@ -82,6 +84,24 @@ def test_check_out_computes_working_minutes():
     assert data["clock_out_time"] is not None
     assert 470 <= data["working_minutes"] <= 480  # ~8 hours, allowing for test runtime
     assert AuditLog.objects.filter(action="AttendanceRecord.checked_out").exists()
+
+
+def test_check_out_response_includes_overtime_minutes_for_a_shifted_employee():
+    client, employee = _client()
+    Shift.objects.create(
+        name="Day Shift", start_time=time(9, 0), end_time=time(17, 0)
+    ).employees.add(employee)
+    client.post(CHECK_IN, {}, format="json")
+    record = AttendanceRecord.objects.get(employee=employee, attendance_date=timezone.localdate())
+    record.clock_in_time = timezone.now() - timezone.timedelta(hours=10)
+    record.save(update_fields=["clock_in_time"])
+
+    response = client.post(CHECK_OUT, {}, format="json")
+
+    data = response.json()["data"]
+    assert "overtime_minutes" in data
+    assert data["overtime_minutes"] is not None
+    assert data["overtime_minutes"] > 0  # worked ~10h against an 8h shift
 
 
 def test_double_check_out_is_rejected():

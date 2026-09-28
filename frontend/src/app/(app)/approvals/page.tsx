@@ -275,12 +275,12 @@ function ApprovalSection({
  * lapses - there's no "raise a request, route to a manager" step, so it
  * doesn't fit the approvals engine's pending/approved/rejected/withdrawn
  * request lifecycle. It stays a bespoke section on this page rather than
- * being ported onto `requestsApi`. Sample-data only for now (no backend yet)
- * - see lib/attendance/penalisation.ts. */
+ * being ported onto `requestsApi`. An employee can't request an overturn
+ * themselves — only HR decides that, directly, from the Applied list.
+ * Sample-data only for now (no backend yet) - see lib/attendance/penalisation.ts. */
 
 const PENALISATION_FILTERS: { id: PenalisationStatus; label: string }[] = [
   { id: 'applied', label: 'Applied' },
-  { id: 'overturn_requested', label: 'Overturn Requested' },
   { id: 'overturned', label: 'Overturned' },
 ];
 
@@ -291,21 +291,15 @@ interface PenalisationSectionProps {
   rejectReason: string;
   onSetRejecting: (id: string | null) => void;
   onSetRejectReason: (v: string) => void;
-  approvingId: string | null;
-  approveRemarks: string;
-  onSetApproving: (id: string | null) => void;
-  onSetApproveRemarks: (v: string) => void;
   onDirectOverturn: (id: string) => void;
-  onApproveOverturnRequest: (id: string, remarks?: string) => void;
-  onRejectOverturnRequest: (id: string) => void;
 }
 
 /** Approvals > Penalisation. A penalisation applies automatically once the
  * regularisation grace period lapses, so there's no "pending" state to
- * review - the three filters here are just where a penalisation currently
- * stands: still Applied, an employee has asked HR to reconsider it (Overturn
- * Requested, via Leave Management), or it's been Overturned. HR can overturn
- * an Applied one directly, or approve/reject a pending request. */
+ * review - the two filters here are just where a penalisation currently
+ * stands: still Applied, or Overturned. An employee only ever sees their own
+ * penalisations read-only (Leave Management) - they can't request an
+ * overturn; only HR can, directly, from the Applied list here. */
 function PenalisationSection({
   records,
   decidingId,
@@ -313,20 +307,13 @@ function PenalisationSection({
   rejectReason,
   onSetRejecting,
   onSetRejectReason,
-  approvingId,
-  approveRemarks,
-  onSetApproving,
-  onSetApproveRemarks,
   onDirectOverturn,
-  onApproveOverturnRequest,
-  onRejectOverturnRequest,
 }: PenalisationSectionProps) {
   const [filter, setFilter] = useState<PenalisationStatus>('applied');
   const filtered = records.filter((r) => r.status === filter);
 
   const emptyLabel: Record<PenalisationStatus, string> = {
     applied: 'No applied penalisations.',
-    overturn_requested: 'No overturn requests awaiting your review.',
     overturned: 'No overturned penalisations yet.',
   };
 
@@ -368,11 +355,6 @@ function PenalisationSection({
                     <p className="text-xs text-slate-500 mt-0.5">
                       {r.reason} · {r.daysOverdue} day(s) overdue
                     </p>
-                    {filter === 'overturn_requested' ? (
-                      <p className="text-xs text-slate-600 mt-1">
-                        Requested {fmtDate(r.overturnRequestedOn!)} · {r.overturnRequestReason}
-                      </p>
-                    ) : null}
                     {filter === 'overturned' ? (
                       <p className="text-xs text-slate-400 mt-1">
                         Overturned by {r.overturnedBy}
@@ -393,57 +375,7 @@ function PenalisationSection({
                       Overturn
                     </button>
                   ) : null}
-
-                  {filter === 'overturn_requested' && rejectingId !== r.id && approvingId !== r.id ? (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={() => {
-                          onSetApproving(r.id);
-                          onSetApproveRemarks('');
-                        }}
-                        disabled={decidingId === r.id}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => {
-                          onSetRejecting(r.id);
-                          onSetRejectReason('');
-                        }}
-                        disabled={decidingId === r.id}
-                        className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                      >
-                        Reject
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
-
-                {approvingId === r.id ? (
-                  <div className="flex items-center gap-2 mt-3">
-                    <input
-                      type="text"
-                      value={approveRemarks}
-                      onChange={(e) => onSetApproveRemarks(e.target.value)}
-                      placeholder="Remarks (optional)"
-                      className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
-                    />
-                    <button
-                      onClick={() => onApproveOverturnRequest(r.id, approveRemarks.trim() || undefined)}
-                      disabled={decidingId === r.id}
-                      className="text-xs font-semibold px-3 py-2 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                    >
-                      Confirm approve
-                    </button>
-                    <button
-                      onClick={() => onSetApproving(null)}
-                      className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : null}
 
                 {rejectingId === r.id ? (
                   <div className="flex items-center gap-2 mt-3">
@@ -451,17 +383,15 @@ function PenalisationSection({
                       type="text"
                       value={rejectReason}
                       onChange={(e) => onSetRejectReason(e.target.value)}
-                      placeholder={
-                        filter === 'applied' ? 'Reason for overturning (required)' : 'Reason for rejecting this request (required)'
-                      }
+                      placeholder="Reason for overturning (required)"
                       className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
                     />
                     <button
-                      onClick={() => (filter === 'applied' ? onDirectOverturn(r.id) : onRejectOverturnRequest(r.id))}
+                      onClick={() => onDirectOverturn(r.id)}
                       disabled={decidingId === r.id || rejectReason.trim().length === 0}
                       className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                     >
-                      {filter === 'applied' ? 'Confirm overturn' : 'Confirm reject'}
+                      Confirm overturn
                     </button>
                     <button
                       onClick={() => onSetRejecting(null)}
@@ -618,9 +548,9 @@ export default function ApprovalsPage() {
   };
 
   // A penalisation applies automatically once the regularisation grace period
-  // lapses - there's no approval step. HR can overturn an Applied one
-  // directly, or approve/reject a request the employee submitted themselves
-  // from Leave Management.
+  // lapses - there's no approval step. An employee can't request an overturn
+  // themselves (Leave Management only shows them whether they've been
+  // penalised); HR overturns an Applied one directly, here.
   const directOverturnPenalisation = (id: string) => {
     updatePenalisations((prev) =>
       prev.map((p) =>
@@ -628,28 +558,6 @@ export default function ApprovalsPage() {
       ),
     );
     setActionMessage('Penalisation overturned.');
-    clearDecisionState();
-  };
-
-  const approveOverturnRequest = (id: string, remarks?: string) => {
-    updatePenalisations((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? { ...p, status: 'overturned', overturnedBy: 'You', overturnedReason: remarks || p.overturnRequestReason }
-          : p,
-      ),
-    );
-    setActionMessage('Overturn request approved — penalisation overturned.');
-    clearDecisionState();
-  };
-
-  const rejectOverturnRequest = (id: string) => {
-    updatePenalisations((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, status: 'applied', overturnRequestReason: undefined, overturnRequestedOn: undefined } : p,
-      ),
-    );
-    setActionMessage('Overturn request rejected — penalisation remains applied.');
     clearDecisionState();
   };
 
@@ -802,13 +710,7 @@ export default function ApprovalsPage() {
                 rejectReason={rejectReason}
                 onSetRejecting={setRejectingId}
                 onSetRejectReason={setRejectReason}
-                approvingId={approvingId}
-                approveRemarks={approveRemarks}
-                onSetApproving={setApprovingId}
-                onSetApproveRemarks={setApproveRemarks}
                 onDirectOverturn={directOverturnPenalisation}
-                onApproveOverturnRequest={approveOverturnRequest}
-                onRejectOverturnRequest={rejectOverturnRequest}
               />
             ) : null}
           </>

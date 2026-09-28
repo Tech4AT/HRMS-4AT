@@ -86,4 +86,6 @@ def test_employee_assigned_to_multiple_shifts_uses_the_lowest_pk_one():
     _shift(time(14, 0), time(23, 0)).employees.add(employee)  # created first, lower pk
     _shift(time(9, 30), time(18, 30)).employees.add(employee)
 
-    assert late_minutes_for(employee, _local(2026, 9, 28, 10, 45)) == 0  # on time for the 14:00 shift
+    assert (
+        late_minutes_for(employee, _local(2026, 9, 28, 10, 45)) == 0
+    )  # on time for the 14:00 shift

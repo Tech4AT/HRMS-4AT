@@ -30,7 +30,6 @@ from core.scope import resolve_employee_scope
 from . import conflicts
 from .day_facts import get_day_facts_range
 from .day_view import build_day_view
-from .timing import checkout_timing_for, late_minutes_for, shift_for
 from .models import (
     AttendanceRecord,
     AttendanceRequest,
@@ -40,6 +39,7 @@ from .models import (
     AttendanceStatus,
 )
 from .serializers import AttendanceRecordSerializer, AttendanceRequestSerializer
+from .timing import checkout_timing_for, late_minutes_for, shift_for
 
 
 def _parse_date_or_400(value, field_name):
@@ -228,7 +228,14 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
         if notes:
             record.notes = notes
         record.save(
-            update_fields=["clock_in_time", "status", "source", "late_minutes", "notes", "updated_at"]
+            update_fields=[
+                "clock_in_time",
+                "status",
+                "source",
+                "late_minutes",
+                "notes",
+                "updated_at",
+            ]
         )
         write_audit(request.user, "AttendanceRecord.checked_in", "AttendanceRecord", record.pk)
         return Response({"success": True, "data": AttendanceRecordSerializer(record).data})

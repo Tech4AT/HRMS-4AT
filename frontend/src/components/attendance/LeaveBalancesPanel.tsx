@@ -1,70 +1,99 @@
 'use client';
 
-import { useState } from 'react';
-import type { LeaveType } from '@/lib/api/leave';
-import { SAMPLE_EMPLOYEES } from '@/lib/attendance/sample-employees';
+import { useEffect, useState } from 'react';
+import { formatDays, type LeaveType } from '@/lib/api/leave';
+import {
+  leaveBalanceAdminApi,
+  LeaveBalanceAdminApiError,
+  type LeaveBalanceAdminEmployee,
+} from '@/lib/api/leaveBalanceAdmin';
 
 const ALL = 'All';
 
-/** Deterministic pseudo-random "days used" for an employee/leave-type pair,
- *  so the sample table looks populated without needing a real ledger, and
- *  without changing on every re-render. */
-function seededUsed(seed: string, max: number): number {
-  if (max <= 0) return 0;
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return h % (max + 1);
-}
-
-type Overrides = Record<string, Record<string, number>>; // employeeId -> leaveTypeId -> used
-
-/** Settings > Leave Settings > Leave Balances. There's no employee directory
- *  or balance ledger in the mock backend yet, so this uses the same small
- *  sample roster as Shifts (see sample-employees.ts) and derives a stable
- *  "used" figure per employee/leave-type - HR can override it per employee,
- *  kept in local state only. Entitlement always reflects each leave type's
- *  current annual allocation, so editing a type in the Leave Types tab is
- *  reflected here immediately. */
+/** Settings > Leave Settings > Leave Balances. Real data now: every active
+ *  employee's balance for the current financial year, lazily seeded server-side
+ *  (PLAN.md Step 7) via `leaveBalanceAdminApi`. HR edits one employee's `used`
+ *  days per leave type at a time through the same modal this always had; the
+ *  edit is now a real, audited correction (`LeaveBalance.admin_adjusted`), not
+ *  local-only state that resets on refresh. `types` still comes from the
+ *  parent (`LeaveSettingsPanel`, already loading real leave types) for the
+ *  table's column set - matched against each employee's own `balances` by
+ *  `leaveTypeId`. */
 export function LeaveBalancesPanel({ types }: { types: LeaveType[] }) {
+  const [employees, setEmployees] = useState<LeaveBalanceAdminEmployee[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const [businessUnit, setBusinessUnit] = useState(ALL);
   const [department, setDepartment] = useState(ALL);
   const [location, setLocation] = useState(ALL);
   const [search, setSearch] = useState('');
-  const [overrides, setOverrides] = useState<Overrides>({});
+
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, number>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  const businessUnits = [ALL, ...Array.from(new Set(SAMPLE_EMPLOYEES.map((e) => e.businessUnit)))];
-  const departments = [ALL, ...Array.from(new Set(SAMPLE_EMPLOYEES.map((e) => e.department)))];
-  const locations = [ALL, ...Array.from(new Set(SAMPLE_EMPLOYEES.map((e) => e.location)))];
+  const refresh = () => {
+    setLoading(true);
+    setLoadError(null);
+    leaveBalanceAdminApi
+      .list()
+      .then((data) => setEmployees(data.employees))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load leave balances'))
+      .finally(() => setLoading(false));
+  };
 
-  const filtered = SAMPLE_EMPLOYEES.filter(
+  useEffect(refresh, []);
+
+  const nonEmpty = (values: (string | null)[]) =>
+    Array.from(new Set(values.filter((v): v is string => Boolean(v))));
+
+  const businessUnits = [ALL, ...nonEmpty(employees.map((e) => e.businessUnit))];
+  const departments = [ALL, ...nonEmpty(employees.map((e) => e.department))];
+  const locations = [ALL, ...nonEmpty(employees.map((e) => e.location))];
+
+  const filtered = employees.filter(
     (e) =>
       (businessUnit === ALL || e.businessUnit === businessUnit) &&
       (department === ALL || e.department === department) &&
       (location === ALL || e.location === location) &&
-      (e.name.toLowerCase().includes(search.toLowerCase()) || e.employeeNumber.toLowerCase().includes(search.toLowerCase())),
+      (e.name.toLowerCase().includes(search.toLowerCase()) ||
+        e.employeeCode.toLowerCase().includes(search.toLowerCase())),
   );
 
-  const usedFor = (employeeId: string, type: LeaveType) =>
-    overrides[employeeId]?.[type.id] ?? seededUsed(`${employeeId}-${type.id}`, type.annual_allocation);
+  const balanceFor = (employee: LeaveBalanceAdminEmployee, type: LeaveType) =>
+    employee.balances.find((b) => b.leaveTypeId === type.id);
 
-  const startEdit = (employeeId: string) => {
+  const startEdit = (employee: LeaveBalanceAdminEmployee) => {
     const current: Record<string, number> = {};
     types.forEach((t) => {
-      current[t.id] = usedFor(employeeId, t);
+      current[t.id] = balanceFor(employee, t)?.used ?? 0;
     });
     setDraft(current);
-    setEditingEmployeeId(employeeId);
+    setSaveError(null);
+    setEditingEmployeeId(employee.id);
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingEmployeeId) return;
-    setOverrides((prev) => ({ ...prev, [editingEmployeeId]: draft }));
-    setEditingEmployeeId(null);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await leaveBalanceAdminApi.updateEmployeeBalances(
+        editingEmployeeId,
+        types.map((t) => ({ leaveTypeId: t.id, used: draft[t.id] ?? 0 })),
+      );
+      setEmployees((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      setEditingEmployeeId(null);
+    } catch (e) {
+      setSaveError(e instanceof LeaveBalanceAdminApiError ? e.message : 'Could not save this balance');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const editingEmployee = SAMPLE_EMPLOYEES.find((e) => e.id === editingEmployeeId);
+  const editingEmployee = employees.find((e) => e.id === editingEmployeeId);
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -110,49 +139,58 @@ export function LeaveBalancesPanel({ types }: { types: LeaveType[] }) {
         />
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-slate-50 border-y border-slate-200">
-            <tr>
-              {['Employee Name', 'Employee Number', 'Business Unit', 'Department', 'Location', ...types.map((t) => t.name), 'Actions'].map(
-                (h) => (
-                  <th key={h} className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase whitespace-nowrap">
-                    {h}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filtered.map((emp) => (
-              <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-5 py-4 text-sm font-medium text-slate-900 whitespace-nowrap">{emp.name}</td>
-                <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.employeeNumber}</td>
-                <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.businessUnit}</td>
-                <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.department}</td>
-                <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.location}</td>
-                {types.map((t) => (
-                  <td key={t.id} className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">
-                    {usedFor(emp.id, t)}/{t.annual_allocation} days
-                  </td>
-                ))}
-                <td className="px-5 py-4 text-sm whitespace-nowrap">
-                  <button onClick={() => startEdit(emp.id)} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 ? (
+      {loading ? (
+        <p className="px-5 pb-5 text-sm text-slate-500">Loading leave balances…</p>
+      ) : loadError ? (
+        <p className="px-5 pb-5 text-sm text-red-600">{loadError}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-slate-50 border-y border-slate-200">
               <tr>
-                <td colSpan={5 + types.length + 1} className="px-5 py-10 text-center text-sm text-slate-400">
-                  No employees match your filters.
-                </td>
+                {['Employee Name', 'Employee Number', 'Business Unit', 'Department', 'Location', ...types.map((t) => t.name), 'Actions'].map(
+                  (h) => (
+                    <th key={h} className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase whitespace-nowrap">
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filtered.map((emp) => (
+                <tr key={emp.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-5 py-4 text-sm font-medium text-slate-900 whitespace-nowrap">{emp.name}</td>
+                  <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.employeeCode}</td>
+                  <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.businessUnit ?? '—'}</td>
+                  <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.department ?? '—'}</td>
+                  <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{emp.location ?? '—'}</td>
+                  {types.map((t) => {
+                    const balance = balanceFor(emp, t);
+                    return (
+                      <td key={t.id} className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">
+                        {balance ? `${formatDays(balance.used)}/${formatDays(balance.entitled)} days` : '—'}
+                      </td>
+                    );
+                  })}
+                  <td className="px-5 py-4 text-sm whitespace-nowrap">
+                    <button onClick={() => startEdit(emp)} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={5 + types.length + 1} className="px-5 py-10 text-center text-sm text-slate-400">
+                    No employees match your filters.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {editingEmployeeId && editingEmployee ? (
         <div
@@ -173,34 +211,41 @@ export function LeaveBalancesPanel({ types }: { types: LeaveType[] }) {
               </button>
             </div>
             <div className="p-4 space-y-3">
-              {types.map((t) => (
-                <div key={t.id} className="flex items-center justify-between gap-3">
-                  <label className="text-sm text-slate-700">{t.name}</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      max={t.annual_allocation}
-                      value={draft[t.id] ?? 0}
-                      onChange={(e) =>
-                        setDraft((d) => ({ ...d, [t.id]: Math.max(0, Number(e.target.value) || 0) }))
-                      }
-                      className="w-20 text-sm border border-slate-200 rounded-lg px-2 py-1.5 text-right focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
-                    />
-                    <span className="text-xs text-slate-400 w-16">/ {t.annual_allocation} days</span>
+              {types.map((t) => {
+                const entitled = balanceFor(editingEmployee, t)?.entitled ?? t.annual_allocation;
+                return (
+                  <div key={t.id} className="flex items-center justify-between gap-3">
+                    <label className="text-sm text-slate-700">{t.name}</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        max={entitled}
+                        step={0.5}
+                        value={draft[t.id] ?? 0}
+                        onChange={(e) =>
+                          setDraft((d) => ({ ...d, [t.id]: Math.max(0, Number(e.target.value) || 0) }))
+                        }
+                        className="w-20 text-sm border border-slate-200 rounded-lg px-2 py-1.5 text-right focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                      />
+                      <span className="text-xs text-slate-400 w-16">/ {formatDays(entitled)} days</span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+              {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
             </div>
             <div className="flex items-center gap-2 p-4 border-t border-slate-200">
               <button
                 onClick={saveEdit}
-                className="text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                disabled={saving}
+                className="text-sm font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                Save
+                {saving ? 'Saving…' : 'Save'}
               </button>
               <button
                 onClick={() => setEditingEmployeeId(null)}
+                disabled={saving}
                 className="text-sm font-medium px-4 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
               >
                 Cancel

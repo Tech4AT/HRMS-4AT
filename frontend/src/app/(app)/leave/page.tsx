@@ -127,7 +127,6 @@ function fmtDate(iso: string): string {
 
 const penalisationStatusLabel: Record<PenalisationStatus, string> = {
   applied: 'Applied',
-  overturn_requested: 'Overturn Requested',
   overturned: 'Overturned',
 };
 
@@ -135,8 +134,6 @@ function penalisationStatusPillClass(status: PenalisationStatus): string {
   switch (status) {
     case 'applied':
       return 'bg-red-100 text-red-700';
-    case 'overturn_requested':
-      return 'bg-amber-100 text-amber-700';
     case 'overturned':
       return 'bg-slate-100 text-slate-600';
   }
@@ -177,29 +174,17 @@ export default function LeaveManagementPage() {
 
   // Sample-data only — penalisations aren't automated on the backend yet.
   // Shared (localStorage-backed) with Approvals > Penalisation - see
-  // lib/attendance/penalisation.ts.
-  const [penalisations, updatePenalisations] = usePenalisations();
-  const [requestingOverturnId, setRequestingOverturnId] = useState<string | null>(null);
-  const [overturnReason, setOverturnReason] = useState('');
+  // lib/attendance/penalisation.ts. Read-only here: an employee can see
+  // whether they've been penalised (and whether HR later overturned it), but
+  // can't request an overturn themselves - only HR decides that, directly
+  // from Approvals > Penalisation.
+  const [penalisations] = usePenalisations();
 
   const myName = user ? `${user.firstName} ${user.lastName}`.trim() : null;
   const myPenalisations = useMemo(
     () => (myName ? penalisations.filter((p) => p.employeeName === myName) : []),
     [penalisations, myName],
   );
-
-  const submitOverturnRequest = (id: string) => {
-    const today = new Date().toISOString().slice(0, 10);
-    updatePenalisations((prev) =>
-      prev.map((p) =>
-        p.id === id
-          ? { ...p, status: 'overturn_requested', overturnRequestReason: overturnReason.trim(), overturnRequestedOn: today }
-          : p,
-      ),
-    );
-    setRequestingOverturnId(null);
-    setOverturnReason('');
-  };
 
   const refresh = useCallback(async () => {
     const [t, b, r] = await Promise.all([
@@ -446,11 +431,6 @@ export default function LeaveManagementPage() {
                       <p className="text-xs text-slate-500 mt-0.5">
                         {p.reason} · {p.daysOverdue} day(s) overdue
                       </p>
-                      {p.status === 'overturn_requested' ? (
-                        <p className="text-xs text-slate-500 mt-1">
-                          Overturn requested {fmtDate(p.overturnRequestedOn!)} · {p.overturnRequestReason}
-                        </p>
-                      ) : null}
                       {p.status === 'overturned' ? (
                         <p className="text-xs text-slate-400 mt-1">
                           Overturned by {p.overturnedBy}
@@ -458,49 +438,12 @@ export default function LeaveManagementPage() {
                         </p>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span
-                        className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${penalisationStatusPillClass(p.status)}`}
-                      >
-                        {penalisationStatusLabel[p.status]}
-                      </span>
-                      {p.status === 'applied' && requestingOverturnId !== p.id ? (
-                        <button
-                          onClick={() => {
-                            setRequestingOverturnId(p.id);
-                            setOverturnReason('');
-                          }}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 hover:bg-slate-50"
-                        >
-                          Request overturn
-                        </button>
-                      ) : null}
-                    </div>
+                    <span
+                      className={`text-[11px] font-semibold rounded-full px-2.5 py-1 shrink-0 ${penalisationStatusPillClass(p.status)}`}
+                    >
+                      {penalisationStatusLabel[p.status]}
+                    </span>
                   </div>
-                  {requestingOverturnId === p.id ? (
-                    <div className="flex items-center gap-2 mt-3">
-                      <input
-                        type="text"
-                        value={overturnReason}
-                        onChange={(e) => setOverturnReason(e.target.value)}
-                        placeholder="Reason for requesting an overturn (required)"
-                        className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
-                      />
-                      <button
-                        onClick={() => submitOverturnRequest(p.id)}
-                        disabled={overturnReason.trim().length === 0}
-                        className="text-xs font-semibold px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                      >
-                        Submit request
-                      </button>
-                      <button
-                        onClick={() => setRequestingOverturnId(null)}
-                        className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : null}
                 </div>
               ))}
             </div>
