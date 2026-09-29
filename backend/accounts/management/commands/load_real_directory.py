@@ -24,11 +24,16 @@ from employees.models import (
     Department,
     Employee,
     JobTitle,
+    LegalEntity,
     Location,
     Position,
     Team,
 )
-from employees.org_seed import seed_derived_org_masters, seed_keka_org_details
+from employees.org_seed import (
+    REAL_LEGAL_ENTITY_NAME,
+    seed_derived_org_masters,
+    seed_keka_org_details,
+)
 
 DEMO_PW = "Welcome@123"
 ADMIN_EMAIL = "admin@hrms.local"
@@ -226,6 +231,14 @@ class Command(BaseCommand):
             # rebuilds them identically after the wipe above.
             seed_counts = seed_derived_org_masters()
             keka_counts = seed_keka_org_details()
+
+            # Legal-entity link: every loaded employee belongs to the primary
+            # entity, so the Legal Entity stats count them (was 0 before).
+            entity = LegalEntity.objects.filter(name=REAL_LEGAL_ENTITY_NAME).first()
+            if entity is None:
+                entity = LegalEntity.objects.order_by("id").first()
+            if entity is not None:
+                Employee.objects.filter(legal_entity__isnull=True).update(legal_entity=entity)
 
             # Laptop inventory from the mounted HR export (gitignored PII).
             # Skipped when the file isn't mounted — must never break boot.
