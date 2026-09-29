@@ -123,6 +123,91 @@ export interface AuditEntry {
   diff: Record<string, unknown>;
 }
 
+/** One bucket of GET org/analytics/summary/ or headcount?by=. `id` null = Unassigned. */
+export interface HeadcountBucket {
+  id: string | null;
+  name: string;
+  headcount: number;
+}
+
+/** Grade/level dimensions carry no assignments yet: the backend returns a
+ * withheld marker instead of buckets until HR assigns them. */
+export interface WithheldDimension {
+  withheld: string;
+  detail: string;
+}
+
+export function isWithheld(
+  v: HeadcountBucket[] | WithheldDimension | undefined,
+): v is WithheldDimension {
+  return !!v && !Array.isArray(v) && typeof (v as WithheldDimension).withheld === 'string';
+}
+
+export interface OrgAnalyticsSummary {
+  total_headcount: number;
+  total_records: number;
+  by_department: HeadcountBucket[];
+  by_location: HeadcountBucket[];
+  by_business_unit: HeadcountBucket[];
+  by_employment_type: HeadcountBucket[];
+  by_status: HeadcountBucket[];
+  by_grade: HeadcountBucket[] | WithheldDimension;
+  by_level: HeadcountBucket[] | WithheldDimension;
+  /** Metrics with no source data (gender, age, tenure, growth, attrition_rate)
+   * map to a human-readable reason; never charted. */
+  unavailable: Record<string, string>;
+}
+
+export type OrgHeadcountDimension =
+  | 'department'
+  | 'location'
+  | 'business_unit'
+  | 'cost_center'
+  | 'legal_entity'
+  | 'grade'
+  | 'level'
+  | 'employment_type'
+  | 'status';
+
+export const HEADCOUNT_DIMENSIONS: { value: OrgHeadcountDimension; label: string }[] = [
+  { value: 'department', label: 'Department' },
+  { value: 'location', label: 'Location' },
+  { value: 'business_unit', label: 'Business unit' },
+  { value: 'employment_type', label: 'Employment type' },
+  { value: 'status', label: 'Status' },
+];
+
+export interface HeadcountResponse {
+  dimension: string;
+  buckets: HeadcountBucket[];
+  total: number;
+}
+
+/** Category filter values accepted by GET org/employee-activity/. */
+export const EMPLOYEE_ACTIVITY_CATEGORIES = [
+  'login',
+  'profile',
+  'role',
+  'lifecycle',
+  'orgchange',
+  'structure',
+  'other',
+] as const;
+
+export type EmployeeActivityCategory = (typeof EMPLOYEE_ACTIVITY_CATEGORIES)[number];
+
+export interface EmployeeActivityEntry {
+  id: number;
+  occurredAt: string;
+  action: string;
+  category: string;
+  employee: { id: number; code: string; name: string } | null;
+  actor: { id: number; email: string; name: string; employee_id: number | null } | null;
+  summary: string;
+  entityType: string;
+  entityId: string;
+}
+
 export class ApiError extends Error {
   status: number;
   fields: Record<string, string[]>;
@@ -217,6 +302,27 @@ export const adminApi = {
     pageSize?: number;
   }) =>
     request<Page<AuditEntry>>(`audit-log/${qs(p)}`),
+
+  // organisation analytics (org.read-gated, snake_case {success, data})
+  getOrgAnalyticsSummary: () =>
+    request<OrgAnalyticsSummary>('org/analytics/summary/'),
+  getOrgHeadcount: (
+    by: OrgHeadcountDimension,
+    filters: Record<string, string | undefined> = {},
+  ) =>
+    request<HeadcountResponse>(`org/analytics/headcount/${qs({ by, ...filters })}`),
+
+  // per-employee activity feed (audit.read-gated, camelCase Page)
+  listEmployeeActivity: (p: {
+    employee?: string;
+    category?: string;
+    action?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    pageSize?: number;
+  }) =>
+    request<Page<EmployeeActivityEntry>>(`org/employee-activity/${qs(p)}`),
 };
 
 /** "Role.created" -> "Role created", "auth.login_failed" -> "Login failed". */
