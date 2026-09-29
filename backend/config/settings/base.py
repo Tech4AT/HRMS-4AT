@@ -42,6 +42,8 @@ INSTALLED_APPS = [
     # ORG module Wave 1: effective-dated org changes (promotions, transfers).
     "orgchanges",
     "policies",
+    # LMS integration: identity sync + learning projections (docs/LMS-INTEGRATION.md).
+    "lms_integration",
     # approvals, notifications, documents, and further plugin apps land here
     # as Phase 0/2/3+ scaffolding proceeds (docs/TASKS.md P0-E1-03/04).
 ]
@@ -145,6 +147,24 @@ EMAIL_PORT = env.int("EMAIL_PORT", default=587)
 EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+
+# LMS integration (lms_integration app, docs/LMS-INTEGRATION.md). Disabled by
+# default: while off, employee changes are not queued for the LMS at all, and a
+# later reconciliation run provisions whoever is missing.
+LMS_INTEGRATION_ENABLED = env.bool("LMS_INTEGRATION_ENABLED", default=False)
+# Base URL of the LMS integration endpoints (the api-gateway), e.g.
+# https://lms.example.com/api. Blank = events stay queued, nothing is sent.
+LMS_BASE_URL = env("LMS_BASE_URL", default="")
+# HMAC secrets for service-to-service calls, one per direction.
+LMS_OUTBOUND_SECRET = env("LMS_OUTBOUND_SECRET", default="")  # HRMS signs, LMS verifies
+LMS_INBOUND_SECRET = env("LMS_INBOUND_SECRET", default="")  # LMS signs, HRMS verifies
+LMS_TIMEOUT_SECONDS = env.int("LMS_TIMEOUT_SECONDS", default=10)
+LMS_MAX_ATTEMPTS = env.int("LMS_MAX_ATTEMPTS", default=8)
+# SSO hand-off: HRMS mints a short-lived token the LMS auth service exchanges
+# for its own session. Separate from the LMS's internal JWT secret on purpose.
+LMS_SSO_SECRET = env("LMS_SSO_SECRET", default="")
+LMS_SSO_LAUNCH_URL = env("LMS_SSO_LAUNCH_URL", default="")
+LMS_SSO_TOKEN_TTL_SECONDS = env.int("LMS_SSO_TOKEN_TTL_SECONDS", default=60)
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
