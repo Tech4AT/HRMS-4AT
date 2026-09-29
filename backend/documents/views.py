@@ -45,6 +45,9 @@ class MyDocumentsView(APIView):
             return Response({'success': True, 'data': []})
 
         docs = list(Document.objects.filter(employee=employee).exclude(entity_type='offer_letter').select_related('uploaded_by'))
+        # Audience applies here too: e.g. an hr_only file about this employee
+        # is not theirs to see, even though the FK points at them.
+        docs = [d for d in docs if can_access(request.user, d)]
         profile = OnboardingProfile.objects.filter(employee=employee).first()
         offer = profile.current_offer_letter if profile else None
         if offer and offer.status == OFFER_ACCEPTED and offer.document_id:
@@ -104,6 +107,12 @@ class MyDocumentsView(APIView):
                 'can_delete': can_delete,
             })
         return Response({'success': True, 'data': items})
+
+
+def _to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 
 class DocumentListUploadView(APIView):
@@ -194,6 +203,12 @@ class DocumentListUploadView(APIView):
                 {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}},
                 status=403,
             )
+        audience = request.data.get('audience') or Document.AUDIENCE_ALL_EMPLOYEES
+        if audience not in dict(Document.AUDIENCE_CHOICES):
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': f'Unknown audience "{audience}".'}},
+                status=400,
+            )
         employee_id = request.data.get('employeeId') or request.data.get('employee_id') or None
         requester_employee = getattr(request.user, 'employee', None)
         if employee_id is None:
@@ -220,6 +235,10 @@ class DocumentListUploadView(APIView):
             size=file_obj.size,
             uploaded_by=request.user,
             expiry_date=request.data.get('expiryDate') or request.data.get('expiry_date') or None,
+            audience=audience,
+            acknowledgement_required=_to_bool(
+                request.data.get('acknowledgementRequired', request.data.get('acknowledgement_required', False))
+            ),
         )
         write_audit(request.user, 'document.upload', doc.entity_type, doc.entity_id, {'documentId': str(doc.id), 'filename': doc.original_filename})
         return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data}, status=201)
