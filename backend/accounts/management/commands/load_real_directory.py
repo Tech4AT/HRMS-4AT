@@ -17,7 +17,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from accounts.models import Role, User
-from employees.models import Department, Designation, Employee, Location
+from employees.models import Department, Employee, JobTitle, Location
 
 DEMO_PW = "Welcome@123"
 ADMIN_EMAIL = "admin@hrms.local"
@@ -80,7 +80,7 @@ class Command(BaseCommand):
             # Break self-referential parent links before deleting (parent FK is PROTECT).
             Department.objects.update(parent=None)
             Department.objects.all().delete()
-            Designation.objects.all().delete()
+            JobTitle.objects.all().delete()
             Location.objects.all().delete()
 
             dep, des, loc = {}, {}, {}
@@ -117,7 +117,7 @@ class Command(BaseCommand):
                 Employee.objects.create(
                     user=u, employee_code=empno,
                     department=department(g(r, "Department"), g(r, "Sub Department")),
-                    designation=simple(des, Designation, g(r, "Job Title")),
+                    designation=simple(des, JobTitle, g(r, "Job Title")),
                     location=simple(loc, Location, g(r, "Location")),
                     status="exited" if exited else "active",
                 )

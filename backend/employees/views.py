@@ -23,10 +23,10 @@ from employees.models import (
     BusinessUnit,
     CostCenter,
     Department,
-    Designation,
     Employee,
     Grade,
     JobFamily,
+    JobTitle,
     LegalEntity,
     Level,
     Location,
@@ -50,6 +50,8 @@ from employees.serializers import (
     GradeSerializer,
     JobFamilyAdminSerializer,
     JobFamilySerializer,
+    JobTitleAdminSerializer,
+    JobTitleSerializer,
     LegalEntityAdminSerializer,
     LegalEntitySerializer,
     LevelAdminSerializer,
@@ -362,8 +364,16 @@ class DepartmentViewSet(_EmployeeReadOnlyReferenceViewSet):
 
 
 class DesignationViewSet(_EmployeeReadOnlyReferenceViewSet):
-    queryset = Designation.objects.filter(is_active=True)
+    """Historic endpoint name — serves JobTitle rows. New clients should use
+    JobTitleViewSet (`job-titles/`); both stay registered (see urls.py)."""
+
+    queryset = JobTitle.objects.filter(is_active=True)
     serializer_class = DesignationSerializer
+
+
+class JobTitleViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = JobTitle.objects.filter(is_active=True).select_related("job_family", "level")
+    serializer_class = JobTitleSerializer
 
 
 class LocationViewSet(_EmployeeReadOnlyReferenceViewSet):
@@ -494,9 +504,19 @@ class DepartmentAdminViewSet(_OrgUnitAdminViewSet):
 
 
 class DesignationAdminViewSet(_OrgUnitAdminViewSet):
-    model = Designation
+    """Historic endpoint name — manages JobTitle rows. New clients should use
+    JobTitleAdminViewSet (`org/job-titles/`); both stay registered."""
+
+    model = JobTitle
     serializer_class = DesignationAdminSerializer
-    audit_entity_type = "Designation"
+    audit_entity_type = "JobTitle"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("job_family", "level")
+
+
+class JobTitleAdminViewSet(DesignationAdminViewSet):
+    serializer_class = JobTitleAdminSerializer
 
 
 class LocationAdminViewSet(_OrgUnitAdminViewSet):

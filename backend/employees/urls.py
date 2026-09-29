@@ -16,6 +16,8 @@ from employees.views import (
     GradeViewSet,
     JobFamilyAdminViewSet,
     JobFamilyViewSet,
+    JobTitleAdminViewSet,
+    JobTitleViewSet,
     LegalEntityAdminViewSet,
     LegalEntityViewSet,
     LevelAdminViewSet,
@@ -37,7 +39,10 @@ router.register("org-directory", OrgDirectoryViewSet, basename="org-directory")
 
 # Read-only lists the frontend pages call ({success, data}, snake_case).
 router.register("departments", DepartmentViewSet, basename="department")
+# `designations` is the historic endpoint name (the model is JobTitle now);
+# `job-titles` is canonical. Both serve the same rows.
 router.register("designations", DesignationViewSet, basename="designation")
+router.register("job-titles", JobTitleViewSet, basename="jobtitle")
 router.register("locations", LocationViewSet, basename="location")
 router.register("legal-entities", LegalEntityViewSet, basename="legalentity")
 router.register("business-units", BusinessUnitViewSet, basename="businessunit")
@@ -51,6 +56,7 @@ router.register("positions", PositionViewSet, basename="position")
 # Managing the structure (org.manage; camelCase, paginated, audited).
 router.register("org/departments", DepartmentAdminViewSet, basename="org-department")
 router.register("org/designations", DesignationAdminViewSet, basename="org-designation")
+router.register("org/job-titles", JobTitleAdminViewSet, basename="org-jobtitle")
 router.register("org/locations", LocationAdminViewSet, basename="org-location")
 router.register("org/legal-entities", LegalEntityAdminViewSet, basename="org-legalentity")
 router.register("org/business-units", BusinessUnitAdminViewSet, basename="org-businessunit")

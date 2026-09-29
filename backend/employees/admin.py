@@ -5,11 +5,11 @@ from employees.models import (
     BusinessUnit,
     CostCenter,
     Department,
-    Designation,
     EducationRecord,
     Employee,
     EmployeeLetter,
     IdentityDocument,
+    JobTitle,
     LegalEntity,
     Location,
     Resignation,
@@ -26,9 +26,11 @@ class DepartmentAdmin(admin.ModelAdmin):
     list_display = ["name", "is_active"]
 
 
-@admin.register(Designation)
-class DesignationAdmin(admin.ModelAdmin):
-    list_display = ["name", "is_active"]
+@admin.register(JobTitle)
+class JobTitleAdmin(admin.ModelAdmin):
+    list_display = ["name", "code", "is_active"]
+    search_fields = ["name", "code"]
+    list_filter = ["is_active", "is_people_manager"]
 
 
 @admin.register(Employee)

@@ -2,7 +2,7 @@
 
 Department, Location, and Legal Entity are the org dimensions the scope tiers in
 core.scope dispatch on (alongside the manager self-FK, which backs the `manager`
-and `team` tiers). Designation is descriptive org data with no scope tier of its
+and `team` tiers). JobTitle (formerly Designation) is descriptive org data with no scope tier of its
 own. All four support models use is_active soft-delete — never hard-delete, since
 historical Employee records may still reference a since-retired one.
 """
@@ -69,8 +69,20 @@ class Department(SoftDeleteNamedModel):
     )
 
 
-class Designation(SoftDeleteNamedModel):
-    pass
+class JobTitle(SoftDeleteNamedModel):
+    """A named role (e.g. "Backend Engineer") — descriptive org data with no
+    scope tier of its own. Previously called Designation (renamed via an
+    aliased migration that keeps every row); the Employee/Position field
+    names (`designation`, `job_title`) and the read API shapes are unchanged
+    so existing clients keep working."""
+
+    job_family = models.ForeignKey(
+        "JobFamily", null=True, blank=True, on_delete=models.SET_NULL, related_name="job_titles"
+    )
+    level = models.ForeignKey(
+        "Level", null=True, blank=True, on_delete=models.SET_NULL, related_name="job_titles"
+    )
+    is_people_manager = models.BooleanField(default=False)
 
 
 class Location(SoftDeleteNamedModel):
@@ -224,7 +236,7 @@ class Position(models.Model):
         Department, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
     )
     job_title = models.ForeignKey(
-        Designation, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
+        JobTitle, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
     )
     level = models.ForeignKey(
         Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
@@ -296,7 +308,7 @@ class Employee(models.Model):
         Department, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
     )
     designation = models.ForeignKey(
-        Designation, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
+        JobTitle, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
     )
     location = models.ForeignKey(
         Location, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"

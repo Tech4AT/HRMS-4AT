@@ -6,7 +6,7 @@ from rest_framework import serializers
 from employees.models import (
     BusinessUnit,
     Department,
-    Designation,
+    JobTitle,
     Employee,
     Grade,
     Level,
@@ -53,7 +53,7 @@ class OrgChangeSerializer(serializers.ModelSerializer):
 # so a promotion may carry any subset of designation/level/grade.
 APPLIABLE_FIELDS = {
     OrgChange.TYPE_PROMOTION: {
-        "designation_id": ("designation", Designation),
+        "designation_id": ("designation", JobTitle),
         "level_id": ("level", Level),
         "grade_id": ("grade", Grade),
     },

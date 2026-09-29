@@ -24,10 +24,10 @@ from employees.models import (
     BusinessUnit,
     CostCenter,
     Department,
-    Designation,
     Employee,
     Grade,
     JobFamily,
+    JobTitle,
     LegalEntity,
     Level,
     Location,
@@ -57,9 +57,17 @@ class DepartmentSerializer(_NamedEntitySerializer):
         model = Department
 
 
-class DesignationSerializer(_NamedEntitySerializer):
+class JobTitleSerializer(_NamedEntitySerializer):
+    """{id, name} read shape. Kept under the historic `designations` endpoint
+    name as well, so existing clients keep working (see urls.py aliases)."""
+
     class Meta(_NamedEntitySerializer.Meta):
-        model = Designation
+        model = JobTitle
+
+
+# Historic name — the model is JobTitle now; the read field/endpoint names
+# (`designation_id`, `/designations/`) are unchanged for API stability.
+DesignationSerializer = JobTitleSerializer
 
 
 class LocationSerializer(_NamedEntitySerializer):
@@ -268,7 +276,7 @@ class EmployeeWriteSerializer(serializers.Serializer):
     employee_code = serializers.CharField(max_length=50)
     status = serializers.ChoiceField(choices=EmployeeStatus.choices, required=False)
     department_id = _reference(Department, "department")
-    designation_id = _reference(Designation, "designation")
+    designation_id = _reference(JobTitle, "designation")
     location_id = _reference(Location, "location")
     legal_entity_id = _reference(LegalEntity, "legal_entity")
     manager_id = _reference(Employee, "manager")
@@ -592,7 +600,34 @@ class _DepartmentAdmin(_OrgUnitSerializer):
 
 
 DepartmentAdminSerializer = _DepartmentAdmin
-DesignationAdminSerializer = _org_serializer(Designation)
+
+
+class JobTitleAdminSerializer(_OrgUnitSerializer):
+    job_family_name = serializers.CharField(
+        source="job_family.name", read_only=True, default=None
+    )
+    level_name = serializers.CharField(source="level.name", read_only=True, default=None)
+
+    class Meta(_OrgUnitSerializer.Meta):
+        model = JobTitle
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "job_family",
+            "job_family_name",
+            "level",
+            "level_name",
+            "is_people_manager",
+        ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "job_family_name",
+            "level_name",
+        ]
+
+
+# Historic name — the model is JobTitle now; `/org/designations/` stays
+# registered as an alias of `/org/job-titles/` (see urls.py).
+DesignationAdminSerializer = JobTitleAdminSerializer
 
 
 class LocationAdminSerializer(_OrgUnitSerializer):
