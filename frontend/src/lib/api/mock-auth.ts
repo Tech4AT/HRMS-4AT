@@ -31,6 +31,9 @@ export const MOCK_USER = {
     'calendar.manage',
     'attendance.settings.manage',
     'scope.all',
+    'help.read',
+    'help.write',
+    'help.manage',
   ],
   scope: { kind: 'org' as const },
 };

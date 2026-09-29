@@ -976,6 +976,351 @@ function handleAttendance(method: string, segments: string[], query: URLSearchPa
   return ok([]);
 }
 
+/* ============================== Help (tickets) ============================== */
+
+let ticketIdSeq = 1005;
+function nextTicketId() {
+  ticketIdSeq += 1;
+  return `tkt-${ticketIdSeq}`;
+}
+let activityIdSeq = 1;
+function nextActivityId() {
+  activityIdSeq += 1;
+  return `tact-${activityIdSeq}`;
+}
+
+let helpTickets: any[] = [
+  {
+    id: 'tkt-1001',
+    employee_id: 'mock-user-1',
+    employee_name: 'Demo User',
+    subject: 'Laptop won\'t connect to office WiFi',
+    description: 'My laptop keeps dropping the office WiFi every few minutes since this morning. Already tried restarting.',
+    category: 'IT & Access',
+    priority: 'High',
+    status: 'In progress',
+    assigned_to_id: 'emp-it-priya',
+    assigned_to_name: 'Priya IT Support',
+    admin_comment: null,
+    reopen_count: 0,
+    escalation_level: 0,
+    created_at: '2026-09-24T09:15:00.000Z',
+    updated_at: '2026-09-25T10:02:00.000Z',
+    activities: [
+      { id: 'tact-1001-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Demo User', created_at: '2026-09-24T09:15:00.000Z' },
+      { id: 'tact-1001-2', event_type: 'assigned', previous_status: null, new_status: null, comment: null, actor_name: 'Priya IT Support', created_at: '2026-09-24T14:00:00.000Z' },
+      { id: 'tact-1001-3', event_type: 'status-updated', previous_status: 'New', new_status: 'In progress', comment: 'Looking into the access point logs for your floor.', actor_name: 'Priya IT Support', created_at: '2026-09-25T10:02:00.000Z' },
+    ],
+  },
+  {
+    id: 'tkt-1002',
+    employee_id: 'mock-user-1',
+    employee_name: 'Demo User',
+    subject: 'Request for a second monitor',
+    description: 'Could I get a second monitor for my desk? It would help a lot with side-by-side work.',
+    category: 'Facilities',
+    priority: 'Low',
+    status: 'Resolved',
+    assigned_to_id: 'emp-facilities-ravi',
+    assigned_to_name: 'Ravi Facilities',
+    admin_comment: 'Monitor allocated from the spare pool, delivered to desk.',
+    reopen_count: 0,
+    escalation_level: 0,
+    created_at: '2026-09-10T08:30:00.000Z',
+    updated_at: '2026-09-12T11:45:00.000Z',
+    activities: [
+      { id: 'tact-1002-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Demo User', created_at: '2026-09-10T08:30:00.000Z' },
+      { id: 'tact-1002-2', event_type: 'status-updated', previous_status: 'New', new_status: 'Resolved', comment: 'Monitor allocated from the spare pool, delivered to desk.', actor_name: 'Ravi Facilities', created_at: '2026-09-12T11:45:00.000Z' },
+    ],
+  },
+  {
+    id: 'tkt-1003',
+    employee_id: 'mock-user-1',
+    employee_name: 'Demo User',
+    subject: 'Reimbursement query for client dinner',
+    description: 'Submitted an expense claim two weeks ago for a client dinner but haven\'t heard back on the status.',
+    category: 'Finance & Admin',
+    priority: 'Medium',
+    status: 'Closed',
+    assigned_to_id: 'emp-finance-meera',
+    assigned_to_name: 'Meera Finance',
+    admin_comment: 'Verified and processed in this month\'s payout cycle.',
+    reopen_count: 0,
+    escalation_level: 0,
+    created_at: '2026-08-20T07:00:00.000Z',
+    updated_at: '2026-08-26T13:20:00.000Z',
+    activities: [
+      { id: 'tact-1003-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Demo User', created_at: '2026-08-20T07:00:00.000Z' },
+      { id: 'tact-1003-2', event_type: 'status-updated', previous_status: 'New', new_status: 'Waiting', comment: 'Checking with payroll on the claim.', actor_name: 'Meera Finance', created_at: '2026-08-22T09:00:00.000Z' },
+      { id: 'tact-1003-3', event_type: 'status-updated', previous_status: 'Waiting', new_status: 'Closed', comment: 'Verified and processed in this month\'s payout cycle.', actor_name: 'Meera Finance', created_at: '2026-08-26T13:20:00.000Z' },
+    ],
+  },
+  // Other employees' tickets - not "mine", but visible in the Ticket Queue
+  // to a caller holding help.manage (mock-user-1 holds it + org scope).
+  {
+    id: 'tkt-2001',
+    employee_id: 'emp-aditi',
+    employee_name: 'Aditi Sharma',
+    subject: 'Cab pickup was 20 minutes late',
+    description: 'The cab for the night shift pickup arrived 20 minutes late two days in a row this week.',
+    category: 'Cab',
+    priority: 'Medium',
+    status: 'New',
+    assigned_to_id: null,
+    assigned_to_name: null,
+    admin_comment: null,
+    reopen_count: 0,
+    escalation_level: 0,
+    created_at: '2026-09-26T18:40:00.000Z',
+    updated_at: '2026-09-26T18:40:00.000Z',
+    activities: [
+      { id: 'tact-2001-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Aditi Sharma', created_at: '2026-09-26T18:40:00.000Z' },
+    ],
+  },
+  {
+    id: 'tkt-2002',
+    employee_id: 'emp-nikhil',
+    employee_name: 'Nikhil Kommineni',
+    subject: 'Can\'t access the shared finance drive',
+    description: 'Getting an access denied error when opening the shared Finance drive since yesterday\'s permissions update.',
+    category: 'IT & Access',
+    priority: 'High',
+    status: 'Waiting',
+    assigned_to_id: 'emp-it-priya',
+    assigned_to_name: 'Priya IT Support',
+    admin_comment: null,
+    reopen_count: 0,
+    escalation_level: 0,
+    created_at: '2026-09-23T11:05:00.000Z',
+    updated_at: '2026-09-24T09:30:00.000Z',
+    activities: [
+      { id: 'tact-2002-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Nikhil Kommineni', created_at: '2026-09-23T11:05:00.000Z' },
+      { id: 'tact-2002-2', event_type: 'assigned', previous_status: null, new_status: null, comment: null, actor_name: 'Priya IT Support', created_at: '2026-09-23T13:00:00.000Z' },
+      { id: 'tact-2002-3', event_type: 'status-updated', previous_status: 'New', new_status: 'Waiting', comment: 'Raised with the security team to review the new access group.', actor_name: 'Priya IT Support', created_at: '2026-09-24T09:30:00.000Z' },
+    ],
+  },
+  {
+    id: 'tkt-2003',
+    employee_id: 'emp-marcus',
+    employee_name: 'Marcus Kinsley',
+    subject: 'Pantry out of coffee filters again',
+    description: 'The 4th floor pantry has been out of coffee filters for three days.',
+    category: 'Food',
+    priority: 'Low',
+    status: 'Reopened',
+    assigned_to_id: 'emp-facilities-ravi',
+    assigned_to_name: 'Ravi Facilities',
+    admin_comment: null,
+    reopen_count: 1,
+    escalation_level: 1,
+    created_at: '2026-09-15T08:00:00.000Z',
+    updated_at: '2026-09-27T09:00:00.000Z',
+    activities: [
+      { id: 'tact-2003-1', event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Marcus Kinsley', created_at: '2026-09-15T08:00:00.000Z' },
+      { id: 'tact-2003-2', event_type: 'status-updated', previous_status: 'New', new_status: 'Closed', comment: 'Filters restocked.', actor_name: 'Ravi Facilities', created_at: '2026-09-16T10:00:00.000Z' },
+      { id: 'tact-2003-3', event_type: 'reopened', previous_status: 'Closed', new_status: 'Reopened', comment: 'Out of filters again, restock did not last.', actor_name: 'Marcus Kinsley', created_at: '2026-09-27T09:00:00.000Z' },
+    ],
+  },
+];
+
+function ticketOr404(id: string): { ticket?: any; error?: MockResult } {
+  const ticket = helpTickets.find((t) => t.id === id);
+  if (!ticket) return { error: fail('Ticket not found', 404) };
+  return { ticket };
+}
+
+const HELP_CATEGORIES = ['IT & Access', 'Facilities', 'Food', 'Cab', 'Finance & Admin', 'HR', 'Others'];
+
+// Names already used as assignees on the seed tickets above, so routing and
+// tickets stay consistent within the mock dataset (there's no mocked
+// /employees directory yet - see the dispatcher's fallback comment below).
+const KNOWN_ASSIGNEES: Record<string, string> = {
+  'emp-it-priya': 'Priya IT Support',
+  'emp-facilities-ravi': 'Ravi Facilities',
+  'emp-finance-meera': 'Meera Finance',
+  'mock-user-1': 'Demo User',
+};
+
+let categoryAssignments: Record<string, string> = {
+  'IT & Access': 'emp-it-priya',
+  Facilities: 'emp-facilities-ravi',
+  'Finance & Admin': 'emp-finance-meera',
+};
+
+function handleHelp(method: string, segments: string[], query: URLSearchParams, body: any): MockResult {
+  // segments excludes the leading "help"
+  if (method === 'GET' && segments.length === 1 && segments[0] === 'tickets') {
+    return ok(helpTickets.filter((t) => t.employee_id === 'mock-user-1'));
+  }
+  if (method === 'GET' && segments.length === 2 && segments[0] === 'tickets' && segments[1] === 'queue') {
+    let rows = helpTickets;
+    const status = query.get('status');
+    const priority = query.get('priority');
+    const category = query.get('category');
+    if (status) rows = rows.filter((t) => t.status === status);
+    if (priority) rows = rows.filter((t) => t.priority === priority);
+    if (category) rows = rows.filter((t) => t.category === category);
+    return ok(rows);
+  }
+  if (method === 'POST' && segments.length === 1 && segments[0] === 'tickets') {
+    if (!body?.subject || !String(body.subject).trim()) return fail('Subject is required');
+    if (!body?.description || !String(body.description).trim()) return fail('Description is required');
+    const now = new Date().toISOString();
+    const category = body.category ?? 'Others';
+    const routedAssigneeId = categoryAssignments[category] ?? null;
+    const activities: any[] = [
+      { id: nextActivityId(), event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Demo User', created_at: now },
+    ];
+    if (routedAssigneeId) {
+      activities.push({
+        id: nextActivityId(),
+        event_type: 'assigned',
+        previous_status: null,
+        new_status: null,
+        comment: `Auto-assigned to ${KNOWN_ASSIGNEES[routedAssigneeId] ?? routedAssigneeId} (${category})`,
+        actor_name: null,
+        created_at: now,
+      });
+    }
+    const created = {
+      id: nextTicketId(),
+      employee_id: 'mock-user-1',
+      employee_name: 'Demo User',
+      subject: String(body.subject).trim(),
+      description: String(body.description).trim(),
+      category,
+      priority: body.priority ?? 'Medium',
+      status: 'New',
+      assigned_to_id: routedAssigneeId,
+      assigned_to_name: routedAssigneeId ? (KNOWN_ASSIGNEES[routedAssigneeId] ?? routedAssigneeId) : null,
+      admin_comment: null,
+      reopen_count: 0,
+      escalation_level: 0,
+      created_at: now,
+      updated_at: now,
+      activities,
+    };
+    helpTickets = [created, ...helpTickets];
+    return ok(created, 201);
+  }
+  if (method === 'GET' && segments.length === 2 && segments[0] === 'tickets') {
+    const { ticket, error } = ticketOr404(segments[1]);
+    if (error) return error;
+    return ok(ticket);
+  }
+  if (method === 'PATCH' && segments.length === 2 && segments[0] === 'tickets') {
+    const { ticket, error } = ticketOr404(segments[1]);
+    if (error) return error;
+    if (ticket.status === 'Closed') return fail('A closed ticket cannot be edited', 400);
+    const changed: string[] = [];
+    (['subject', 'description', 'category', 'priority'] as const).forEach((field) => {
+      if (body[field] !== undefined && body[field] !== ticket[field]) {
+        ticket[field] = body[field];
+        changed.push(field);
+      }
+    });
+    ticket.updated_at = new Date().toISOString();
+    if (changed.length) {
+      ticket.activities.push({
+        id: nextActivityId(),
+        event_type: 'edited',
+        previous_status: null,
+        new_status: null,
+        comment: `Updated ${changed.join(', ')}`,
+        actor_name: 'Demo User',
+        created_at: ticket.updated_at,
+      });
+    }
+    return ok(ticket);
+  }
+  if (method === 'PATCH' && segments.length === 3 && segments[0] === 'tickets' && segments[2] === 'status') {
+    const { ticket, error } = ticketOr404(segments[1]);
+    if (error) return error;
+    if (!body?.status) return fail('Status is required');
+    const previous = ticket.status;
+    ticket.status = body.status;
+    ticket.admin_comment = body.comment ?? ticket.admin_comment;
+    ticket.updated_at = new Date().toISOString();
+    ticket.activities.push({
+      id: nextActivityId(),
+      event_type: 'status-updated',
+      previous_status: previous,
+      new_status: ticket.status,
+      comment: body.comment ?? null,
+      actor_name: 'Demo User',
+      created_at: ticket.updated_at,
+    });
+    return ok(ticket);
+  }
+  if (method === 'PATCH' && segments.length === 3 && segments[0] === 'tickets' && segments[2] === 'assign') {
+    const { ticket, error } = ticketOr404(segments[1]);
+    if (error) return error;
+    ticket.assigned_to_id = 'mock-user-1';
+    ticket.assigned_to_name = 'Demo User';
+    ticket.updated_at = new Date().toISOString();
+    ticket.activities.push({
+      id: nextActivityId(),
+      event_type: 'assigned',
+      previous_status: null,
+      new_status: null,
+      comment: null,
+      actor_name: 'Demo User',
+      created_at: ticket.updated_at,
+    });
+    return ok(ticket);
+  }
+  if (method === 'PATCH' && segments.length === 3 && segments[0] === 'tickets' && segments[2] === 'reopen') {
+    const { ticket, error } = ticketOr404(segments[1]);
+    if (error) return error;
+    if (ticket.status !== 'Closed') return fail('Only a closed ticket can be reopened', 400);
+    if (!body?.reason || String(body.reason).trim().length < 5) return fail('A reason of at least 5 characters is required');
+    ticket.status = 'Reopened';
+    ticket.reopen_count += 1;
+    ticket.escalation_level = Math.min(ticket.reopen_count, 3);
+    ticket.updated_at = new Date().toISOString();
+    ticket.activities.push({
+      id: nextActivityId(),
+      event_type: 'reopened',
+      previous_status: 'Closed',
+      new_status: 'Reopened',
+      comment: String(body.reason).trim(),
+      actor_name: 'Demo User',
+      created_at: ticket.updated_at,
+    });
+    return ok(ticket);
+  }
+  if (method === 'GET' && segments.length === 1 && segments[0] === 'category-assignments') {
+    return ok(
+      HELP_CATEGORIES.map((category) => {
+        const assigneeId = categoryAssignments[category] ?? null;
+        return {
+          category,
+          assignee_id: assigneeId,
+          assignee_name: assigneeId ? (KNOWN_ASSIGNEES[assigneeId] ?? assigneeId) : null,
+        };
+      }),
+    );
+  }
+  if (method === 'PUT' && segments.length === 1 && segments[0] === 'category-assignments') {
+    const category = body?.category;
+    if (!HELP_CATEGORIES.includes(category)) return fail('Must be a valid ticket category.');
+    const assigneeId = body?.assignee_id || null;
+    if (!assigneeId) {
+      delete categoryAssignments[category];
+      return ok({ category, assignee_id: null, assignee_name: null });
+    }
+    // Mock-only convenience: accept any id, and use the name already known
+    // for it (from a seed ticket) or fall back to the id itself.
+    categoryAssignments[category] = assigneeId;
+    return ok({ category, assignee_id: assigneeId, assignee_name: KNOWN_ASSIGNEES[assigneeId] ?? assigneeId });
+  }
+  if (method === 'GET' && segments.length === 1 && segments[0] === 'my-categories') {
+    // The mock user always holds help.manage (see mock-auth.ts) - full admin, every category.
+    return ok({ can_manage: true, categories: HELP_CATEGORIES });
+  }
+  return ok([]);
+}
+
 /* ============================== dispatcher ============================== */
 
 /**
@@ -1007,6 +1352,9 @@ export function handleMockRequest(method: string, path: string, rawBody?: string
   }
   if (root === 'calendar') {
     return handleCalendar(method, rest, query, body);
+  }
+  if (root === 'help') {
+    return handleHelp(method, rest, query, body);
   }
 
   // Every other module (employees, departments, payroll, performance,
