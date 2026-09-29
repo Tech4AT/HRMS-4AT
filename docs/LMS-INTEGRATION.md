@@ -23,7 +23,7 @@ Code: `backend/lms_integration/`.
 | Setting | Meaning |
 |---|---|
 | `LMS_INTEGRATION_ENABLED` | Queue outbound events on employee changes. Off by default; nothing is queued while off, and a later `lms_reconcile --provision` provisions anyone missed. |
-| `LMS_BASE_URL` | LMS integration base, e.g. `https://lms.example.com/employee` (gateway route to employee-services). Blank = events stay queued. |
+| `LMS_BASE_URL` | LMS gateway + `/employee`, e.g. `https://lms.example.com/employee`. Blank = events stay queued. |
 | `LMS_OUTBOUND_SECRET` | HMAC secret HRMS signs outbound calls with (LMS verifies). |
 | `LMS_INBOUND_SECRET` | HMAC secret the LMS signs its webhooks with (HRMS verifies). |
 | `LMS_SSO_SECRET`, `LMS_SSO_LAUNCH_URL`, `LMS_SSO_TOKEN_TTL_SECONDS` | SSO hand-off (below). |
@@ -119,7 +119,7 @@ events.
 | `SKILL_UPDATED` | `skill_id`*, `name`*, `proficiency`, `proficiency_score`, `evidence_refs[]` |
 
 Responses: `200` applied / duplicate, `401` bad signature, `400` malformed,
-`409` link conflict, `422` validation or unknown employee (stored as FAILED,
+`409` link conflict (HRMS side), `422` validation or unknown employee (stored as FAILED,
 visible in Sync Health).
 
 ## Signing (both directions)
@@ -159,40 +159,64 @@ The browser form-POSTs `token` to `launch_url`. The token is an HS256 JWT
 Default grants: `lms.read` Employee=self, Manager=manager, HR Admin/Auditor=all;
 `lms.launch` everyone (self); `lms.admin` HR Admin.
 
-## Changes required in the LMS
+## LMS side (branch `lms_integration` in LMS-Backend and 4AT-LMS-Frontend)
 
-None of these are made yet — they need sign-off since they touch the LMS repo.
+Built on local branches only (git worktrees `wt-lms-be`, `wt-lms-fe`), not
+pushed, `main` untouched. Everything is additive and off unless
+`HRMS_INTEGRATION_ENABLED=true`.
 
-1. **Learner identity** (`lmsng-models` `LmsUser` + a Liquibase changeset under
-   `lmsng-employee-services/.../db/changelog/feature/`): add
-   `external_employee_id VARCHAR(64) UNIQUE NULL` and `employee_code`.
-2. **Inbound endpoint** in `lmsng-employee-services`, routed by the gateway's
-   `/employee/**`: `POST /employee/integrations/hrms/events` and
-   `GET /employee/integrations/hrms/learners?page&size`
-   (`{items:[{learner_id, employee_id, status, email}], has_more}`).
-   The gateway JWT filter must skip `/employee/integrations/hrms/**`; an HMAC
-   filter verifies `X-Signature` instead. An `hrms_inbound_event(event_id UNIQUE)`
-   table makes it idempotent. Handling:
-   - `EMPLOYEE_CREATED` → find by `external_employee_id`, else by email (link),
-     else create `LmsUser` (+ Employee role, org, department/designation,
-     `LmsUserReportingManagerMapping`); return `learner_id`.
-   - `EMPLOYEE_UPDATED` / `ROLE_CHANGED` → update profile/org mapping, re-run
-     role-based program enrolment.
-   - `EMPLOYEE_STATUS_CHANGED` → `enabled=false` on `EXITED`, `true` otherwise.
-   - `ONBOARDING_STAGE_CHANGED` / `onboarding.stage` → enrol in the onboarding
-     program batch.
-3. **Outbound webhooks**: an outbox table + scheduled sender (reuse `DlqMessages`
-   for dead letters) emitting the inbound events above from learning-module
-   status (`StudentLearningModuleStatus`), assessment results
-   (`AssessmentResultHistory` / `UserExamStatus`), certificates and the existing
-   Skill Passport.
-4. **SSO**: `POST /auth/hrms-sso` in `lmsng-auth-services` — verify the token
-   (HS256, `aud`, `iss`, `exp`), reject a reused `jti` (Redis `SETNX` with TTL),
-   find the learner by `sub`, issue the normal token via
-   `JwtUtils.generateTokenFromUsername`, redirect to `4AT-LMS-Frontend`
-   `/sso?target=…`; the frontend stores it exactly as after `/signin`.
-5. **Mapping config**: which HRMS department/designation → which LMS program /
-   batch (role-based and onboarding learning paths).
+| Piece | Where |
+|---|---|
+| `lms_user.external_employee_id` (unique), `employee_code`; tables `hrms_integration_event`, `hrms_integration_cursor`, `hrms_sso_token_use` | Liquibase changeset 10170, `lmsng-employee-services/.../feature/hrms_integration.sql` |
+| `POST /employee/integrations/hrms/events` — HMAC-verified, idempotent by `event_id`; finds the learner by `external_employee_id`, else links an existing account with the same email, else creates one through the LMS's own `saveExcelUser` (bulk-upload path); then syncs name, email, code and enabled (disabled on `EXITED`). Answers `{learner_id, action}` | `HrmsIntegrationController`, `lmsngservices.integration.hrms.HrmsLearnerService` |
+| `GET /employee/integrations/hrms/learners?page&size` → `{items:[{learner_id, employee_id, email, status}], has_more}` | same |
+| LMS → HRMS events: a scanner reads new rows of linked learners (never modifies LMS flows) and queues them; an outbox delivers them signed, with backoff | `HrmsChangeScanner`, `HrmsOutbox` (employee-services only) |
+| `POST /auth/hrms-sso` (form field `token`) → verifies the HRMS token (HS256, iss/aud/exp, single-use jti), opens a session like `/signin`, redirects to `<frontend>/#/sso?session=…&target=…` | `lmsng-auth-services` `HrmsSsoController` |
+| `#/sso` page stores the session exactly as the login page does | `4AT-LMS-Frontend` `modules/sso/hrms-sso.component.ts` |
+| Gateway lets `/auth/hrms-sso` and `/employee/integrations/hrms/` through (they authenticate themselves) | `RouterValidator` |
+
+Scanner sources → events:
+
+| LMS source | Event |
+|---|---|
+| `program_lms_user_details_mapping` × `program_courses_mapping` | `LEARNING_ENROLLED` per course (program = learning path; mandatory if the program is in `HRMS_LMS_MANDATORY_PROGRAM_IDS`) |
+| `student_learning_module_status` (VIEWED) vs approved `learning_module`s of the course | `LEARNING_PROGRESS`, `COURSE_COMPLETED` at 100% |
+| `assessment_answers` (submitted) vs `assessments.qualifying_percentage` | `ASSESSMENT_COMPLETED` (passed / failed) |
+| `academy_skill_evidence` + `academy_competencies` | `SKILL_UPDATED` |
+
+A learner linked to a different employee is answered with **422
+`LINK_CONFLICT`** (not 409, which HRMS reads as "already applied").
+
+### Wiring the two sides
+
+| HRMS | LMS (env) |
+|---|---|
+| `LMS_BASE_URL=<gateway>/employee` | `HRMS_INTEGRATION_ENABLED=true` (employee + auth services) |
+| `LMS_OUTBOUND_SECRET` | `HRMS_INBOUND_SECRET` (same value) |
+| `LMS_INBOUND_SECRET` | `HRMS_OUTBOUND_SECRET` (same value) |
+| — | `HRMS_WEBHOOK_URL=<hrms>/api/v1/integrations/lms/events` |
+| `LMS_SSO_SECRET` | `HRMS_SSO_SECRET` (same value, 32+ chars) |
+| `LMS_SSO_LAUNCH_URL=<gateway>/auth/hrms-sso` | `LMS_FRONTEND_URL=<4AT-LMS-Frontend origin>` |
+| — | `HRMS_LMS_GROUP_REGISTRATION_ID`, `HRMS_LMS_ORGANIZATION_BRANCH_ID` (where new learners go), `HRMS_LMS_LEARNER_ROLE` (default `ROLE_STUDENT`), `HRMS_LMS_LEARNER_USER_TYPE` (default `STUDENT`), `HRMS_LMS_MANDATORY_PROGRAM_IDS` |
+
+### Verified
+
+Both modules compile against the LMS (Java 17, offline Maven); the Java HMAC
+matches HRMS's byte-for-byte and a PyJWT token from HRMS verifies with the
+LMS's jjwt 0.9.1; the `#/sso` page was exercised in a browser (error and
+success paths). Not yet run end to end against a live LMS: the Liquibase
+changeset has not been applied to any database.
+
+### Still open
+
+- **Which organisation / branch / role** HRMS employees become learners in
+  (the local dump has no 4AT organisation).
+- **Automatic learning-path assignment** on `ROLE_CHANGED` /
+  `ONBOARDING_STAGE_CHANGED`: the LMS records these and keeps the learner in
+  sync, but enrolling into a program is left to the LMS's existing enrolment
+  until the HRMS role → LMS program mapping is decided.
+- **Certifications**: the LMS has no issued-certificate table to read from
+  yet, so `CERTIFICATION_*` events are not produced.
 
 ## UAT mapping
 
