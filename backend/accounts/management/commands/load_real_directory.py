@@ -17,7 +17,17 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from accounts.models import Role, User
-from employees.models import Department, Employee, JobTitle, Location
+from employees.models import (
+    BusinessUnit,
+    CostCenter,
+    Department,
+    Employee,
+    JobTitle,
+    Location,
+    Position,
+    Team,
+)
+from employees.org_seed import seed_derived_org_masters
 
 DEMO_PW = "Welcome@123"
 ADMIN_EMAIL = "admin@hrms.local"
@@ -77,6 +87,13 @@ class Command(BaseCommand):
         with transaction.atomic():
             Employee.objects.all().delete()
             User.objects.all().delete()
+            # Derived masters are rebuilt from the fresh directory below, so
+            # wipe them here (employees are already gone, satisfying the
+            # PROTECT links; Team.department is PROTECT, hence before deps).
+            Team.objects.all().delete()
+            Position.objects.all().delete()
+            BusinessUnit.objects.all().delete()
+            CostCenter.objects.all().delete()
             # Break self-referential parent links before deleting (parent FK is PROTECT).
             Department.objects.update(parent=None)
             Department.objects.all().delete()
@@ -203,7 +220,13 @@ class Command(BaseCommand):
                     continue
                 give(emp, role_name)
 
+            # Derived org masters (BusinessUnit/CostCenter/Team/Position) from
+            # the real directory just loaded — idempotent, so every boot
+            # rebuilds them identically after the wipe above.
+            seed_counts = seed_derived_org_masters()
+
         self.stdout.write(self.style.SUCCESS(
-            f"Loaded {len(emps)} employees, {linked} manager links. Logins:"))
+            f"Loaded {len(emps)} employees, {linked} manager links. "
+            f"Derived masters: {seed_counts}. Logins:"))
         for em, pw, note in logins:
             self.stdout.write(f"  {em} / {pw}   [{note}]")

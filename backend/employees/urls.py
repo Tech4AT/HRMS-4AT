@@ -1,6 +1,8 @@
 from django.urls import re_path
 from rest_framework.routers import DefaultRouter
 
+from audit.views import EmployeeActivityViewSet
+from employees.analytics_views import OrgAnalyticsSummaryView, OrgHeadcountView
 from employees.views import (
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
@@ -58,6 +60,7 @@ router.register("positions", PositionViewSet, basename="position")
 
 # Managing the structure (org.manage; camelCase, paginated, audited).
 router.register("org/departments", DepartmentAdminViewSet, basename="org-department")
+router.register("org/employee-activity", EmployeeActivityViewSet, basename="org-employee-activity")
 router.register("org/designations", DesignationAdminViewSet, basename="org-designation")
 router.register("org/job-titles", JobTitleAdminViewSet, basename="org-jobtitle")
 router.register("org/locations", LocationAdminViewSet, basename="org-location")
@@ -76,5 +79,8 @@ router.register("org/hierarchy-rules", HierarchyRuleAdminViewSet, basename="org-
 urlpatterns = [
     # The frontend calls this without a trailing slash.
     re_path(r"^ess/profile/?$", EssProfileView.as_view(), name="ess-profile"),
+    # Realtime org analytics (org.read; {success, data}, snake_case).
+    re_path(r"^org/analytics/summary/?$", OrgAnalyticsSummaryView.as_view(), name="org-analytics-summary"),
+    re_path(r"^org/analytics/headcount/?$", OrgHeadcountView.as_view(), name="org-analytics-headcount"),
     *router.urls,
 ]

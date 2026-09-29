@@ -50,6 +50,21 @@ register_module(
                 default_grants={"HR Admin": ScopeTier.ALL},
             ),
             PermissionSpec(
+                "org.read",
+                "View organisation analytics and the employee activity feed "
+                "(aggregate headcounts and per-employee activity rows — no "
+                "personal details beyond what the company directory already "
+                "shows everyone)",
+                label="View organisation analytics",
+                group="Organisation",
+                default_grants={
+                    "Employee": ScopeTier.ALL,
+                    "Manager": ScopeTier.ALL,
+                    "HR Admin": ScopeTier.ALL,
+                    "Finance": ScopeTier.ALL,
+                },
+            ),
+            PermissionSpec(
                 "org.manage",
                 "Manage the organisation structure: departments, teams, job titles, "
                 "job families, levels, grades, positions, locations, "
