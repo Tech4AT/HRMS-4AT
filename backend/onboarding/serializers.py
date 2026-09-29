@@ -15,7 +15,7 @@ from employees.models import (
     BusinessUnit,
     CostCenter,
     Department,
-    Designation,
+    JobTitle,
     EducationRecord,
     Employee,
     EmployeeLetter,
@@ -625,7 +625,7 @@ class CreateNewHireSerializer(serializers.Serializer):
         source='department', queryset=Department.objects.filter(is_active=True), required=False, allow_null=True
     )
     designation_id = serializers.PrimaryKeyRelatedField(
-        source='designation', queryset=Designation.objects.filter(is_active=True), required=False, allow_null=True
+        source='designation', queryset=JobTitle.objects.filter(is_active=True), required=False, allow_null=True
     )
     manager_id = serializers.PrimaryKeyRelatedField(source='manager', queryset=Employee.objects.all(), required=False, allow_null=True)
     dotted_line_manager_id = serializers.PrimaryKeyRelatedField(source='dotted_line_manager', queryset=Employee.objects.all(), required=False, allow_null=True)

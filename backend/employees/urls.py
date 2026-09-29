@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from employees.views import (
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
+    CodeSchemeAdminViewSet,
     CostCenterAdminViewSet,
     CostCenterViewSet,
     DepartmentAdminViewSet,
@@ -14,8 +15,11 @@ from employees.views import (
     EssProfileView,
     GradeAdminViewSet,
     GradeViewSet,
+    HierarchyRuleAdminViewSet,
     JobFamilyAdminViewSet,
     JobFamilyViewSet,
+    JobTitleAdminViewSet,
+    JobTitleViewSet,
     LegalEntityAdminViewSet,
     LegalEntityViewSet,
     LevelAdminViewSet,
@@ -23,6 +27,7 @@ from employees.views import (
     LocationAdminViewSet,
     LocationViewSet,
     OrgDirectoryViewSet,
+    OrgSettingAdminViewSet,
     PositionAdminViewSet,
     PositionViewSet,
     TeamAdminViewSet,
@@ -37,7 +42,10 @@ router.register("org-directory", OrgDirectoryViewSet, basename="org-directory")
 
 # Read-only lists the frontend pages call ({success, data}, snake_case).
 router.register("departments", DepartmentViewSet, basename="department")
+# `designations` is the historic endpoint name (the model is JobTitle now);
+# `job-titles` is canonical. Both serve the same rows.
 router.register("designations", DesignationViewSet, basename="designation")
+router.register("job-titles", JobTitleViewSet, basename="jobtitle")
 router.register("locations", LocationViewSet, basename="location")
 router.register("legal-entities", LegalEntityViewSet, basename="legalentity")
 router.register("business-units", BusinessUnitViewSet, basename="businessunit")
@@ -51,6 +59,7 @@ router.register("positions", PositionViewSet, basename="position")
 # Managing the structure (org.manage; camelCase, paginated, audited).
 router.register("org/departments", DepartmentAdminViewSet, basename="org-department")
 router.register("org/designations", DesignationAdminViewSet, basename="org-designation")
+router.register("org/job-titles", JobTitleAdminViewSet, basename="org-jobtitle")
 router.register("org/locations", LocationAdminViewSet, basename="org-location")
 router.register("org/legal-entities", LegalEntityAdminViewSet, basename="org-legalentity")
 router.register("org/business-units", BusinessUnitAdminViewSet, basename="org-businessunit")
@@ -60,6 +69,9 @@ router.register("org/job-families", JobFamilyAdminViewSet, basename="org-jobfami
 router.register("org/levels", LevelAdminViewSet, basename="org-level")
 router.register("org/grades", GradeAdminViewSet, basename="org-grade")
 router.register("org/positions", PositionAdminViewSet, basename="org-position")
+router.register("org/org-settings", OrgSettingAdminViewSet, basename="org-orgsetting")
+router.register("org/code-schemes", CodeSchemeAdminViewSet, basename="org-codescheme")
+router.register("org/hierarchy-rules", HierarchyRuleAdminViewSet, basename="org-hierarchyrule")
 
 urlpatterns = [
     # The frontend calls this without a trailing slash.

@@ -10,7 +10,7 @@ from audit.models import AuditLog
 from employees.factories import DepartmentFactory, EmployeeFactory
 from employees.models import (
     Department,
-    Designation,
+    JobTitle,
     Employee,
     Grade,
     JobFamily,
@@ -94,7 +94,7 @@ def test_hr_manages_job_families_levels_grades_and_positions():
     assert grade.status_code == 201
 
     dept = DepartmentFactory(name="Platform")
-    title = Designation.objects.create(name="Backend Engineer")
+    title = JobTitle.objects.create(name="Backend Engineer")
     seat = hr.post(
         _admin_url("positions"),
         {

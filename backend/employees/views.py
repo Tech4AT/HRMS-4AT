@@ -21,21 +21,26 @@ from core.permissions import HasPermissionCode, ScopedEmployeePermission
 from core.scope import resolve_employee_scope, user_has_permission
 from employees.models import (
     BusinessUnit,
+    CodeScheme,
     CostCenter,
     Department,
-    Designation,
     Employee,
     Grade,
+    HierarchyRule,
     JobFamily,
+    JobTitle,
     LegalEntity,
     Level,
     Location,
+    OrgSetting,
     Position,
     Team,
+    validate_manager,
 )
 from employees.serializers import (
     BusinessUnitAdminSerializer,
     BusinessUnitSerializer,
+    CodeSchemeSerializer,
     CostCenterAdminSerializer,
     CostCenterSerializer,
     DepartmentAdminSerializer,
@@ -48,14 +53,18 @@ from employees.serializers import (
     EssProfileWriteSerializer,
     GradeAdminSerializer,
     GradeSerializer,
+    HierarchyRuleSerializer,
     JobFamilyAdminSerializer,
     JobFamilySerializer,
+    JobTitleAdminSerializer,
+    JobTitleSerializer,
     LegalEntityAdminSerializer,
     LegalEntitySerializer,
     LevelAdminSerializer,
     LevelSerializer,
     LocationAdminSerializer,
     LocationSerializer,
+    OrgSettingSerializer,
     PersonalSerializer,
     PositionAdminSerializer,
     PositionSerializer,
@@ -362,8 +371,16 @@ class DepartmentViewSet(_EmployeeReadOnlyReferenceViewSet):
 
 
 class DesignationViewSet(_EmployeeReadOnlyReferenceViewSet):
-    queryset = Designation.objects.filter(is_active=True)
+    """Historic endpoint name — serves JobTitle rows. New clients should use
+    JobTitleViewSet (`job-titles/`); both stay registered (see urls.py)."""
+
+    queryset = JobTitle.objects.filter(is_active=True)
     serializer_class = DesignationSerializer
+
+
+class JobTitleViewSet(_EmployeeReadOnlyReferenceViewSet):
+    queryset = JobTitle.objects.filter(is_active=True).select_related("job_family", "level")
+    serializer_class = JobTitleSerializer
 
 
 class LocationViewSet(_EmployeeReadOnlyReferenceViewSet):
@@ -436,7 +453,7 @@ class _OrgUnitAdminViewSet(AuditedModelViewSet):
     permission_classes = [HasPermissionCode]
     required_permission = "org.manage"
     model = None
-    search_on_code = False
+    search_on_code = True
 
     def get_queryset(self):
         queryset = self.model.objects.annotate(employee_count=Count("employees", distinct=True))
@@ -470,7 +487,7 @@ class DepartmentAdminViewSet(_OrgUnitAdminViewSet):
         return (
             super()
             .get_queryset()
-            .select_related("parent")
+            .select_related("parent", "head__user", "cost_center", "business_unit")
             .annotate(child_count=Count("children", distinct=True))
         )
 
@@ -494,9 +511,19 @@ class DepartmentAdminViewSet(_OrgUnitAdminViewSet):
 
 
 class DesignationAdminViewSet(_OrgUnitAdminViewSet):
-    model = Designation
+    """Historic endpoint name — manages JobTitle rows. New clients should use
+    JobTitleAdminViewSet (`org/job-titles/`); both stay registered."""
+
+    model = JobTitle
     serializer_class = DesignationAdminSerializer
-    audit_entity_type = "Designation"
+    audit_entity_type = "JobTitle"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("job_family", "level")
+
+
+class JobTitleAdminViewSet(DesignationAdminViewSet):
+    serializer_class = JobTitleAdminSerializer
 
 
 class LocationAdminViewSet(_OrgUnitAdminViewSet):
@@ -510,11 +537,40 @@ class LegalEntityAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = LegalEntityAdminSerializer
     audit_entity_type = "LegalEntity"
 
+    def get_queryset(self):
+        return super().get_queryset().select_related("registered_address")
+
 
 class BusinessUnitAdminViewSet(_OrgUnitAdminViewSet):
     model = BusinessUnit
     serializer_class = BusinessUnitAdminSerializer
     audit_entity_type = "BusinessUnit"
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related("legal_entity", "head__user", "parent")
+            .annotate(child_count=Count("children", distinct=True))
+        )
+
+    def _blockers(self, instance):
+        return instance.employees.count() + instance.children.count()
+
+    def perform_destroy(self, instance):
+        people, children = instance.employees.count(), instance.children.count()
+        if children:
+            noun = "division" if children == 1 else "divisions"
+            raise Conflict(
+                f"'{instance.name}' has {children} {noun}. "
+                "Move or remove them first, or deactivate it instead of deleting it."
+            )
+        if people:
+            raise Conflict(
+                f"{people} {'person is' if people == 1 else 'people are'} still assigned to "
+                f"'{instance.name}'. Move them first, or deactivate it instead of deleting it."
+            )
+        AuditedModelViewSet.perform_destroy(self, instance)
 
 
 class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
@@ -522,6 +578,9 @@ class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = CostCenterAdminSerializer
     audit_entity_type = "CostCenter"
     search_on_code = True
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("owner__user", "legal_entity")
 
 
 class TeamAdminViewSet(AuditedModelViewSet):
@@ -542,8 +601,8 @@ class TeamAdminViewSet(AuditedModelViewSet):
 
 
 class JobFamilyAdminViewSet(AuditedModelViewSet):
-    """Job families are referenced by nothing, so like teams they carry no
-    delete blockers. ?search= filters by name."""
+    """Job families group levels and titles — a family with levels, titles or
+    child families cannot be deleted. ?search= filters by name or code."""
 
     permission_classes = [HasPermissionCode]
     required_permission = "org.manage"
@@ -551,11 +610,22 @@ class JobFamilyAdminViewSet(AuditedModelViewSet):
     audit_entity_type = "JobFamily"
 
     def get_queryset(self):
-        queryset = JobFamily.objects.all()
+        queryset = JobFamily.objects.select_related("parent")
         search = self.request.query_params.get("search")
         if search:
-            queryset = queryset.filter(name__icontains=search)
+            queryset = queryset.filter(Q(name__icontains=search) | Q(code__icontains=search))
         return queryset.order_by("name")
+
+    def perform_destroy(self, instance):
+        titles = instance.job_titles.count() if hasattr(instance, "job_titles") else 0
+        blockers = instance.levels.count() + titles + instance.children.count()
+        if blockers:
+            noun = "assignment" if blockers == 1 else "assignments"
+            raise Conflict(
+                f"{blockers} level/title {noun} still point at "
+                f"'{instance.name}'. Move them first, or deactivate it instead of deleting it."
+            )
+        super().perform_destroy(instance)
 
 
 class _JobArchAdminViewSet(_OrgUnitAdminViewSet):
@@ -585,11 +655,17 @@ class LevelAdminViewSet(_JobArchAdminViewSet):
     serializer_class = LevelAdminSerializer
     audit_entity_type = "Level"
 
+    def get_queryset(self):
+        return super().get_queryset().select_related("job_family")
+
 
 class GradeAdminViewSet(_JobArchAdminViewSet):
     model = Grade
     serializer_class = GradeAdminSerializer
     audit_entity_type = "Grade"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("level")
 
 
 class PositionAdminViewSet(AuditedModelViewSet):
@@ -618,3 +694,95 @@ class PositionAdminViewSet(AuditedModelViewSet):
         if status:
             queryset = queryset.filter(status=status)
         return queryset.order_by("name")
+
+
+class OrgSettingAdminViewSet(AuditedModelViewSet):
+    """Org configuration key/values. ?search= filters by key or category."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = OrgSettingSerializer
+    audit_entity_type = "OrgSetting"
+
+    def get_queryset(self):
+        queryset = OrgSetting.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(key__icontains=search) | Q(category__icontains=search)
+            )
+        return queryset.order_by("key")
+
+
+class CodeSchemeAdminViewSet(AuditedModelViewSet):
+    """Code-generation schemes. ?search= filters by entity type or prefix.
+    POST .../<id>/next-code/ emits the next code and advances the counter."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = CodeSchemeSerializer
+    audit_entity_type = "CodeScheme"
+
+    def get_queryset(self):
+        queryset = CodeScheme.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(entity_type__icontains=search) | Q(prefix__icontains=search)
+            )
+        return queryset.order_by("entity_type")
+
+    @action(detail=True, methods=["post"], url_path="next-code")
+    def next_code(self, request, pk=None):
+        scheme = self.get_object()
+        try:
+            code = CodeScheme.next_code(scheme.entity_type)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"success": True, "data": {"code": code}})
+
+
+class HierarchyRuleAdminViewSet(AuditedModelViewSet):
+    """Reporting-line constraints. POST .../validate/ with
+    {employee_id, manager_id} pre-checks a reporting line without saving."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = HierarchyRuleSerializer
+    audit_entity_type = "HierarchyRule"
+
+    def get_queryset(self):
+        return HierarchyRule.objects.select_related(
+            "from_level", "from_job_title", "must_report_to_level"
+        ).order_by("id")
+
+    @action(detail=False, methods=["post"], url_path="validate")
+    def validate(self, request):
+        employee_id = request.data.get("employee_id")
+        manager_id = request.data.get("manager_id")
+        if not employee_id:
+            return Response(
+                {"success": False, "error": "employee_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            employee = Employee.objects.select_related("manager").get(pk=employee_id)
+        except Employee.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Employee not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        manager = None
+        if manager_id is not None:
+            try:
+                manager = Employee.objects.get(pk=manager_id)
+            except Employee.DoesNotExist:
+                return Response(
+                    {"success": False, "error": "Manager not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        errors = validate_manager(employee, manager)
+        return Response({"success": True, "data": {"valid": not errors, "errors": errors}})

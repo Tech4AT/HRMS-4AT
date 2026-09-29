@@ -29,7 +29,7 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from employees.models import Department, Designation, Employee, Location
+from employees.models import Department, Employee, JobTitle, Location
 
 User = get_user_model()
 
@@ -62,7 +62,7 @@ class Command(BaseCommand):
             for row in rows:
                 location = self._get_or_create(location_cache, Location, row["location"])
                 designation = self._get_or_create(
-                    designation_cache, Designation, row["designation"]
+                    designation_cache, JobTitle, row["designation"]
                 )
                 department = self._get_department(department_cache, row)
 

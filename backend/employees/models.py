@@ -2,7 +2,7 @@
 
 Department, Location, and Legal Entity are the org dimensions the scope tiers in
 core.scope dispatch on (alongside the manager self-FK, which backs the `manager`
-and `team` tiers). Designation is descriptive org data with no scope tier of its
+and `team` tiers). JobTitle (formerly Designation) is descriptive org data with no scope tier of its
 own. All four support models use is_active soft-delete — never hard-delete, since
 historical Employee records may still reference a since-retired one.
 """
@@ -16,9 +16,16 @@ from core.enums import EmployeeStatus, EmploymentType
 class SoftDeleteNamedModel(models.Model):
     """Shared shape for the small reference tables below: a unique name and an
     is_active flag instead of ever hard-deleting a row a historical Employee
-    might still point to."""
+    might still point to.
+
+    `code` is the short finance/HR code for the row (e.g. "ENG", "G3") — it is
+    indexed for lookups but deliberately NOT globally unique, since different
+    entity types (and different legal entities) may reuse the same short code.
+    `description` is free text shown on the admin screens."""
 
     name = models.CharField(max_length=150, unique=True)
+    code = models.CharField(max_length=30, blank=True, default="", db_index=True)
+    description = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -39,30 +46,128 @@ class Department(SoftDeleteNamedModel):
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
+    head = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="headed_departments",
+    )
+    cost_center = models.ForeignKey(
+        "CostCenter",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="departments",
+    )
+    business_unit = models.ForeignKey(
+        "BusinessUnit",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="departments",
+    )
 
 
-class Designation(SoftDeleteNamedModel):
-    pass
+class JobTitle(SoftDeleteNamedModel):
+    """A named role (e.g. "Backend Engineer") — descriptive org data with no
+    scope tier of its own. Previously called Designation (renamed via an
+    aliased migration that keeps every row); the Employee/Position field
+    names (`designation`, `job_title`) and the read API shapes are unchanged
+    so existing clients keep working."""
+
+    job_family = models.ForeignKey(
+        "JobFamily", null=True, blank=True, on_delete=models.SET_NULL, related_name="job_titles"
+    )
+    level = models.ForeignKey(
+        "Level", null=True, blank=True, on_delete=models.SET_NULL, related_name="job_titles"
+    )
+    is_people_manager = models.BooleanField(default=False)
 
 
 class Location(SoftDeleteNamedModel):
-    pass
+    """A place of work. Address fields are informational (payroll owns
+    statutory addresses later); `type` marks HQ vs branch vs remote."""
+
+    TYPE_HQ = "hq"
+    TYPE_BRANCH = "branch"
+    TYPE_REMOTE = "remote"
+    TYPE_CHOICES = [
+        (TYPE_HQ, "Headquarters"),
+        (TYPE_BRANCH, "Branch"),
+        (TYPE_REMOTE, "Remote"),
+    ]
+
+    address_line1 = models.CharField(max_length=200, blank=True, default="")
+    address_line2 = models.CharField(max_length=200, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    state = models.CharField(max_length=100, blank=True, default="")
+    country = models.CharField(max_length=100, blank=True, default="")
+    postal_code = models.CharField(max_length=20, blank=True, default="")
+    timezone = models.CharField(max_length=50, blank=True, default="")
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_BRANCH)
 
 
 class LegalEntity(SoftDeleteNamedModel):
     """The company operates as a single legal entity today — exactly one row is
     seeded (see employees/migrations for the seed migration) — but this is a real
-    table from day one so a second entity is a data change, not a schema change."""
+    table from day one so a second entity is a data change, not a schema change.
+
+    Tax/registration/signatory columns are deliberately NOT here — the payroll
+    module owns those (LegalEntityPayrollProfile) and links later."""
+
+    registered_address = models.ForeignKey(
+        Location, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    country = models.CharField(max_length=100, blank=True, default="")
+    currency = models.CharField(max_length=10, default="INR")
+    logo = models.URLField(max_length=500, blank=True, default="")
 
 
 class BusinessUnit(SoftDeleteNamedModel):
-    """A line of business or division that cuts across departments."""
+    """A line of business or division that cuts across departments. `parent`
+    builds the Division tier: a BusinessUnit with parent=None is a top-level
+    unit, one with a parent is a Division inside it."""
+
+    legal_entity = models.ForeignKey(
+        LegalEntity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="business_units",
+    )
+    head = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="headed_business_units",
+    )
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
+    )
 
 
 class CostCenter(SoftDeleteNamedModel):
-    """A budget line employees are charged to. `code` is the finance code."""
+    """A budget line employees are charged to. `code` comes from the shared
+    base (the finance code); `owner` is whoever approves spend against it."""
 
-    code = models.CharField(max_length=30, blank=True)
+    owner = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_cost_centers",
+    )
+    legal_entity = models.ForeignKey(
+        LegalEntity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cost_centers",
+    )
 
 
 class Team(SoftDeleteNamedModel):
@@ -80,17 +185,34 @@ class Team(SoftDeleteNamedModel):
 
 class JobFamily(SoftDeleteNamedModel):
     """A broad occupation group (e.g. Engineering, Design) — a standalone
-    reference table; positions point at level/grade, not at the family."""
+    reference table; positions point at level/grade, not at the family.
+    `parent` groups families (e.g. "Technology" -> "Engineering")."""
+
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
+    )
 
 
 class Level(SoftDeleteNamedModel):
     """A seniority rung (e.g. L1 Associate … L5 Principal) shared across
-    families. Referenced by Position and directly by Employee."""
+    families. Referenced by Position and directly by Employee. `rank` orders
+    rungs numerically (higher = more senior); `job_family` scopes the rung
+    to one family, or null when it is shared."""
+
+    rank = models.IntegerField(default=0)
+    job_family = models.ForeignKey(
+        JobFamily, null=True, blank=True, on_delete=models.SET_NULL, related_name="levels"
+    )
 
 
 class Grade(SoftDeleteNamedModel):
     """A pay band (e.g. G1 … G4). Referenced by Position and directly by
-    Employee."""
+    Employee. NO pay columns here — money lives in the payroll module, which
+    links to Grade later."""
+
+    level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="grades"
+    )
 
 
 class Position(models.Model):
@@ -114,7 +236,7 @@ class Position(models.Model):
         Department, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
     )
     job_title = models.ForeignKey(
-        Designation, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
+        JobTitle, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
     )
     level = models.ForeignKey(
         Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="positions"
@@ -186,7 +308,7 @@ class Employee(models.Model):
         Department, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
     )
     designation = models.ForeignKey(
-        Designation, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
+        JobTitle, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
     )
     location = models.ForeignKey(
         Location, null=True, blank=True, on_delete=models.PROTECT, related_name="employees"
@@ -486,6 +608,147 @@ class EmployeeLetter(models.Model):
 
     def __str__(self):
         return f"{self.title} for {self.employee_id}"
+
+class OrgSetting(models.Model):
+    """A typed key/value org configuration row (e.g. onboarding defaults,
+    directory display flags). `value` is free-form JSON; `category` groups
+    keys for the settings screens. Read/written through get_setting /
+    set_setting so callers never touch the table directly."""
+
+    key = models.CharField(max_length=100, unique=True)
+    value = models.JSONField(default=dict)
+    category = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self):
+        return self.key
+
+    @classmethod
+    def get_setting(cls, key, default=None):
+        try:
+            return cls.objects.get(key=key).value
+        except cls.DoesNotExist:
+            return default
+
+    @classmethod
+    def set_setting(cls, key, value, category=""):
+        row, _ = cls.objects.get_or_create(key=key, defaults={"value": value})
+        row.value = value
+        if category:
+            row.category = category
+        row.save(update_fields=["value", "category", "updated_at"])
+        return row
+
+
+class CodeScheme(models.Model):
+    """How auto-generated codes for one entity type look (e.g. employees,
+    departments, positions): prefix + separator + zero-padded sequence.
+    next_code() renders the current code and advances the counter atomically
+    (SELECT ... FOR UPDATE), so concurrent creators never collide."""
+
+    entity_type = models.CharField(max_length=50, unique=True)
+    prefix = models.CharField(max_length=20, blank=True, default="")
+    padding = models.IntegerField(default=4)
+    next_seq = models.IntegerField(default=1)
+    separator = models.CharField(max_length=10, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["entity_type"]
+
+    def __str__(self):
+        return f"{self.entity_type} ({self.prefix}{self.separator}...)"
+
+    def render(self, seq=None):
+        seq = self.next_seq if seq is None else seq
+        return f"{self.prefix}{self.separator}{str(seq).zfill(max(self.padding, 1))}"
+
+    @classmethod
+    def next_code(cls, entity_type):
+        """Render the next code for `entity_type` and advance its counter.
+        Creates a default scheme (prefix from the entity name) on first use."""
+        from django.db import transaction
+
+        with transaction.atomic():
+            scheme, _ = cls.objects.select_for_update().get_or_create(
+                entity_type=entity_type,
+                defaults={"prefix": entity_type[:3].upper()},
+            )
+            if not scheme.is_active:
+                raise ValueError(f"Code scheme for '{entity_type}' is inactive.")
+            code = scheme.render()
+            scheme.next_seq += 1
+            scheme.save(update_fields=["next_seq", "updated_at"])
+            return code
+
+
+class HierarchyRule(models.Model):
+    """One reporting-line constraint, e.g. "L2 Engineers must report to an
+    L3+ inside their own department". A rule applies to an employee when every
+    criterion it sets matches (an unset criterion is a wildcard); a rule with
+    no criteria set applies to everyone. Inactive rules are ignored."""
+
+    from_level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    from_job_title = models.ForeignKey(
+        JobTitle, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    must_report_to_level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    same_department = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"HierarchyRule {self.pk} ({'active' if self.active else 'inactive'})"
+
+
+def validate_manager(employee, manager=None):
+    """Check `employee`'s manager against every active HierarchyRule.
+
+    Returns a list of violation strings (empty = valid). `manager` defaults
+    to the employee's current manager; pass an explicit candidate to
+    pre-check a move. Only ids are read, so API serializers can validate a
+    change before writing it."""
+
+    manager = manager if manager is not None else getattr(employee, "manager", None)
+    employee_level = getattr(employee, "level_id", None)
+    employee_title = getattr(employee, "designation_id", None)
+    employee_dept = getattr(employee, "department_id", None)
+    errors = []
+    for rule in HierarchyRule.objects.filter(active=True).order_by("id"):
+        if rule.from_level_id is not None and rule.from_level_id != employee_level:
+            continue
+        if rule.from_job_title_id is not None and rule.from_job_title_id != employee_title:
+            continue
+        if manager is None:
+            errors.append(f"Rule {rule.pk}: this role requires a manager.")
+            continue
+        want_level = rule.must_report_to_level
+        if rule.must_report_to_level_id is not None and (
+            getattr(manager, "level_id", None) != rule.must_report_to_level_id
+        ):
+            errors.append(
+                f"Rule {rule.pk}: manager must be at level '{want_level.name}'."
+                if want_level is not None
+                else f"Rule {rule.pk}: manager is at the wrong level."
+            )
+        if rule.same_department and getattr(manager, "department_id", None) != employee_dept:
+            errors.append(f"Rule {rule.pk}: manager must be in the same department.")
+    return errors
+
 
 class Resignation(models.Model):
     STATUS_SUBMITTED = "submitted"

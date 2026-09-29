@@ -95,7 +95,7 @@ class Command(VerificationCommand):
             )
 
         kinds = {
-            "designations": ("job title", "VFY Principal Engineer"),
+            "job-titles": ("job title", "VFY Principal Engineer"),
             "locations": ("location", "VFY Pune"),
             "legal-entities": ("legal entity", "VFY Holdings Ltd"),
             "business-units": ("business unit", "VFY Cloud"),
@@ -109,7 +109,7 @@ class Command(VerificationCommand):
             )
         v.expect_status(
             "a duplicate name is refused",
-            hana.post(f"{API}/org/designations/", {"name": kinds["designations"][1]}),
+            hana.post(f"{API}/org/job-titles/", {"name": kinds["job-titles"][1]}),
             400,
         )
         coded = hana.post(f"{API}/org/cost-centers/", {"name": "VFY Finance CC", "code": "CC-9001"})
