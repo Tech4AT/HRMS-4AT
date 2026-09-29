@@ -401,7 +401,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
             <ul className="space-y-1 max-h-[560px] overflow-y-auto">
               {visible.map((u) => {
                 const isSel = selected?.id === u.id;
-                const count = cfg.employeeKey ? membersOf(directory, cfg.employeeKey, u.id).length : null;
+                const count = cfg.employeeKey ? membersOf(directory, cfg.employeeKey, u.id, units).length : null;
                 return (
                   <li key={u.id}>
                     <button

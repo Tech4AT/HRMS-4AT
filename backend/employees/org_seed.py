@@ -80,37 +80,6 @@ def _default_legal_entity():
     return LegalEntity.objects.order_by("id").first()
 
 
-def _match_employee_by_name(display_name):
-    """Match a display name (e.g. Keka's "Shashank Bala") to a real Employee.
-
-    Exact full-name match first, then the directory loader's tolerant rule:
-    same first name + surname equal-or-prefix either way. Active employees
-    only, deterministic (lowest employee code wins). Returns None when no
-    real employee matches — the caller leaves the slot null and reports it.
-    """
-    target = (display_name or "").strip().lower()
-    if not target:
-        return None
-    actives = list(
-        Employee.objects.select_related("user")
-        .exclude(status=Employee.STATUS_EXITED)
-        .order_by("employee_code")
-    )
-    for e in actives:
-        if e.user.get_full_name().strip().lower() == target:
-            return e
-    tokens = target.split()
-    for e in actives:
-        full = e.user.get_full_name().lower().split()
-        if not full or full[0] != tokens[0]:
-            continue
-        surname = (e.user.last_name or full[-1]).strip().lower()
-        last = tokens[-1]
-        if surname == last or surname.startswith(last) or last.startswith(surname):
-            return e
-    return None
-
-
 @transaction.atomic
 def seed_derived_org_masters():
     """Derive BusinessUnit/CostCenter/Team/Position rows. See module docstring.
@@ -285,7 +254,10 @@ def seed_derived_org_masters():
 # Deliberately NOT seeded here: Business Units (the reference org has none),
 # PayGrade/Band real values (never provided — EXAMPLE rows stay, flagged),
 # AuthorizedSignatory/BankDetails field values (not provided — existing rows
-# stay as-is, flagged).
+# stay as-is, flagged), and — ROSTER IS SOURCE OF TRUTH (org-reconcile
+# 2026-09-30) — the empty Keka duplicates "Sensiba-InfoSec Audit" cost
+# center and assumed-spelling "SOX/ Design & Implementation" department
+# (see DROPPED_* below): never created, deleted when empty.
 
 REAL_LEGAL_ENTITY_NAME = "4AT Consulting LLP"
 REAL_LEGAL_ENTITY = {
@@ -317,23 +289,28 @@ REAL_LOCATION = {
     "description": "Indian Office",
 }
 
-REAL_COST_CENTER_NAME = "Sensiba-InfoSec Audit"
-REAL_COST_CENTER_DESCRIPTION = "All Sensiba_InfoSec costs"
-# Cost-center head as shown in Keka. Matched against real Employee rows by
-# name (first name + surname-prefix tolerant, like the directory loader);
-# left null + reported when absent — never invented.
-COST_CENTER_HEAD_DISPLAY_NAME = "Shashank Bala"
-
 REAL_PARENT_DEPARTMENT = "Audit & Assurance"
-# "Venture Captial Audit" keeps Keka's verbatim spelling. "SOX/ Design &
-# Implementation" completes Keka's TRUNCATED "SOX/ Design & Impli…" label —
-# assumed, flagged for user confirmation (the HR roster spells it
-# "SOX/ Design & Implimentation", kept as a separate loader row).
+# "Venture Captial Audit" keeps Keka's verbatim spelling. The roster's own
+# row is "SOX/ Design & Implimentation" (kept, loader-created) — the
+# assumed-spelling "SOX/ Design & Implementation" this seed used to write was
+# an empty duplicate and is NOT created anymore (see DROPPED_* below).
+# ROSTER IS SOURCE OF TRUTH: the "Audit & Assurance" parent itself comes
+# from the roster (the loader builds it from the xlsx "Department" column),
+# so it is left alone — the frontend rolls descendant employees up into it.
 REAL_SUB_DEPARTMENTS = [
     "Venture Captial Audit",
     "InfoSec Audit",
-    "SOX/ Design & Implementation",
 ]
+
+# Empty Keka duplicates this seed used to create but must NOT anymore
+# (roster is source of truth — see org-reconcile-spec). Leftover rows are
+# deleted by seed_keka_org_details when empty; they are never recreated:
+# - "Sensiba-InfoSec Audit" cost center (duplicates the roster-derived
+#   "InfoSec Audit Cost Center", which holds the real 24 people);
+# - "SOX/ Design & Implementation" department (assumed spelling; the
+#   roster's own "SOX/ Design & Implimentation" row holds the real 8).
+DROPPED_DUPLICATE_COST_CENTER = "Sensiba-InfoSec Audit"
+DROPPED_DUPLICATE_DEPARTMENT = "SOX/ Design & Implementation"
 
 # Legacy placeholders this function used to write before the real values
 # were provided. A field holding one of these is overwritten with the real
@@ -362,11 +339,18 @@ def seed_keka_org_details():
     """Persist the real Keka org-structure values as seed data.
 
     LegalEntity '4AT Consulting LLP' (or the primary/first entity when no
-    exact-name match exists), Location 'Hyderabad', CostCenter
-    'Sensiba-InfoSec Audit' (created when absent, head matched against real
-    employees), and the three Audit & Assurance sub-departments (created
-    when absent) receive the exact values from the verified Keka capture.
-    Legacy EXAMPLE placeholders are replaced; human edits are respected.
+    exact-name match exists), Location 'Hyderabad', and the Audit &
+    Assurance sub-departments that exist in the roster (re-linked under the
+    roster-built parent when parent-less) receive the exact values from the
+    verified Keka capture. Legacy EXAMPLE placeholders are replaced; human
+    edits are respected.
+
+    ROSTER IS SOURCE OF TRUTH: the empty Keka duplicates
+    ("Sensiba-InfoSec Audit" cost center, assumed-spelling "SOX/ Design &
+    Implementation" department) are never created here; leftover rows are
+    deleted when empty (never when they hold people). Fresh boots cannot
+    recreate them — the loader wipes these tables and this seed no longer
+    writes these names.
 
     Returns the number of rows/fields *created or filled* per key
     (re-runs return zeros).
@@ -374,8 +358,8 @@ def seed_keka_org_details():
     created = {
         "legal_entity_backfilled": 0,
         "location_backfilled": 0,
-        "cost_center": 0,
-        "cost_center_head": 0,
+        "duplicate_cost_center_removed": 0,
+        "duplicate_department_removed": 0,
         "sub_department": 0,
         "authorized_signatory": 0,
         "bank_account": 0,
@@ -417,23 +401,18 @@ def seed_keka_org_details():
             location.save(update_fields=[*loc_fills, "updated_at"])
             created["location_backfilled"] += 1
 
-    cost_center, cc_created = CostCenter.objects.get_or_create(
-        name=REAL_COST_CENTER_NAME, defaults={"legal_entity": entity}
-    )
-    created["cost_center"] += int(cc_created)
-    if not cost_center.description:
-        cost_center.description = REAL_COST_CENTER_DESCRIPTION
-        cost_center.save(update_fields=["description", "updated_at"])
-    if cost_center.legal_entity_id is None:
-        cost_center.legal_entity = entity
-        cost_center.save(update_fields=["legal_entity", "updated_at"])
-    # email_alias is blank in Keka — left unchanged, never fabricated.
-    if cost_center.owner_id is None:
-        head = _match_employee_by_name(COST_CENTER_HEAD_DISPLAY_NAME)
-        if head is not None:
-            cost_center.owner = head
-            cost_center.save(update_fields=["owner", "updated_at"])
-            created["cost_center_head"] += 1
+    # ROSTER IS SOURCE OF TRUTH — drop the empty Keka duplicates, never
+    # recreate them. Deletion is empty-only (no employees; departments also
+    # no children), so real data can never be dropped. The loader wipes
+    # these tables on every boot, so normally there is nothing to delete.
+    for cc in CostCenter.objects.filter(name=DROPPED_DUPLICATE_COST_CENTER):
+        if cc.employees.count() == 0:
+            cc.delete()
+            created["duplicate_cost_center_removed"] += 1
+    for dept in Department.objects.filter(name=DROPPED_DUPLICATE_DEPARTMENT):
+        if dept.employees.count() == 0 and dept.children.count() == 0:
+            dept.delete()
+            created["duplicate_department_removed"] += 1
 
     parent = Department.objects.filter(name=REAL_PARENT_DEPARTMENT).first()
     if parent is not None:

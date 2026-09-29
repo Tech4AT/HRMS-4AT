@@ -600,8 +600,40 @@ export function fullName(e: Pick<OrgEmployee, 'first_name' | 'last_name'>): stri
   return `${e.first_name ?? ''} ${e.last_name ?? ''}`.trim() || '—';
 }
 
-export function membersOf(employees: OrgEmployee[], key: EmployeeKey | null, id: string): OrgEmployee[] {
+export function membersOf(
+  employees: OrgEmployee[],
+  key: EmployeeKey | null,
+  id: string,
+  allUnits?: UnitItem[],
+): OrgEmployee[] {
   if (!key) return [];
+  if (key === 'department_id' && allUnits) {
+    // Departments nest (roster "Sub Department" rows carry the parent FK, so
+    // a parent department holds zero DIRECT employees). Roll up ALL
+    // descendant employees recursively: the target id plus every id under
+    // it. Other masters (cost center, location, …) are flat — exact match.
+    // Cycle-safe: each id is visited once.
+    const childrenOf = new Map<string, string[]>();
+    for (const u of allUnits) {
+      if (u.parentId) {
+        const list = childrenOf.get(u.parentId) ?? [];
+        list.push(u.id);
+        childrenOf.set(u.parentId, list);
+      }
+    }
+    const ids = new Set<string>([id]);
+    const stack = [id];
+    while (stack.length > 0) {
+      const current = stack.pop() as string;
+      for (const child of childrenOf.get(current) ?? []) {
+        if (!ids.has(child)) {
+          ids.add(child);
+          stack.push(child);
+        }
+      }
+    }
+    return employees.filter((e) => ids.has(String((e as unknown as Record<string, unknown>)[key] ?? '')));
+  }
   // level_id / grade_id ride on the directory serializer but are not in the
   // shared OrgEmployee interface — read through a record view instead.
   return employees.filter((e) => String((e as unknown as Record<string, unknown>)[key] ?? '') === id);
