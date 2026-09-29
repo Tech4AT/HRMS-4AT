@@ -838,6 +838,52 @@ function ancestorsOf(employees: Employee[], id: string): string[] {
   return chain;
 }
 
+/**
+ * The default collapsed set: every manager at depth >= 1 (i.e. below the top
+ * level) starts collapsed, so the first paint shows roots + their direct
+ * reports only instead of all 146 people sprawling horizontally without
+ * bound. The user expands subtrees (or Expand all) from there. Depth is
+ * measured from the visible roots (no manager, or manager outside the list).
+ */
+function defaultCollapsedFor(list: Employee[]): Set<string> {
+  const ids = new Set(list.map((e) => e.id));
+  const childCount = new Map<string, number>();
+  for (const e of list) {
+    if (e.managerId && ids.has(e.managerId)) {
+      childCount.set(e.managerId, (childCount.get(e.managerId) ?? 0) + 1);
+    }
+  }
+  const depth = new Map<string, number>();
+  const queue: { id: string; d: number }[] = list
+    .filter((e) => !e.managerId || !ids.has(e.managerId))
+    .map((e) => ({ id: e.id, d: 0 }));
+  for (let i = 0; i < queue.length; i++) {
+    const { id, d } = queue[i];
+    if (depth.has(id)) continue;
+    depth.set(id, d);
+    for (const e of list) {
+      if (e.managerId === id) queue.push({ id: e.id, d: d + 1 });
+    }
+  }
+  const collapsed = new Set<string>();
+  for (const e of list) {
+    if ((depth.get(e.id) ?? 0) >= 1 && (childCount.get(e.id) ?? 0) > 0) {
+      collapsed.add(e.id);
+    }
+  }
+  return collapsed;
+}
+
+/** Every manager in the list, whatever their depth — the fully folded view. */
+function allCollapsedFor(list: Employee[]): Set<string> {
+  const ids = new Set(list.map((e) => e.id));
+  const hasChild = new Set<string>();
+  for (const e of list) {
+    if (e.managerId && ids.has(e.managerId)) hasChild.add(e.managerId);
+  }
+  return hasChild;
+}
+
 function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | null }) {
   const byId = (id: string) => employees.find((e) => e.id === id);
   const me = meId ? byId(meId) : undefined;
@@ -848,6 +894,16 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const [toast, setToast] = useState('');
   const [zoom, setZoom] = useState(1);
   const chartScrollRef = useRef<HTMLDivElement>(null);
+
+  // Fold the chart to the default two-level view on first load, so a wide org
+  // (17 departments, 146 people) doesn't paint fully expanded and sprawl
+  // off-screen. Runs once — later toggles and refetches are the user's own.
+  const autoFoldedRef = useRef(false);
+  useEffect(() => {
+    if (autoFoldedRef.current || employees.length === 0) return;
+    autoFoldedRef.current = true;
+    setCollapsed(defaultCollapsedFor(employees));
+  }, [employees]);
 
   const zoomIn = () => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10));
   const zoomOut = () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10));
@@ -890,7 +946,7 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const goTopOfOrg = () => {
     setGroupByDept(false);
     setDeptFocus(false);
-    setCollapsed(new Set());
+    setCollapsed(defaultCollapsedFor(employees));
     setHighlightId(null);
   };
 
@@ -1000,6 +1056,20 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
               +
             </button>
           </div>
+          <button
+            onClick={() => setCollapsed(new Set())}
+            className="text-sm font-medium text-gray-700 hover:text-gray-900"
+            title="Expand every node"
+          >
+            Expand all
+          </button>
+          <button
+            onClick={() => setCollapsed(allCollapsedFor(employees))}
+            className="text-sm font-medium text-gray-700 hover:text-gray-900"
+            title="Fold every subtree back to the top level"
+          >
+            Collapse all
+          </button>
           <button
             onClick={() => setGroupByDept((v) => !v)}
             className="flex items-center gap-2 text-sm font-medium text-gray-700"
