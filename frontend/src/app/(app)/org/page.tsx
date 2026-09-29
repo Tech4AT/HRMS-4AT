@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth/useAuth';
 import { orgApi } from '@/lib/api/org';
 import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
 import { DocumentUploadModal, formatBytes } from '@/components/documents/DocumentUploadModal';
+import { OrgDocumentsSection } from '@/components/documents/org/OrgDocumentsSection';
 import { DocumentViewerModal } from '@/components/documents/DocumentViewerModal';
 
 /* ------------------------------ data ------------------------------ */
@@ -182,7 +183,7 @@ export default function OrgPage() {
           the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          <Documents employees={employees} meId={meId} />
+          <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} />
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (
