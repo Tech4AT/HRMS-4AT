@@ -108,10 +108,34 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Documents primitive (#6): files land on local disk under MEDIA_ROOT for now;
-# swapping to S3 later is a storage-backend change, not a schema change.
+# Documents primitive (#6): files land on local disk under MEDIA_ROOT, unless
+# AWS_STORAGE_BUCKET_NAME is set — then document uploads go to that S3 bucket
+# instead (django-storages S3Storage). Unset bucket => local FileSystemStorage,
+# so dev without creds keeps working. A storage-backend change, not a schema
+# change: no model field is touched, so `makemigrations --check` stays clean.
 MEDIA_URL = "media/"
 MEDIA_ROOT = env("DJANGO_MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
+# S3 document storage (env-driven; unset AWS_STORAGE_BUCKET_NAME => local).
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY may be left unset when the
+# runtime already provides credentials (EC2/ECS IAM role, SSO) — boto3's
+# default chain handles that. AWS_S3_ENDPOINT_URL is for S3-compatible
+# backends (MinIO, LocalStack); leave unset for real AWS.
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="")
+AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default=None)
+AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default=None)
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None)
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default=None)
+# Private bucket: never set a canned ACL on upload (also required for
+# buckets with Object Ownership enforced). Never overwrite an existing key
+# (upload_to already embeds a uuid, this is belt-and-braces).
+AWS_DEFAULT_ACL = None
+AWS_S3_FILE_OVERWRITE = False
+if AWS_STORAGE_BUCKET_NAME:
+    STORAGES = {
+        "default": {"BACKEND": "storages.backends.s3.S3Storage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
 
 # Notifications primitive (#5): console backend until real SMTP/SES is wired for
 # prod. send_email() is fail-silent regardless (notifications/service.py).
