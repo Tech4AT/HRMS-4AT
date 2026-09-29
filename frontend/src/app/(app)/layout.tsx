@@ -131,6 +131,7 @@ const navItems: NavItem[] = [
       { label: 'Employee Directory', href: '/org?tab=directory', requireAnyPermission: ['employees.read', 'employees.write'] },
       { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
       { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
+      { label: 'Assets', href: '/assets', requireAnyPermission: ['assets.read', 'assets.write'] },
       { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },
       { label: 'Job Architecture', href: '/org-module/org-structure?tab=job-families', roles: ['admin', 'superadmin'] },
       {
@@ -155,6 +156,7 @@ const navItems: NavItem[] = [
     children: [
       { label: 'Employee Directory', href: '/org?tab=directory' },
       { label: 'Organisation Chart', href: '/org?tab=chart' },
+      { label: 'My Assets', href: '/assets', requireAnyPermission: ['assets.read'] },
     ],
   },
   {
@@ -190,6 +192,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
   '/org-module': { title: 'Organization', subtitle: '' },
+  '/assets': { title: 'Assets', subtitle: 'Company laptop inventory and assignments' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
