@@ -8,10 +8,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from audit.utils import write_audit
-from core.scope import is_hr_admin, user_has_permission
+from core.scope import (
+    is_hr_admin,
+    user_has_permission,
+    visible_employee_ids,
+)
 
 from .access import ENTITY_PERMISSIONS, can_access, can_access_entity
-from .models import Document, DocumentAccessLog
+from .models import Document, DocumentAccessLog, DocumentAcknowledgement
 from .serializers import DocumentSerializer
 
 # Deliberately conservative — these are HR-collected identity/employment
@@ -343,3 +347,136 @@ class DocumentDownloadView(APIView):
         if not doc.file:
             return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'File not found'}}, status=404)
         return _serve_document_file(request, doc, 'download')
+
+
+def _employee_display_name(emp) -> str:
+    name = f"{getattr(emp, 'first_name', '') or ''} {getattr(emp, 'last_name', '') or ''}".strip()
+    return name or getattr(emp, 'employee_code', None) or str(emp)
+
+
+class DocumentAcknowledgeView(APIView):
+    """`POST /documents/{id}/acknowledge` — the signed-in employee records that
+    they have acknowledged this document. Only valid for a document they can
+    see (`can_access`) that actually requires acknowledgement. Idempotent: a
+    second POST is a no-op (unique (document, employee)), still 204."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if not can_access(request.user, doc):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        if not doc.acknowledgement_required:
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'This document does not require acknowledgement.'}},
+                status=400,
+            )
+        employee = getattr(request.user, 'employee', None)
+        if employee is None:
+            return Response(
+                {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Only employees can acknowledge documents.'}},
+                status=403,
+            )
+        DocumentAcknowledgement.objects.get_or_create(document=doc, employee=employee)
+        write_audit(request.user, 'document.acknowledge', doc.entity_type, doc.entity_id, {'documentId': str(doc.id)})
+        return Response(status=204)
+
+
+class DocumentAcknowledgementStatusView(APIView):
+    """`GET /documents/{id}/acknowledgements` — SCOPE-FILTERED acknowledgement
+    status for HR / a manager. The target population is every employee WITHIN
+    THE CALLER'S SCOPE who can actually see the document (`can_access`, which
+    is audience-aware) — so an hr_only doc counts only HR people, an
+    all_employees doc counts everyone in scope, etc. A plain employee with no
+    oversight over anyone but themselves gets 403.
+
+    Response: {total, acknowledged, pending, items:[{employee, name,
+    acknowledged, acknowledgedAt}]}."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+
+        hr = is_hr_admin(request.user)
+        caller_emp = getattr(request.user, 'employee', None)
+        caller_id = getattr(caller_emp, 'id', None)
+        # Oversight population = who this caller manages/sees (employees.read
+        # scope), the same notion of "manager visibility" the audience rules
+        # use. HR Admin sees everyone.
+        from employees.models import Employee
+        if hr:
+            scope_ids = set(Employee.objects.values_list('pk', flat=True))
+        else:
+            scope_ids = set(visible_employee_ids(request.user, 'employees.read'))
+            # No oversight beyond self -> this is not an HR/manager view.
+            if not scope_ids or scope_ids <= {caller_id}:
+                return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+
+        # ponytail: O(n) can_access scan (one scope resolve per employee). Fine
+        # for a directory of ~150; batch/precompute audience sets if it grows.
+        scope_employees = Employee.objects.filter(pk__in=scope_ids).select_related('user')
+        target = [e for e in scope_employees if getattr(e, 'user', None) is not None and can_access(e.user, doc)]
+
+        acked = {
+            a.employee_id: a.acknowledged_at
+            for a in DocumentAcknowledgement.objects.filter(document=doc, employee_id__in=[e.id for e in target])
+        }
+        items = [
+            {
+                'employee': e.id,
+                'name': _employee_display_name(e),
+                'acknowledged': e.id in acked,
+                'acknowledgedAt': acked[e.id].isoformat() if e.id in acked else None,
+            }
+            for e in target
+        ]
+        total = len(items)
+        acknowledged = sum(1 for i in items if i['acknowledged'])
+        return Response({
+            'success': True,
+            'data': {
+                'total': total,
+                'acknowledged': acknowledged,
+                'pending': total - acknowledged,
+                'items': items,
+            },
+        })
+
+
+class PendingAcknowledgementView(APIView):
+    """`GET /documents/pending-acknowledgement` — documents the signed-in
+    employee still has to acknowledge: acknowledgement-required, visible to
+    them (`can_access`, audience-aware), and not yet acknowledged."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        employee = getattr(request.user, 'employee', None)
+        if employee is None:
+            return Response({'success': True, 'data': []})
+        acked_ids = set(
+            DocumentAcknowledgement.objects.filter(employee=employee).values_list('document_id', flat=True)
+        )
+        pending = [
+            d for d in Document.objects.filter(acknowledgement_required=True).exclude(id__in=acked_ids)
+            if can_access(request.user, d)
+        ]
+        data = [
+            {
+                'id': d.id,
+                'title': d.original_filename or d.original_name,
+                'originalFilename': d.original_filename or d.original_name,
+                'description': '',
+                'uploadedAt': d.uploaded_at.isoformat() if d.uploaded_at else None,
+                'expiryDate': d.expiry_date.isoformat() if d.expiry_date else None,
+            }
+            for d in pending
+        ]
+        return Response({'success': True, 'data': data})
