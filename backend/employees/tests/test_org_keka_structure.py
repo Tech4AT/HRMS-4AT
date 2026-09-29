@@ -20,16 +20,14 @@ from employees.models import (
     PayGrade,
 )
 from employees.org_seed import (
-    COST_CENTER_HEAD_DISPLAY_NAME,
+    DROPPED_DUPLICATE_COST_CENTER,
+    DROPPED_DUPLICATE_DEPARTMENT,
     EXAMPLE_CIN,
     EXAMPLE_STREET,
-    REAL_COST_CENTER_DESCRIPTION,
-    REAL_COST_CENTER_NAME,
     REAL_LEGAL_ENTITY_NAME,
     REAL_LOCATION_NAME,
     REAL_PARENT_DEPARTMENT,
     REAL_SUB_DEPARTMENTS,
-    _match_employee_by_name,
     seed_keka_org_details,
 )
 
@@ -247,9 +245,12 @@ def test_seed_keka_org_details_backfills_and_is_idempotent():
     # No Hyderabad location / Audit & Assurance parent in this bare DB.
     assert first["location_backfilled"] == 0
     assert first["sub_department"] == 0
-    # The cost center is always ensured, even in a bare DB.
-    assert first["cost_center"] == 1
-    assert first["cost_center_head"] == 0  # no Shashank row here
+    # ROSTER IS SOURCE OF TRUTH: the empty Keka duplicates are never
+    # created — not even in a bare DB.
+    assert first["duplicate_cost_center_removed"] == 0
+    assert first["duplicate_department_removed"] == 0
+    assert CostCenter.objects.filter(name=DROPPED_DUPLICATE_COST_CENTER).count() == 0
+    assert Department.objects.filter(name=DROPPED_DUPLICATE_DEPARTMENT).count() == 0
 
     entity = LegalEntity.objects.get(name=REAL_LEGAL_ENTITY_NAME)
     assert entity.legal_name == "4AT Consulting LLP"
@@ -327,35 +328,51 @@ def test_seed_skips_location_when_absent():
     assert Location.objects.filter(name=REAL_LOCATION_NAME).count() == 0
 
 
-def test_seed_creates_cost_center_and_matches_shashank_head():
-    assert COST_CENTER_HEAD_DISPLAY_NAME == "Shashank Bala"
-    user = UserFactory(first_name="Shashank", last_name="Balabommala")
-    emp = EmployeeFactory(user=user, employee_code="4AT0017C")
-
-    out = seed_keka_org_details()
-
-    assert out["cost_center"] == 1
-    assert out["cost_center_head"] == 1
-    assert _match_employee_by_name("Shashank Bala").pk == emp.pk
-    cc = CostCenter.objects.get(name=REAL_COST_CENTER_NAME)
-    assert cc.description == REAL_COST_CENTER_DESCRIPTION
-    assert cc.owner_id == emp.pk
-    # Blank in Keka — never fabricated.
-    assert cc.email_alias == ""
-
-    rerun = seed_keka_org_details()
-    assert rerun["cost_center"] == 0 and rerun["cost_center_head"] == 0
-
-
-def test_seed_leaves_cost_center_head_null_when_no_name_match():
+def test_seed_never_creates_the_dropped_keka_duplicates():
+    # ROSTER IS SOURCE OF TRUTH: neither the Sensiba cost center nor the
+    # assumed-spelling SOX department may come back, even in a bare DB.
     EmployeeFactory()
 
     out = seed_keka_org_details()
 
-    assert out["cost_center_head"] == 0
-    cc = CostCenter.objects.get(name=REAL_COST_CENTER_NAME)
-    assert cc.owner_id is None
-    assert cc.description == REAL_COST_CENTER_DESCRIPTION
+    assert out["duplicate_cost_center_removed"] == 0
+    assert out["duplicate_department_removed"] == 0
+    assert CostCenter.objects.filter(name=DROPPED_DUPLICATE_COST_CENTER).count() == 0
+    assert Department.objects.filter(name=DROPPED_DUPLICATE_DEPARTMENT).count() == 0
+    assert seed_keka_org_details()["duplicate_cost_center_removed"] == 0
+
+
+def test_seed_removes_leftover_empty_duplicates_but_never_real_data():
+    empty_cc = CostCenter.objects.create(name=DROPPED_DUPLICATE_COST_CENTER)
+    empty_dept = DepartmentFactory(name=DROPPED_DUPLICATE_DEPARTMENT)
+    holder = EmployeeFactory()
+    lived_cc = CostCenter.objects.create(name="Lived CC")
+    holder.cost_center = lived_cc
+    holder.save()
+
+    out = seed_keka_org_details()
+
+    assert out["duplicate_cost_center_removed"] == 1
+    assert out["duplicate_department_removed"] == 1
+    assert not CostCenter.objects.filter(pk=empty_cc.pk).exists()
+    assert not Department.objects.filter(pk=empty_dept.pk).exists()
+    # Real data is never dropped.
+    assert CostCenter.objects.filter(pk=lived_cc.pk).exists()
+
+    assert seed_keka_org_details()["duplicate_cost_center_removed"] == 0
+    assert seed_keka_org_details()["duplicate_department_removed"] == 0
+
+
+def test_seed_keeps_a_duplicate_name_when_it_holds_people():
+    dept = DepartmentFactory(name=DROPPED_DUPLICATE_DEPARTMENT)
+    holder = EmployeeFactory()
+    holder.department = dept
+    holder.save()
+
+    out = seed_keka_org_details()
+
+    assert out["duplicate_department_removed"] == 0
+    assert Department.objects.filter(pk=dept.pk).exists()
 
 
 def test_seed_creates_audit_sub_departments_under_parent():
@@ -363,11 +380,10 @@ def test_seed_creates_audit_sub_departments_under_parent():
 
     out = seed_keka_org_details()
 
-    assert out["sub_department"] == len(REAL_SUB_DEPARTMENTS) == 3
+    assert out["sub_department"] == len(REAL_SUB_DEPARTMENTS) == 2
     assert set(REAL_SUB_DEPARTMENTS) == {
         "Venture Captial Audit",  # verbatim Keka spelling
         "InfoSec Audit",
-        "SOX/ Design & Implementation",  # assumed completion of truncated label
     }
     for name in REAL_SUB_DEPARTMENTS:
         assert Department.objects.get(name=name).parent_id == parent.pk

@@ -583,8 +583,8 @@ export function DetailPanel({
 }) {
   const cfg: TypeConfig = configFor(kind);
   const members = useMemo(
-    () => membersOf(employees, cfg.employeeKey, item.id),
-    [employees, cfg.employeeKey, item.id],
+    () => membersOf(employees, cfg.employeeKey, item.id, allUnits),
+    [employees, cfg.employeeKey, item.id, allUnits],
   );
   const [tab, setTab] = useState<PanelTab>('summary');
 
