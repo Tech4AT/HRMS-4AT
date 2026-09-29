@@ -11,4 +11,6 @@ COPY . .
 RUN npm run build
 
 EXPOSE 3001
-CMD ["npm", "run", "start", "--", "-p", "3001"]
+# package.json's "start" script already pins -p 3001; appending another -p
+# here duplicated the flag (`next start -p 3001 -p 3001` in the container logs).
+CMD ["npm", "run", "start"]

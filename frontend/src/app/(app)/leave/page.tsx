@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useAuth } from '@/lib/auth/useAuth';
+import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
+import { penalisationApi, type PenalisationRecord, type PenalisationStatus } from '@/lib/api/penalisation';
 import {
   leaveApi,
   LeaveApiError,
@@ -115,17 +116,36 @@ function statusPillClass(status: LeaveStatus): string {
   }
 }
 
+function fmtDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+const penalisationStatusLabel: Record<PenalisationStatus, string> = {
+  applied: 'Applied',
+  overturned: 'Overturned',
+};
+
+function penalisationStatusPillClass(status: PenalisationStatus): string {
+  switch (status) {
+    case 'applied':
+      return 'bg-red-100 text-red-700';
+    case 'overturned':
+      return 'bg-slate-100 text-slate-600';
+  }
+}
+
 /* ============================== page ============================== */
 
 export default function LeaveManagementPage() {
-  const { user } = useAuth();
   const searchParams = useSearchParams();
-  const canApprove = user?.permissions.includes('leave.approve') ?? false;
 
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([]);
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
-  const [approvals, setApprovals] = useState<LeaveRequest[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -149,29 +169,25 @@ export default function LeaveManagementPage() {
 
   // per-row action state
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [decidingId, setDecidingId] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
+
+  // Real backend since PLAN.md Step 8 — the caller's own records only,
+  // read-only: an employee can see whether they've been penalised (and
+  // whether HR later overturned it), but can't request an overturn
+  // themselves - only HR decides that, directly, from Approvals > Penalisation.
+  const [myPenalisations, setMyPenalisations] = useState<PenalisationRecord[]>([]);
 
   const refresh = useCallback(async () => {
-    const [t, b, r] = await Promise.all([
+    const [t, b, r, p] = await Promise.all([
       leaveApi.getTypes(),
       leaveApi.getBalance(),
       leaveApi.getRequests(),
+      penalisationApi.getMine(),
     ]);
     setTypes(t);
     setBalances(b);
     setRequests(r);
-    if (canApprove) {
-      try {
-        setApprovals(await leaveApi.getPendingApprovals());
-      } catch {
-        setApprovals([]);
-      }
-    } else {
-      setApprovals([]);
-    }
-  }, [canApprove]);
+    setMyPenalisations(p);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -300,43 +316,32 @@ export default function LeaveManagementPage() {
     }
   };
 
-  const handleDecide = async (id: string, approve: boolean) => {
-    setDecidingId(id);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await leaveApi.decide(id, approve, approve ? undefined : rejectReason.trim());
-      setActionMessage(approve ? 'Leave approved.' : 'Leave rejected.');
-      setRejectingId(null);
-      setRejectReason('');
-      await refresh();
-    } catch (e) {
-      setActionError(e instanceof LeaveApiError ? e.message : 'Could not update this request');
-    } finally {
-      setDecidingId(null);
-    }
-  };
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 font-['Inter'] p-4 sm:p-8">
-        <div className="text-sm text-slate-500">Loading leave data…</div>
+      <div className="min-h-screen bg-slate-50 font-['Inter']">
+        <AttendanceLeaveTabs active="leave" />
+        <div className="p-4 sm:p-8">
+          <div className="text-sm text-slate-500">Loading leave data…</div>
+        </div>
       </div>
     );
   }
 
   if (loadError) {
     return (
-      <div className="min-h-screen bg-slate-50 font-['Inter'] p-4 sm:p-8">
-        <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-6 max-w-lg">
-          <p className="text-sm font-semibold text-red-700">Couldn&apos;t load leave data</p>
-          <p className="text-xs text-slate-500 mt-1">{loadError}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
-          >
-            Retry
-          </button>
+      <div className="min-h-screen bg-slate-50 font-['Inter']">
+        <AttendanceLeaveTabs active="leave" />
+        <div className="p-4 sm:p-8">
+          <div className="bg-white rounded-2xl border border-red-200 shadow-sm p-6 max-w-lg">
+            <p className="text-sm font-semibold text-red-700">Couldn&apos;t load leave data</p>
+            <p className="text-xs text-slate-500 mt-1">{loadError}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -344,6 +349,7 @@ export default function LeaveManagementPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-['Inter']">
+      <AttendanceLeaveTabs active="leave" />
       <div className="p-4 sm:p-8 space-y-6">
         {/* Pending leave requests + actions */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
@@ -402,81 +408,41 @@ export default function LeaveManagementPage() {
           </div>
         </div>
 
-        {/* Approvals (managers/HR only) */}
-        {canApprove ? (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-            <h2 className="text-base font-bold text-slate-900 mb-3">Approvals</h2>
-            {approvals.length === 0 ? (
-              <p className="text-sm text-slate-400">No leave requests awaiting your approval.</p>
-            ) : (
-              <div className="space-y-3">
-                {approvals.map((a) => (
-                  <div key={a.id} className="border border-slate-200 rounded-lg px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-900 truncate">
-                          {a.employee_name || 'Employee'} — {typeName(a)}
+        {/* Penalisations */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+          <h2 className="text-base font-bold text-slate-900 mb-3">Penalisations</h2>
+          {myPenalisations.length === 0 ? (
+            <p className="text-sm text-slate-400">You have no penalisations.</p>
+          ) : (
+            <div className="space-y-3">
+              {myPenalisations.map((p) => (
+                <div key={p.id} className="border border-slate-200 rounded-lg px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900">Absent {fmtDate(p.absentDate)}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {p.reason} · {p.daysOverdue} day(s) overdue
+                        {p.leaveDaysDeducted ? ` · ${p.leaveDaysDeducted} day(s) leave deducted` : ''}
+                      </p>
+                      {p.status === 'overturned' ? (
+                        <p className="text-xs text-slate-400 mt-1">
+                          Overturned by {p.overturnedBy}
+                          {p.overturnedReason ? ` — ${p.overturnedReason}` : ''}
+                          {p.leaveDaysDeducted ? ` (${p.leaveDaysDeducted} day(s) leave restored)` : ''}
                         </p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {formatDateRange(a.start_date, a.end_date, a.half_day_option)} ·{' '}
-                          {formatDays(a.duration_days)} day(s){a.reason ? ` · ${a.reason}` : ''}
-                        </p>
-                      </div>
-                      {rejectingId === a.id ? null : (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={() => handleDecide(a.id, true)}
-                            disabled={decidingId === a.id}
-                            className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            Approve
-                          </button>
-                          <button
-                            onClick={() => {
-                              setRejectingId(a.id);
-                              setRejectReason('');
-                            }}
-                            disabled={decidingId === a.id}
-                            className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
+                      ) : null}
                     </div>
-                    {rejectingId === a.id ? (
-                      <div className="flex items-center gap-2 mt-3">
-                        <input
-                          type="text"
-                          value={rejectReason}
-                          onChange={(e) => setRejectReason(e.target.value)}
-                          placeholder="Reason for rejection (required)"
-                          className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
-                        />
-                        <button
-                          onClick={() => handleDecide(a.id, false)}
-                          disabled={decidingId === a.id || rejectReason.trim().length === 0}
-                          className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                        >
-                          Confirm reject
-                        </button>
-                        <button
-                          onClick={() => {
-                            setRejectingId(null);
-                            setRejectReason('');
-                          }}
-                          className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : null}
+                    <span
+                      className={`text-[11px] font-semibold rounded-full px-2.5 py-1 shrink-0 ${penalisationStatusPillClass(p.status)}`}
+                    >
+                      {penalisationStatusLabel[p.status]}
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Leave Balances */}
         <div>

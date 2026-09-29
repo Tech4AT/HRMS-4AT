@@ -46,26 +46,26 @@ class Command(VerificationCommand):
         rid = data["id"]
 
         v.note("--- only the assigned approver may decide")
-        self_decide = req.post(f"/api/v1/requests/{rid}/approve/", {})
+        self_decide = req.post(f"/api/v1/requests/{rid}/approve", {})
         v.check("requester cannot approve own request (403)", self_decide.status_code == 403)
 
         v.note("--- the manager approves; the state is then terminal")
-        ok = mgrs.post(f"/api/v1/requests/{rid}/approve/", {"note": "fine"})
+        ok = mgrs.post(f"/api/v1/requests/{rid}/approve", {"note": "fine"})
         v.check("manager approve is 200", ok.status_code == 200, f"HTTP {ok.status_code}")
         v.check("status becomes approved", ok.json()["data"]["status"] == "approved")
-        again = mgrs.post(f"/api/v1/requests/{rid}/approve/", {})
+        again = mgrs.post(f"/api/v1/requests/{rid}/approve", {})
         v.check("re-deciding a resolved request is 400", again.status_code == 400)
 
         v.note("--- the requester can withdraw a pending request")
         r2 = req.post("/api/v1/requests/", {"request_type": "leave", "payload": {}}).json()["data"]
-        wd = req.post(f"/api/v1/requests/{r2['id']}/withdraw/", {})
+        wd = req.post(f"/api/v1/requests/{r2['id']}/withdraw", {})
         v.check("withdraw is 200", wd.status_code == 200, f"HTTP {wd.status_code}")
         v.check("status becomes withdrawn", wd.json()["data"]["status"] == "withdrawn")
 
         v.note("--- HR can force-resolve, bypassing the approver")
         r3 = req.post("/api/v1/requests/", {"request_type": "leave", "payload": {}}).json()["data"]
         forced = hr.post(
-            f"/api/v1/requests/{r3['id']}/resolve/", {"status": "rejected", "note": "policy"}
+            f"/api/v1/requests/{r3['id']}/resolve", {"status": "rejected", "note": "policy"}
         )
         v.check("HR force-resolve is 200", forced.status_code == 200, f"HTTP {forced.status_code}")
         v.check("forced status is applied", forced.json()["data"]["status"] == "rejected")
@@ -78,12 +78,10 @@ class Command(VerificationCommand):
             "data"
         ]
         v.check("no manager → approver is null", r4["approver"] is None)
-        moved = hr.post(
-            f"/api/v1/requests/{r4['id']}/reassign/", {"approver": str(manager_user.id)}
-        )
+        moved = hr.post(f"/api/v1/requests/{r4['id']}/reassign", {"approver": str(manager_user.id)})
         v.check("HR reassign is 200", moved.status_code == 200, f"HTTP {moved.status_code}")
         v.check("approver is now set", moved.json()["data"]["approver"] == str(manager_user.id))
-        denied = req.post(f"/api/v1/requests/{r4['id']}/reassign/", {"approver": str(hr_user.id)})
+        denied = req.post(f"/api/v1/requests/{r4['id']}/reassign", {"approver": str(hr_user.id)})
         v.check("a non-manager cannot reassign (403)", denied.status_code == 403)
 
         v.note("--- anonymous is refused")
