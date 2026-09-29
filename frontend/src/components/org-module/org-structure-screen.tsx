@@ -28,7 +28,7 @@ import {
 } from './org-structure-types';
 import { DetailPanel, EMPTY_FK_OPTIONS, UnitDrawer, type DrawerState, type FkOptions } from './org-structure-detail';
 
-/** Sub-tabs live on the bar. Bands has no backend and stays an honest empty. */
+/** Sub-tabs live on the bar. Pay Grades/Bands are EXAMPLE placeholders (no payroll link). */
 export const VISIBLE_TABS: UnitKind[] = [
   'legal-entities',
   'business-units',
@@ -40,6 +40,7 @@ export const VISIBLE_TABS: UnitKind[] = [
   'levels',
   'grades',
   'job-titles',
+  'pay-grades',
   'bands',
 ];
 
@@ -73,8 +74,21 @@ async function loadKind(kind: UnitKind): Promise<UnitItem[]> {
       return toItems(await orgApi.listGrades());
     case 'job-titles':
       return toItems(await orgApi.listJobTitles());
-    case 'bands':
-      return [];
+    case 'pay-grades':
+    case 'bands': {
+      // No read-only directory feed for these — the admin list doubles as the
+      // source of names. Non-managers (403 -> null) see an honest empty rail;
+      // the detail panel explains the gate.
+      const resource = configFor(kind).adminResource as string;
+      const rows = await adminList(resource);
+      return (rows ?? []).map((r) => ({
+        id: String(r.id),
+        name: r.name,
+        code: typeof r.code === 'string' ? r.code : undefined,
+        description: typeof r.description === 'string' ? r.description : undefined,
+        admin: r as Record<string, unknown>,
+      }));
+    }
   }
 }
 
@@ -175,6 +189,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
       'job-family': named(unitsByKind['job-families']),
       level: named(unitsByKind.levels),
       'job-title': named(unitsByKind['job-titles']),
+      'pay-grade': named(unitsByKind['pay-grades']),
     };
   }, [directory, unitsByKind]);
 
@@ -378,8 +393,8 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
             </div>
           ) : visible.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-500">
-              {cfg.kind === 'bands'
-                ? 'Bands are not configured yet — there is no band registry on the backend.'
+              {cfg.kind === 'pay-grades' || cfg.kind === 'bands'
+                ? `No ${cfg.plural.toLowerCase()} yet — example placeholders, add one to start the registry.`
                 : `No ${cfg.plural.toLowerCase()} yet.`}
             </p>
           ) : (
@@ -441,8 +456,8 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="py-10 text-center text-sm text-slate-500">
-                {cfg.kind === 'bands'
-                  ? 'Bands are not configured yet — there is no band registry on the backend.'
+                {cfg.kind === 'pay-grades' || cfg.kind === 'bands'
+                  ? `No ${cfg.plural.toLowerCase()} to show yet — example placeholders, add one to start the registry.`
                   : `No ${cfg.plural.toLowerCase()} to show.`}
               </p>
             </div>

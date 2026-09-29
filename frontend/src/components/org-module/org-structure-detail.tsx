@@ -11,10 +11,12 @@
  * `extraFields` spec, so they cannot drift apart.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { OrgEmployee } from '@/lib/api/org';
 import {
   adminCreate,
+  adminDelete,
+  adminListFiltered,
   adminUpdate,
   camelKey,
   configFor,
@@ -42,6 +44,7 @@ export const EMPTY_FK_OPTIONS: FkOptions = {
   'job-family': [],
   level: [],
   'job-title': [],
+  'pay-grade': [],
 };
 
 /* ------------------------------- employee table ---------------------------- */
@@ -266,8 +269,15 @@ function UnitDrawer({
           }
         } else if (f.type === 'select') {
           if ((values[f.key] ?? '') !== '') input[f.key] = values[f.key];
+        } else if (f.type === 'date') {
+          const raw = (values[f.key] ?? '').trim();
+          input[f.key] = raw === '' ? null : raw;
         } else {
-          input[f.key] = values[f.key] ?? '';
+          const v = values[f.key] ?? '';
+          // LegalEntity.currency has no blank=True on the model: an empty
+          // string 400s, while omitting the key applies the INR default. So
+          // fall back to INR here instead of sending ''.
+          input[f.key] = v === '' && f.key === 'currency' ? 'INR' : v;
         }
       }
       if (state.mode === 'edit') {
@@ -445,6 +455,21 @@ function UnitDrawer({
                 </label>
               );
             }
+            if (f.type === 'date') {
+              return (
+                <label key={f.key} className={labelCls}>
+                  {f.label}
+                  <input
+                    type="date"
+                    value={values[f.key] ?? ''}
+                    onChange={(e) => setValue(f.key, e.target.value)}
+                    aria-label={f.label}
+                    className={inputCls}
+                  />
+                  {f.hint ? <span className={hintCls}>{f.hint}</span> : null}
+                </label>
+              );
+            }
             return (
               <label key={f.key} className={labelCls}>
                 {f.label}
@@ -600,8 +625,6 @@ export function DetailPanel({
 
   const positionCount = typeof item.admin?.['positionCount'] === 'number' ? (item.admin['positionCount'] as number) : null;
 
-  const regField = (key: string, type: 'text' | 'fk', fk?: FkTarget): ExtraField => ({ key, label: '', type, fk });
-
   return (
     <div className="bg-white border border-slate-200 rounded-xl">
       {/* header */}
@@ -699,32 +722,736 @@ export function DetailPanel({
 
         {tab === 'registration' ? (
           <div>
-            <h4 className="text-sm font-bold text-slate-900">Entity Details</h4>
+            <div className="flex items-center gap-4">
+              {typeof item.admin?.['logo'] === 'string' && item.admin['logo'] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={item.admin['logo'] as string}
+                  alt={`${item.name} logo`}
+                  className="w-14 h-14 rounded-xl object-contain border border-slate-200 bg-slate-50"
+                />
+              ) : null}
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">Registration Information</h4>
+                <p className="text-[11px] text-slate-400">
+                  Every field below is stored on the legal entity — edit via the ⋮ menu above.
+                </p>
+              </div>
+            </div>
             <div className="mt-2 grid gap-x-8 sm:grid-cols-2">
               {fieldRow('Entity name', item.name)}
               {fieldRowValue('Code', item.code || '—')}
-              {fieldRow('Registered address', displayExtra(item, regField('registered_address', 'fk', 'location'), fkOptions) === '—' ? <span className="text-slate-400">—</span> : displayExtra(item, regField('registered_address', 'fk', 'location'), fkOptions))}
-              {fieldRowValue('Country', displayExtra(item, regField('country', 'text'), fkOptions))}
-              {fieldRowValue('Currency', displayExtra(item, regField('currency', 'text'), fkOptions))}
-              {fieldRowValue('Logo', displayExtra(item, regField('logo', 'text'), fkOptions))}
+              {cfg.extraFields.map((f) =>
+                fieldRowValue(f.label, displayExtra(item, f, fkOptions)),
+              )}
             </div>
-            <p className="mt-3 text-[11px] text-slate-400">
-              Tax and registration columns live in the payroll module, not here.
-            </p>
           </div>
         ) : null}
 
         {tab === 'signatories' ? (
-          <p className="py-10 text-center text-sm text-slate-500">
-            No authorized signatories — not tracked yet.
-          </p>
+          <SignatoriesSection legalEntityId={item.id} canManage={canManage} />
         ) : null}
 
         {tab === 'bank' ? (
-          <p className="py-10 text-center text-sm text-slate-500">No bank records — not tracked yet.</p>
+          <BankSection legalEntityId={item.id} canManage={canManage} />
         ) : null}
       </div>
     </div>
+  );
+}
+
+/* ------------------- legal-entity child collections -------------------- */
+/**
+ * Authorized Signatories + Bank Details inner tabs. Real CRUD against the
+ * audited admin endpoints (`authorized-signatories`, `bank-details`), scoped
+ * with `?legal_entity=<id>`. Reads come back camelCase, writes go out
+ * snake_case — childStr() reads either spelling.
+ */
+
+type ChildRow = Record<string, unknown>;
+
+function childStr(row: ChildRow, camel: string, snake: string): string {
+  const v = row[camel] ?? row[snake];
+  if (v === null || v === undefined) return '';
+  return String(v);
+}
+
+const childInputCls =
+  'mt-1 block w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400';
+const childLabelCls = 'block text-xs font-semibold text-slate-600';
+
+function ChildSectionShell({
+  title,
+  count,
+  canManage,
+  addLabel,
+  onAdd,
+  children,
+}: {
+  title: string;
+  count: number | null;
+  canManage: boolean;
+  addLabel: string;
+  onAdd: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h4 className="text-sm font-bold text-slate-900">
+          {title}
+          {count !== null ? <span className="ml-2 text-xs font-semibold text-slate-400">{count}</span> : null}
+        </h4>
+        {canManage ? (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="px-3 py-1.5 text-xs font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+          >
+            {addLabel}
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function SignatoriesSection({ legalEntityId, canManage }: { legalEntityId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<ChildRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<{ mode: 'add' } | { mode: 'edit'; row: ChildRow } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const [name, setName] = useState('');
+  const [designation, setDesignation] = useState('');
+  const [email, setEmail] = useState('');
+  const [dinOrPan, setDinOrPan] = useState('');
+  const [active, setActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setRows(await adminListFiltered('authorized-signatories', { legal_entity: legalEntityId }));
+    } catch {
+      setError('Couldn\u2019t load signatories. Try again.');
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [legalEntityId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openAdd() {
+    setName('');
+    setDesignation('');
+    setEmail('');
+    setDinOrPan('');
+    setActive(true);
+    setFormError(null);
+    setForm({ mode: 'add' });
+  }
+
+  function openEdit(row: ChildRow) {
+    setName(childStr(row, 'name', 'name'));
+    setDesignation(childStr(row, 'designation', 'designation'));
+    setEmail(childStr(row, 'email', 'email'));
+    setDinOrPan(childStr(row, 'dinOrPan', 'din_or_pan'));
+    setActive((row['isActive'] ?? row['is_active'] ?? true) as boolean);
+    setFormError(null);
+    setForm({ mode: 'edit', row });
+  }
+
+  async function submit() {
+    if (!name.trim()) {
+      setFormError('Name is required.');
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const input: AdminWriteInput = {
+        name: name.trim(),
+        designation: designation.trim(),
+        email: email.trim(),
+        din_or_pan: dinOrPan.trim(),
+      };
+      if (form?.mode === 'add') {
+        await adminCreate('authorized-signatories', { ...input, legal_entity: legalEntityId });
+      } else if (form?.mode === 'edit') {
+        await adminUpdate('authorized-signatories', String(form.row['id']), {
+          ...input,
+          is_active: active,
+        });
+      }
+      setForm(null);
+      await load();
+    } catch (e) {
+      setFormError(e instanceof OrgAdminError ? e.message : 'Save failed. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setBusyId(id);
+    try {
+      await adminDelete('authorized-signatories', id);
+      setConfirmDeleteId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof OrgAdminError ? e.message : 'Delete failed. Try again.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (loading) {
+    return <p className="py-10 text-center text-sm text-slate-400">Loading signatories…</p>;
+  }
+
+  return (
+    <ChildSectionShell
+      title="Authorized Signatories"
+      count={rows?.length ?? null}
+      canManage={canManage}
+      addLabel="Add signatory"
+      onAdd={openAdd}
+    >
+      {error ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+          <p className="text-xs text-amber-800">{error}</p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {rows === null ? (
+        <p className="py-10 text-center text-sm text-slate-500">
+          Signatories need the Organization Manager permission — ask an HR admin.
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-500">
+          No authorized signatories yet{canManage ? ' — add the first one above.' : '.'}
+        </p>
+      ) : (
+        <div className="overflow-x-auto border border-slate-200 rounded-xl">
+          <table className="w-full">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                {['Name', 'Designation', 'Email', 'DIN / PAN', 'Status', ...(canManage ? [''] : [])].map((h) => (
+                  <th
+                    key={h || 'actions'}
+                    className="px-4 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => {
+                const id = String(r['id']);
+                const isActive = Boolean(r['isActive'] ?? r['is_active'] ?? true);
+                return (
+                  <tr key={id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-2.5 text-sm font-medium text-slate-800">{childStr(r, 'name', 'name') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">{childStr(r, 'designation', 'designation') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">{childStr(r, 'email', 'email') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">{childStr(r, 'dinOrPan', 'din_or_pan') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                          isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    {canManage ? (
+                      <td className="px-4 py-2.5 text-sm text-right whitespace-nowrap">
+                        {confirmDeleteId === id ? (
+                          <span className="inline-flex gap-2">
+                            <button
+                              type="button"
+                              disabled={busyId === id}
+                              onClick={() => remove(id)}
+                              className="text-xs font-semibold text-rose-600 hover:text-rose-800 disabled:opacity-60"
+                            >
+                              {busyId === id ? 'Deleting…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(r)}
+                              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(id)}
+                              className="text-xs font-semibold text-rose-600 hover:text-rose-800"
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {form ? (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/40"
+          onClick={() => setForm(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={form.mode === 'add' ? 'Add signatory' : 'Edit signatory'}
+        >
+          <div
+            className="w-full max-w-md h-full bg-white shadow-xl p-6 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold text-slate-900">
+              {form.mode === 'add' ? 'Add signatory' : 'Edit signatory'}
+            </h3>
+            <div className="mt-5 space-y-4">
+              <label className={childLabelCls}>
+                Full name
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Asha Rao"
+                  aria-label="Full name"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                Designation
+                <input
+                  type="text"
+                  value={designation}
+                  onChange={(e) => setDesignation(e.target.value)}
+                  placeholder="e.g. Partner"
+                  aria-label="Designation"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                Email
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="e.g. asha@example.com"
+                  aria-label="Email"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                DIN / PAN
+                <input
+                  type="text"
+                  value={dinOrPan}
+                  onChange={(e) => setDinOrPan(e.target.value)}
+                  placeholder="Director ID or PAN"
+                  aria-label="DIN or PAN"
+                  className={childInputCls}
+                />
+              </label>
+              {form.mode === 'edit' ? (
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={(e) => setActive(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600"
+                  />
+                  Active (uncheck to deactivate)
+                </label>
+              ) : null}
+              {formError ? <p className="text-xs font-medium text-rose-600">{formError}</p> : null}
+            </div>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setForm(null)}
+                className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60"
+              >
+                {saving ? 'Saving…' : form.mode === 'add' ? 'Add' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </ChildSectionShell>
+  );
+}
+
+function BankSection({ legalEntityId, canManage }: { legalEntityId: string; canManage: boolean }) {
+  const [rows, setRows] = useState<ChildRow[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<{ mode: 'add' } | { mode: 'edit'; row: ChildRow } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const [bankName, setBankName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [ifscCode, setIfscCode] = useState('');
+  const [branch, setBranch] = useState('');
+  const [accountType, setAccountType] = useState('');
+  const [active, setActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setRows(await adminListFiltered('bank-details', { legal_entity: legalEntityId }));
+    } catch {
+      setError('Couldn\u2019t load bank details. Try again.');
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [legalEntityId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openAdd() {
+    setBankName('');
+    setAccountNumber('');
+    setIfscCode('');
+    setBranch('');
+    setAccountType('');
+    setActive(true);
+    setFormError(null);
+    setForm({ mode: 'add' });
+  }
+
+  function openEdit(row: ChildRow) {
+    setBankName(childStr(row, 'bankName', 'bank_name'));
+    setAccountNumber(childStr(row, 'accountNumber', 'account_number'));
+    setIfscCode(childStr(row, 'ifscCode', 'ifsc_code'));
+    setBranch(childStr(row, 'branch', 'branch'));
+    setAccountType(childStr(row, 'accountType', 'account_type'));
+    setActive((row['isActive'] ?? row['is_active'] ?? true) as boolean);
+    setFormError(null);
+    setForm({ mode: 'edit', row });
+  }
+
+  async function submit() {
+    if (!bankName.trim() || !accountNumber.trim() || !ifscCode.trim()) {
+      setFormError('Bank name, account number and IFSC code are required.');
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const input: AdminWriteInput = {
+        name: bankName.trim(),
+        bank_name: bankName.trim(),
+        account_number: accountNumber.trim(),
+        ifsc_code: ifscCode.trim(),
+        branch: branch.trim(),
+      };
+      if (accountType !== '') input.account_type = accountType;
+      if (form?.mode === 'add') {
+        await adminCreate('bank-details', { ...input, legal_entity: legalEntityId });
+      } else if (form?.mode === 'edit') {
+        await adminUpdate('bank-details', String(form.row['id']), {
+          ...input,
+          is_active: active,
+        });
+      }
+      setForm(null);
+      await load();
+    } catch (e) {
+      setFormError(e instanceof OrgAdminError ? e.message : 'Save failed. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setBusyId(id);
+    try {
+      await adminDelete('bank-details', id);
+      setConfirmDeleteId(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof OrgAdminError ? e.message : 'Delete failed. Try again.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (loading) {
+    return <p className="py-10 text-center text-sm text-slate-400">Loading bank details…</p>;
+  }
+
+  return (
+    <ChildSectionShell
+      title="Bank Details"
+      count={rows?.length ?? null}
+      canManage={canManage}
+      addLabel="Add bank account"
+      onAdd={openAdd}
+    >
+      {error ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+          <p className="text-xs text-amber-800">{error}</p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {rows === null ? (
+        <p className="py-10 text-center text-sm text-slate-500">
+          Bank details need the Organization Manager permission — ask an HR admin.
+        </p>
+      ) : rows.length === 0 ? (
+        <p className="py-10 text-center text-sm text-slate-500">
+          No bank accounts yet{canManage ? ' — add the first one above.' : '.'}
+        </p>
+      ) : (
+        <div className="overflow-x-auto border border-slate-200 rounded-xl">
+          <table className="w-full">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                {['Bank', 'Account number', 'IFSC', 'Branch', 'Type', 'Status', ...(canManage ? [''] : [])].map((h) => (
+                  <th
+                    key={h || 'actions'}
+                    className="px-4 py-2.5 text-left text-[11px] font-semibold text-slate-500 uppercase"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => {
+                const id = String(r['id']);
+                const isActive = Boolean(r['isActive'] ?? r['is_active'] ?? true);
+                const typeRaw = childStr(r, 'accountType', 'account_type');
+                return (
+                  <tr key={id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-2.5 text-sm font-medium text-slate-800">{childStr(r, 'bankName', 'bank_name') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600 font-mono">{childStr(r, 'accountNumber', 'account_number') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600 font-mono">{childStr(r, 'ifscCode', 'ifsc_code') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">{childStr(r, 'branch', 'branch') || '—'}</td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">
+                      {typeRaw === 'savings' ? 'Savings' : typeRaw === 'current' ? 'Current' : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                          isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    {canManage ? (
+                      <td className="px-4 py-2.5 text-sm text-right whitespace-nowrap">
+                        {confirmDeleteId === id ? (
+                          <span className="inline-flex gap-2">
+                            <button
+                              type="button"
+                              disabled={busyId === id}
+                              onClick={() => remove(id)}
+                              className="text-xs font-semibold text-rose-600 hover:text-rose-800 disabled:opacity-60"
+                            >
+                              {busyId === id ? 'Deleting…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="text-xs font-semibold text-slate-500 hover:text-slate-800"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(r)}
+                              className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteId(id)}
+                              className="text-xs font-semibold text-rose-600 hover:text-rose-800"
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                    ) : null}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {form ? (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/40"
+          onClick={() => setForm(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={form.mode === 'add' ? 'Add bank account' : 'Edit bank account'}
+        >
+          <div
+            className="w-full max-w-md h-full bg-white shadow-xl p-6 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-bold text-slate-900">
+              {form.mode === 'add' ? 'Add bank account' : 'Edit bank account'}
+            </h3>
+            <div className="mt-5 space-y-4">
+              <label className={childLabelCls}>
+                Bank name
+                <input
+                  type="text"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. HDFC Bank"
+                  aria-label="Bank name"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                Account number
+                <input
+                  type="text"
+                  value={accountNumber}
+                  onChange={(e) => setAccountNumber(e.target.value)}
+                  placeholder="e.g. 50100299998888"
+                  aria-label="Account number"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                IFSC code
+                <input
+                  type="text"
+                  value={ifscCode}
+                  onChange={(e) => setIfscCode(e.target.value)}
+                  placeholder="e.g. HDFC0001234"
+                  aria-label="IFSC code"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                Branch
+                <input
+                  type="text"
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  placeholder="e.g. Hyderabad Main"
+                  aria-label="Branch"
+                  className={childInputCls}
+                />
+              </label>
+              <label className={childLabelCls}>
+                Account type
+                <select
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value)}
+                  aria-label="Account type"
+                  className={childInputCls}
+                >
+                  <option value="">None</option>
+                  <option value="savings">Savings</option>
+                  <option value="current">Current</option>
+                </select>
+              </label>
+              {form.mode === 'edit' ? (
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={(e) => setActive(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-600"
+                  />
+                  Active (uncheck to deactivate)
+                </label>
+              ) : null}
+              {formError ? <p className="text-xs font-medium text-rose-600">{formError}</p> : null}
+            </div>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setForm(null)}
+                className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={saving}
+                className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60"
+              >
+                {saving ? 'Saving…' : form.mode === 'add' ? 'Add' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </ChildSectionShell>
   );
 }
 
