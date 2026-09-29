@@ -31,6 +31,7 @@ real employee row, and every grouping comes from the real roster.
 """
 
 from collections import Counter
+from datetime import date
 
 from django.db import transaction
 
@@ -44,6 +45,7 @@ from employees.models import (
     Grade,
     LegalEntity,
     LegalEntityBankAccount,
+    Location,
     PayGrade,
     Position,
     Team,
@@ -76,6 +78,37 @@ def _busiest_manager(employees, counts):
 
 def _default_legal_entity():
     return LegalEntity.objects.order_by("id").first()
+
+
+def _match_employee_by_name(display_name):
+    """Match a display name (e.g. Keka's "Shashank Bala") to a real Employee.
+
+    Exact full-name match first, then the directory loader's tolerant rule:
+    same first name + surname equal-or-prefix either way. Active employees
+    only, deterministic (lowest employee code wins). Returns None when no
+    real employee matches — the caller leaves the slot null and reports it.
+    """
+    target = (display_name or "").strip().lower()
+    if not target:
+        return None
+    actives = list(
+        Employee.objects.select_related("user")
+        .exclude(status=Employee.STATUS_EXITED)
+        .order_by("employee_code")
+    )
+    for e in actives:
+        if e.user.get_full_name().strip().lower() == target:
+            return e
+    tokens = target.split()
+    for e in actives:
+        full = e.user.get_full_name().lower().split()
+        if not full or full[0] != tokens[0]:
+            continue
+        surname = (e.user.last_name or full[-1]).strip().lower()
+        last = tokens[-1]
+        if surname == last or surname.startswith(last) or last.startswith(surname):
+            return e
+    return None
 
 
 @transaction.atomic
@@ -235,21 +268,80 @@ def seed_derived_org_masters():
     return created
 
 
-# --- Keka parity backfill (example values) ------------------------------------
-# Idempotent: fills LegalEntity registration columns only when blank, and
-# get-or-creates exactly one example bank row / two signatories / three pay
-# grades / two bands. A human edit is never overwritten — every field or row
-# set here survives re-runs unchanged. Safe to call on every boot after
-# seed_derived_org_masters().
+# --- Keka real org-structure values (SEED data, verified 2026-09-30) -----------
+# Provenance: the user's 8 Keka screenshots (company registration, location,
+# cost center, departments). Exact field values below; anything the
+# screenshots did NOT show is left null/unchanged and reported by the caller.
 #
-# Provenance: company name "4AT Consulting LLP" and Hyderabad come from the
-# real roster; everything marked EXAMPLE below (CIN, street address,
-# incorporation date left NULL, account numbers, pay ranges) is a placeholder
-# the product owner must confirm — no verified source was shared.
+# Idempotent: masters are matched BY NAME; real values overwrite blanks AND
+# the legacy EXAMPLE placeholders this same function used to write
+# (LEGACY_PLACEHOLDERS); any other (human) value is never overwritten.
+# Safe to call on every boot after seed_derived_org_masters():
+# load_real_directory wipes Location/CostCenter/Department rows, so this
+# re-creates + re-fills them identically after the wipe. LegalEntity rows
+# survive the wipe (migration-seeded), hence match-by-name with a
+# primary/first fallback (reported by the caller when no exact-name match).
+#
+# Deliberately NOT seeded here: Business Units (the reference org has none),
+# PayGrade/Band real values (never provided — EXAMPLE rows stay, flagged),
+# AuthorizedSignatory/BankDetails field values (not provided — existing rows
+# stay as-is, flagged).
 
+REAL_LEGAL_ENTITY_NAME = "4AT Consulting LLP"
+REAL_LEGAL_ENTITY = {
+    "legal_name": "4AT Consulting LLP",
+    "company_identification_number": "AAT-0747",
+    "date_of_incorporation": date(2020, 7, 25),
+    "type_of_business": LegalEntity.TYPE_LIMITED_LIABILITY,
+    "sector": LegalEntity.SECTOR_PROFESSIONALS,
+    "nature_of_business": "Chartered Accountants, Auditors, etc. (601)",
+    "address_line1": "3rd Floor, D Block, iLabs Centre, Plot No.18, Silpa Gram Craft Village",
+    "address_line2": "Madhapur",
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "zip_code": "500081",
+    "country": "India",
+    "currency": "INR",
+    "financial_year": LegalEntity.FY_APR_MAR,
+}
+
+REAL_LOCATION_NAME = "Hyderabad"
+REAL_LOCATION = {
+    "address_line1": "3rd Floor, D Block, iLabs Centre, Plot No.18, Silpa Gram Craft Village",
+    "address_line2": "Madhapur",
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "country": "India",
+    "postal_code": "500081",
+    "timezone": "Asia/Kolkata",
+    "description": "Indian Office",
+}
+
+REAL_COST_CENTER_NAME = "Sensiba-InfoSec Audit"
+REAL_COST_CENTER_DESCRIPTION = "All Sensiba_InfoSec costs"
+# Cost-center head as shown in Keka. Matched against real Employee rows by
+# name (first name + surname-prefix tolerant, like the directory loader);
+# left null + reported when absent — never invented.
+COST_CENTER_HEAD_DISPLAY_NAME = "Shashank Bala"
+
+REAL_PARENT_DEPARTMENT = "Audit & Assurance"
+# "Venture Captial Audit" keeps Keka's verbatim spelling. "SOX/ Design &
+# Implementation" completes Keka's TRUNCATED "SOX/ Design & Impli…" label —
+# assumed, flagged for user confirmation (the HR roster spells it
+# "SOX/ Design & Implimentation", kept as a separate loader row).
+REAL_SUB_DEPARTMENTS = [
+    "Venture Captial Audit",
+    "InfoSec Audit",
+    "SOX/ Design & Implementation",
+]
+
+# Legacy placeholders this function used to write before the real values
+# were provided. A field holding one of these is overwritten with the real
+# value; any other non-blank value is a human edit and is respected.
 # Keep within LegalEntity.company_identification_number max_length=50.
 EXAMPLE_CIN = "U72200TG2015PTC000000 (EXAMPLE — verify with CS)"
 EXAMPLE_STREET = "Hyderabad office street address (EXAMPLE — verify with HR)"
+LEGACY_PLACEHOLDERS = {EXAMPLE_CIN, EXAMPLE_STREET}
 
 # (name, code, description, min_pay, mid_pay, max_pay) — EXAMPLE ranges.
 EXAMPLE_PAY_GRADES = [
@@ -267,45 +359,98 @@ EXAMPLE_BANDS = [
 
 @transaction.atomic
 def seed_keka_org_details():
-    """Backfill Keka registration/bank/signatory/pay example rows.
+    """Persist the real Keka org-structure values as seed data.
+
+    LegalEntity '4AT Consulting LLP' (or the primary/first entity when no
+    exact-name match exists), Location 'Hyderabad', CostCenter
+    'Sensiba-InfoSec Audit' (created when absent, head matched against real
+    employees), and the three Audit & Assurance sub-departments (created
+    when absent) receive the exact values from the verified Keka capture.
+    Legacy EXAMPLE placeholders are replaced; human edits are respected.
 
     Returns the number of rows/fields *created or filled* per key
     (re-runs return zeros).
     """
     created = {
         "legal_entity_backfilled": 0,
+        "location_backfilled": 0,
+        "cost_center": 0,
+        "cost_center_head": 0,
+        "sub_department": 0,
         "authorized_signatory": 0,
         "bank_account": 0,
         "pay_grade": 0,
         "band": 0,
     }
-    entities = list(LegalEntity.objects.order_by("id"))
-    if not entities:
+    entity = LegalEntity.objects.filter(name=REAL_LEGAL_ENTITY_NAME).first()
+    if entity is None:
+        entity = LegalEntity.objects.order_by("id").first()
+    if entity is None:
         return created
 
+    fills = {}
+    for field, value in REAL_LEGAL_ENTITY.items():
+        current = getattr(entity, field)
+        if value is None:
+            continue
+        if isinstance(value, date):
+            if current is None:
+                fills[field] = value
+        elif not current or current in LEGACY_PLACEHOLDERS:
+            fills[field] = value
+    if fills:
+        for field, value in fills.items():
+            setattr(entity, field, value)
+        entity.save(update_fields=[*fills, "updated_at"])
+        created["legal_entity_backfilled"] += 1
+
+    location = Location.objects.filter(name=REAL_LOCATION_NAME).first()
+    if location is not None:
+        loc_fills = {
+            field: value
+            for field, value in REAL_LOCATION.items()
+            if not getattr(location, field)
+        }
+        if loc_fills:
+            for field, value in loc_fills.items():
+                setattr(location, field, value)
+            location.save(update_fields=[*loc_fills, "updated_at"])
+            created["location_backfilled"] += 1
+
+    cost_center, cc_created = CostCenter.objects.get_or_create(
+        name=REAL_COST_CENTER_NAME, defaults={"legal_entity": entity}
+    )
+    created["cost_center"] += int(cc_created)
+    if not cost_center.description:
+        cost_center.description = REAL_COST_CENTER_DESCRIPTION
+        cost_center.save(update_fields=["description", "updated_at"])
+    if cost_center.legal_entity_id is None:
+        cost_center.legal_entity = entity
+        cost_center.save(update_fields=["legal_entity", "updated_at"])
+    # email_alias is blank in Keka — left unchanged, never fabricated.
+    if cost_center.owner_id is None:
+        head = _match_employee_by_name(COST_CENTER_HEAD_DISPLAY_NAME)
+        if head is not None:
+            cost_center.owner = head
+            cost_center.save(update_fields=["owner", "updated_at"])
+            created["cost_center_head"] += 1
+
+    parent = Department.objects.filter(name=REAL_PARENT_DEPARTMENT).first()
+    if parent is not None:
+        for name in REAL_SUB_DEPARTMENTS:
+            child, was_created = Department.objects.get_or_create(
+                name=name, defaults={"parent": parent}
+            )
+            created["sub_department"] += int(was_created)
+            if not was_created and child.parent_id is None:
+                child.parent = parent
+                child.save(update_fields=["parent", "updated_at"])
+    # Department head / email_alias / description were blank in Keka —
+    # left unchanged, never fabricated.
+
+    entities = list(LegalEntity.objects.order_by("id"))
+
     for entity in entities:
-        fills = {}
-        if not entity.currency:
-            fills["currency"] = "INR"
-        if not entity.financial_year:
-            fills["financial_year"] = LegalEntity.FY_APR_MAR
-        if not entity.company_identification_number:
-            fills["company_identification_number"] = EXAMPLE_CIN
-        # date_of_incorporation has no verified source — leave NULL rather
-        # than fabricate a date.
-        if not entity.address_line1:
-            fills["address_line1"] = EXAMPLE_STREET
-        if not entity.city:
-            fills["city"] = "Hyderabad"
-        if not entity.state:
-            fills["state"] = "Telangana"
-        if not entity.country:
-            fills["country"] = "India"
-        if fills:
-            for field, value in fills.items():
-                setattr(entity, field, value)
-            entity.save(update_fields=[*fills, "updated_at"])
-            created["legal_entity_backfilled"] += 1
 
         if not entity.authorized_signatories.filter(is_active=True).exists():
             for name, designation, email in _example_signatories():

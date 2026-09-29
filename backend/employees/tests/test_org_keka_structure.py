@@ -19,7 +19,19 @@ from employees.models import (
     Location,
     PayGrade,
 )
-from employees.org_seed import seed_keka_org_details
+from employees.org_seed import (
+    COST_CENTER_HEAD_DISPLAY_NAME,
+    EXAMPLE_CIN,
+    EXAMPLE_STREET,
+    REAL_COST_CENTER_DESCRIPTION,
+    REAL_COST_CENTER_NAME,
+    REAL_LEGAL_ENTITY_NAME,
+    REAL_LOCATION_NAME,
+    REAL_PARENT_DEPARTMENT,
+    REAL_SUB_DEPARTMENTS,
+    _match_employee_by_name,
+    seed_keka_org_details,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -221,27 +233,153 @@ def test_only_holders_of_org_manage_can_use_the_new_endpoints(kind, role):
 
 
 def test_seed_keka_org_details_backfills_and_is_idempotent():
-    LegalEntity.objects.create(name="Seed Entity", currency="", country="")
+    LegalEntity.objects.create(name=REAL_LEGAL_ENTITY_NAME, currency="", country="")
     EmployeeFactory()
 
     first = seed_keka_org_details()
-    # >= 1: migration 0002's "Default Entity" also exists in a migrated DB
-    # and gets backfilled alongside the row created above.
-    assert first["legal_entity_backfilled"] >= 1
+    # Exactly one row: the exact-name match (migration 0002's "Default
+    # Entity" is left alone when the real name exists).
+    assert first["legal_entity_backfilled"] == 1
     assert first["bank_account"] >= 1
     assert first["pay_grade"] == 3 and first["band"] == 2
     # Signatories come from real employees only — never invented.
     assert first["authorized_signatory"] >= 1
+    # No Hyderabad location / Audit & Assurance parent in this bare DB.
+    assert first["location_backfilled"] == 0
+    assert first["sub_department"] == 0
+    # The cost center is always ensured, even in a bare DB.
+    assert first["cost_center"] == 1
+    assert first["cost_center_head"] == 0  # no Shashank row here
 
-    entity = LegalEntity.objects.get(name="Seed Entity")
+    entity = LegalEntity.objects.get(name=REAL_LEGAL_ENTITY_NAME)
+    assert entity.legal_name == "4AT Consulting LLP"
+    assert entity.company_identification_number == "AAT-0747"
+    assert str(entity.date_of_incorporation) == "2020-07-25"
+    assert entity.type_of_business == LegalEntity.TYPE_LIMITED_LIABILITY
+    assert entity.sector == LegalEntity.SECTOR_PROFESSIONALS
+    assert entity.nature_of_business == "Chartered Accountants, Auditors, etc. (601)"
+    assert entity.address_line1.startswith("3rd Floor, D Block")
+    assert entity.address_line2 == "Madhapur"
+    assert entity.city == "Hyderabad" and entity.state == "Telangana"
+    assert entity.zip_code == "500081" and entity.country == "India"
     assert entity.currency == "INR" and entity.financial_year == "april_march"
-    assert entity.city == "Hyderabad" and entity.country == "India"
-    assert entity.date_of_incorporation is None  # no verified source: left NULL
     assert entity.authorized_signatories.filter(is_active=True).exists()
     assert entity.bank_accounts.filter(is_active=True).exists()
 
+    default_entity = LegalEntity.objects.get(name="Default Entity")
+    assert default_entity.company_identification_number != "AAT-0747"
+
     second = seed_keka_org_details()
     assert all(v == 0 for v in second.values())
+
+
+def test_seed_replaces_legacy_example_placeholders_with_real_values():
+    LegalEntity.objects.create(
+        name=REAL_LEGAL_ENTITY_NAME,
+        company_identification_number=EXAMPLE_CIN,
+        address_line1=EXAMPLE_STREET,
+    )
+
+    out = seed_keka_org_details()
+
+    assert out["legal_entity_backfilled"] == 1
+    entity = LegalEntity.objects.get(name=REAL_LEGAL_ENTITY_NAME)
+    assert entity.company_identification_number == "AAT-0747"
+    assert entity.address_line1.startswith("3rd Floor, D Block")
+    assert str(entity.date_of_incorporation) == "2020-07-25"
+
+
+def test_seed_falls_back_to_primary_entity_without_exact_name_match():
+    # Only migration 0002's "Default Entity" exists — the real values go
+    # on the primary/first row, which is reported, never renamed.
+    out = seed_keka_org_details()
+
+    assert out["legal_entity_backfilled"] == 1
+    primary = LegalEntity.objects.order_by("id").first()
+    assert primary.company_identification_number == "AAT-0747"
+    assert str(primary.date_of_incorporation) == "2020-07-25"
+    assert LegalEntity.objects.filter(name=REAL_LEGAL_ENTITY_NAME).count() == 0
+
+
+def test_seed_backfills_hyderabad_location_only_when_present():
+    Location.objects.create(name=REAL_LOCATION_NAME)
+
+    out = seed_keka_org_details()
+
+    assert out["location_backfilled"] == 1
+    loc = Location.objects.get(name=REAL_LOCATION_NAME)
+    assert loc.address_line1.startswith("3rd Floor, D Block")
+    assert loc.address_line2 == "Madhapur"
+    assert loc.city == "Hyderabad" and loc.state == "Telangana"
+    assert loc.country == "India" and loc.postal_code == "500081"
+    assert loc.timezone == "Asia/Kolkata"
+    assert loc.description == "Indian Office"
+    # Blank in Keka — never fabricated.
+    assert loc.email_alias == "" and loc.location_head_id is None
+
+    assert seed_keka_org_details()["location_backfilled"] == 0
+
+
+def test_seed_skips_location_when_absent():
+    out = seed_keka_org_details()
+
+    assert out["location_backfilled"] == 0
+    assert Location.objects.filter(name=REAL_LOCATION_NAME).count() == 0
+
+
+def test_seed_creates_cost_center_and_matches_shashank_head():
+    assert COST_CENTER_HEAD_DISPLAY_NAME == "Shashank Bala"
+    user = UserFactory(first_name="Shashank", last_name="Balabommala")
+    emp = EmployeeFactory(user=user, employee_code="4AT0017C")
+
+    out = seed_keka_org_details()
+
+    assert out["cost_center"] == 1
+    assert out["cost_center_head"] == 1
+    assert _match_employee_by_name("Shashank Bala").pk == emp.pk
+    cc = CostCenter.objects.get(name=REAL_COST_CENTER_NAME)
+    assert cc.description == REAL_COST_CENTER_DESCRIPTION
+    assert cc.owner_id == emp.pk
+    # Blank in Keka — never fabricated.
+    assert cc.email_alias == ""
+
+    rerun = seed_keka_org_details()
+    assert rerun["cost_center"] == 0 and rerun["cost_center_head"] == 0
+
+
+def test_seed_leaves_cost_center_head_null_when_no_name_match():
+    EmployeeFactory()
+
+    out = seed_keka_org_details()
+
+    assert out["cost_center_head"] == 0
+    cc = CostCenter.objects.get(name=REAL_COST_CENTER_NAME)
+    assert cc.owner_id is None
+    assert cc.description == REAL_COST_CENTER_DESCRIPTION
+
+
+def test_seed_creates_audit_sub_departments_under_parent():
+    parent = DepartmentFactory(name=REAL_PARENT_DEPARTMENT)
+
+    out = seed_keka_org_details()
+
+    assert out["sub_department"] == len(REAL_SUB_DEPARTMENTS) == 3
+    assert set(REAL_SUB_DEPARTMENTS) == {
+        "Venture Captial Audit",  # verbatim Keka spelling
+        "InfoSec Audit",
+        "SOX/ Design & Implementation",  # assumed completion of truncated label
+    }
+    for name in REAL_SUB_DEPARTMENTS:
+        assert Department.objects.get(name=name).parent_id == parent.pk
+
+    assert seed_keka_org_details()["sub_department"] == 0
+
+
+def test_seed_skips_sub_departments_without_parent():
+    out = seed_keka_org_details()
+
+    assert out["sub_department"] == 0
+    assert Department.objects.filter(name="InfoSec Audit").count() == 0
 
 
 def test_seed_never_overwrites_a_human_edit():
