@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     # Plug-in modules built on the core.
     "payroll",
     "onboarding",
+    # Asset inventory (laptops) — RBAC + scope enforced like leave/documents.
+    "assets",
     # ORG module Wave 1: effective-dated org changes (promotions, transfers).
     "orgchanges",
     "policies",
