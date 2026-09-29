@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
@@ -21,6 +21,7 @@ import {
   HelpIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
+  FingerprintIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
@@ -281,13 +282,17 @@ function getPageTitle(pathname: string) {
   return match ? pageTitles[match] : null;
 }
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, hasOrgScope, hasPermission } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // Sidebar submenu accordion (test-v1): sections with visible children get
+  // an expand/collapse chevron; the tab row under the header stays as the
+  // merge's secondary navigation for the active section.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -364,6 +369,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
     const active = isActive(item);
+    const visibleChildren = item.children?.filter(canAccess) ?? [];
+    const hasChildren = visibleChildren.length > 0;
+    const expanded = expandedId === item.id;
 
     return (
       <div key={item.id} className="group/nav relative">
@@ -391,6 +399,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {item.badge}
             </span>
           ) : null}
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setExpandedId(expanded ? null : item.id);
+              }}
+              aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
+              aria-expanded={expanded}
+              className={`-my-1 -mr-1 p-1 rounded-md hover:bg-white/10 transition-colors ${collapsed ? 'md:hidden' : ''}`}
+            >
+              <ChevronDownIcon
+                className={`w-4 h-4 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              />
+            </button>
+          ) : null}
         </Link>
 
         {/* Collapsed-state tooltip */}
@@ -398,6 +423,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <span className="hidden md:group-hover/nav:block absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs font-medium px-2.5 py-1.5 shadow-lg pointer-events-none">
             {item.label}
           </span>
+        ) : null}
+
+        {hasChildren && expanded && !collapsed ? (
+          <div className="mt-1 ml-8 space-y-0.5 border-l border-slate-700 pl-3">
+            {visibleChildren.map((child) => (
+              <Link
+                key={child.label}
+                href={child.href}
+                className="block px-2 py-1.5 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                {child.label}
+              </Link>
+            ))}
+          </div>
         ) : null}
       </div>
     );
@@ -551,6 +590,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             >
               <HelpIcon className="w-5 h-5" />
             </button>
+            <button
+              onClick={() => router.push('/attendance')}
+              className="shrink-0 flex items-center gap-2 pl-3 pr-4 py-2.5 rounded-full border border-indigo-200 text-indigo-600 text-sm font-semibold hover:bg-indigo-50 transition-colors"
+              title="Quick Check In"
+            >
+              <FingerprintIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">Quick Check In</span>
+            </button>
             <NotificationsDropdown />
             <div className="pl-2 sm:pl-3 border-l border-slate-200">
               <ProfileDropdown />
@@ -584,5 +631,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto">{children}</div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() inside needs a Suspense boundary for static prerendering
+// (test-v1 wrapped its search-param reader the same way).
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={null}>
+      <AppLayoutInner>{children}</AppLayoutInner>
+    </Suspense>
   );
 }
