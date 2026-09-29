@@ -45,6 +45,85 @@ export interface Page<T> {
   pageSize: number;
 }
 
+/** Employee Reports (Org Dashboard > Employee Reports). Shapes mirror the
+ * backend's snake_case {success, data} envelope, unwrapped by `request`. */
+export interface ReportCard {
+  id: string;
+  title: string;
+  description: string;
+  wired: boolean;
+  unavailable?: string | null;
+}
+
+export interface ReportCategory {
+  id: string;
+  label: string;
+  reports: ReportCard[];
+}
+
+export interface ReportFieldGroup {
+  name: string;
+  fields: { key: string; label: string }[];
+  count: number;
+}
+
+export interface ReportCatalog {
+  categories: ReportCategory[];
+  field_groups: ReportFieldGroup[];
+}
+
+export interface ReportColumn {
+  key: string;
+  label: string;
+}
+
+export interface ReportPayload {
+  type: string;
+  title: string;
+  description: string;
+  category: string;
+  wired: boolean;
+  columns: ReportColumn[];
+  rows: Record<string, string | number | null>[];
+  total: number;
+  unavailable: string | null;
+  custom?: { id: number; name: string };
+}
+
+export interface SavedReport {
+  id: number;
+  name: string;
+  base_type: string;
+  selected_fields: string[];
+  filters: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ReportFilters = {
+  business_unit?: string;
+  department?: string;
+  location?: string;
+  cost_center?: string;
+  legal_entity?: string;
+  band?: string;
+};
+
+/** Rows -> CSV text (client-side download; the backend also serves CSV at
+ * org/reports/export/ for API users). */
+export function reportRowsToCsv(
+  columns: ReportColumn[],
+  rows: Record<string, string | number | null>[],
+): string {
+  const cell = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [columns.map((c) => cell(c.label)).join(',')];
+  for (const row of rows) lines.push(columns.map((c) => cell(row[c.key])).join(','));
+  return lines.join('\n');
+}
+
 export interface RoleGrant {
   id: number;
   role: number;
@@ -323,6 +402,32 @@ export const adminApi = {
     pageSize?: number;
   }) =>
     request<Page<EmployeeActivityEntry>>(`org/employee-activity/${qs(p)}`),
+
+  // employee reports (org.read-gated, snake_case {success, data})
+  getReportCatalog: () => request<ReportCatalog>('org/reports/catalog/'),
+  runReport: (
+    type: string,
+    filters: Record<string, string | undefined> = {},
+    columns?: string[],
+  ) =>
+    request<ReportPayload>(
+      `org/reports/run/${qs({ type, ...filters, ...(columns?.length ? { columns: columns.join(',') } : {}) })}`,
+    ),
+  runSavedReport: (id: number, filters: Record<string, string | undefined> = {}) =>
+    request<ReportPayload>(`org/reports/run/${qs({ custom: id, ...filters })}`),
+  listCustomReports: () => request<Page<SavedReport>>('org/reports/custom/'),
+  createCustomReport: (body: {
+    name: string;
+    base_type: string;
+    selected_fields: string[];
+    filters: Record<string, string>;
+  }) => request<SavedReport>('org/reports/custom/', { method: 'POST', body }),
+  updateCustomReport: (
+    id: number,
+    body: Partial<{ name: string; selected_fields: string[]; filters: Record<string, string> }>,
+  ) => request<SavedReport>(`org/reports/custom/${id}/`, { method: 'PATCH', body }),
+  deleteCustomReport: (id: number) =>
+    request<void>(`org/reports/custom/${id}/`, { method: 'DELETE' }),
 };
 
 /** "Role.created" -> "Role created", "auth.login_failed" -> "Login failed". */
