@@ -86,3 +86,7 @@ docs/GOD-AGENT-ORCHESTRATION.md
 # Local DB dumps (data reproducible from roster.xlsx at startup)
 hrms_dump.sql
 *.sql
+
+# Confidential asset inventory (PII) — mounted at runtime like roster.xlsx, never committed
+docs/asset_laptops.csv
+docs/*.csv
