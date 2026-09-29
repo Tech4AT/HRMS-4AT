@@ -18,7 +18,11 @@
  * - Extra stored columns per master are declared as `extraFields` on each
  *   TypeConfig below (FK picker sources included) — the drawer and the
  *   detail panel both render from that single spec, so they cannot drift.
- * - NO Band model exists: the Bands tab stays an honest empty state.
+ * - LegalEntity carries the full Keka Registration Information set plus two
+ *   child collections (AuthorizedSignatory via `authorized-signatories`,
+ *   LegalEntityBankAccount via `bank-details`, both scoped with
+ *   `?legal_entity=<id>`). PayGrade (`pay-grades`) + Band (`bands`, scoped
+ *   with `?pay_grade=<id>`) are EXAMPLE placeholders with no payroll link.
  */
 
 import type { OrgEmployee } from '@/lib/api/org';
@@ -34,6 +38,7 @@ export type UnitKind =
   | 'levels'
   | 'grades'
   | 'job-titles'
+  | 'pay-grades'
   | 'bands';
 
 /** Where an FK picker's options come from. */
@@ -46,13 +51,14 @@ export type FkTarget =
   | 'cost-center'
   | 'job-family'
   | 'level'
-  | 'job-title';
+  | 'job-title'
+  | 'pay-grade';
 
 export interface ExtraField {
   /** snake_case write key (what the admin endpoint consumes). */
   key: string;
   label: string;
-  type: 'text' | 'textarea' | 'number' | 'boolean' | 'fk' | 'select';
+  type: 'text' | 'textarea' | 'number' | 'boolean' | 'fk' | 'select' | 'date';
   /** Which master/employee list feeds an `fk` picker. */
   fk?: FkTarget;
   /** Static choices for a `select` (e.g. Location.type). */
@@ -127,17 +133,73 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     hasParent: false,
     hasEmployees: true,
     extraFields: [
-      { key: 'registered_address', label: 'Registered address', type: 'fk', fk: 'location' },
-      { key: 'country', label: 'Country', type: 'text', placeholder: 'e.g. India' },
-      { key: 'currency', label: 'Currency', type: 'text', placeholder: 'e.g. INR' },
       { key: 'logo', label: 'Logo URL', type: 'text', placeholder: 'https://…' },
+      { key: 'country', label: 'Country', type: 'text', placeholder: 'e.g. India' },
+      { key: 'legal_name', label: 'Legal name', type: 'text', placeholder: 'e.g. 4AT Consulting LLP' },
+      {
+        key: 'company_identification_number',
+        label: 'Company identification number (CIN)',
+        type: 'text',
+        placeholder: 'e.g. AAX-0000',
+      },
+      { key: 'date_of_incorporation', label: 'Date of incorporation', type: 'date' },
+      {
+        key: 'type_of_business',
+        label: 'Type of business',
+        type: 'select',
+        options: [
+          { value: 'limited_liability', label: 'Limited Liability' },
+          { value: 'private_limited', label: 'Private Limited' },
+          { value: 'public_limited', label: 'Public Limited' },
+          { value: 'llp', label: 'LLP' },
+          { value: 'partnership', label: 'Partnership' },
+          { value: 'sole_proprietorship', label: 'Sole Proprietorship' },
+        ],
+      },
+      {
+        key: 'sector',
+        label: 'Sector',
+        type: 'select',
+        options: [
+          { value: 'professionals', label: 'Professionals' },
+          { value: 'manufacturing', label: 'Manufacturing Industry' },
+          { value: 'it_software', label: 'IT & Software' },
+          { value: 'services', label: 'Services' },
+          { value: 'finance', label: 'Finance' },
+          { value: 'other', label: 'Other' },
+        ],
+      },
+      {
+        key: 'nature_of_business',
+        label: 'Nature of business',
+        type: 'textarea',
+        placeholder: 'e.g. Chartered Accountants, Auditors, etc. (601)',
+      },
+      { key: 'address_line1', label: 'Address line 1', type: 'text' },
+      { key: 'address_line2', label: 'Address line 2', type: 'text' },
+      { key: 'city', label: 'City', type: 'text' },
+      { key: 'state', label: 'State', type: 'text' },
+      { key: 'zip_code', label: 'ZIP / PIN code', type: 'text' },
+      {
+        key: 'currency',
+        label: 'Currency',
+        type: 'text',
+        placeholder: 'INR',
+        hint: 'Defaults to INR when left blank.',
+      },
+      {
+        key: 'financial_year',
+        label: 'Financial year',
+        type: 'select',
+        options: [
+          { value: 'april_march', label: 'April - March' },
+          { value: 'january_december', label: 'January - December' },
+          { value: 'july_june', label: 'July - June' },
+        ],
+      },
+      { key: 'registered_address', label: 'Registered address', type: 'fk', fk: 'location' },
     ],
-    disabledFields: [
-      { label: 'CIN / Registration no.', hint: 'Tax and registration columns live in the payroll module, not here.' },
-      { label: 'Date of incorporation' },
-      { label: 'Type / Sector / Nature of business' },
-      { label: 'Financial year' },
-    ],
+    disabledFields: [],
   },
   {
     kind: 'business-units',
@@ -165,6 +227,8 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     hasParent: false,
     hasEmployees: true,
     extraFields: [
+      EMPLOYEE_FK('location_head', 'Location head'),
+      { key: 'email_alias', label: 'Email alias', type: 'text', placeholder: 'e.g. hyd@example.com' },
       { key: 'address_line1', label: 'Address line 1', type: 'text' },
       { key: 'address_line2', label: 'Address line 2', type: 'text' },
       { key: 'city', label: 'City', type: 'text' },
@@ -198,6 +262,7 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     hasEmployees: true,
     extraFields: [
       EMPLOYEE_FK('head', 'Department head'),
+      { key: 'email_alias', label: 'Email alias', type: 'text', placeholder: 'e.g. audit@example.com' },
       { key: 'cost_center', label: 'Cost center', type: 'fk', fk: 'cost-center' },
       { key: 'business_unit', label: 'Business unit', type: 'fk', fk: 'business-unit' },
     ],
@@ -229,6 +294,7 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     hasEmployees: true,
     extraFields: [
       EMPLOYEE_FK('owner', 'Budget owner'),
+      { key: 'email_alias', label: 'Email alias', type: 'text', placeholder: 'e.g. cc-finance@example.com' },
       { key: 'legal_entity', label: 'Legal entity', type: 'fk', fk: 'legal-entity' },
     ],
     disabledFields: [{ label: 'Cost center head', hint: 'Use the budget owner above — there is no separate head column.' }],
@@ -262,9 +328,9 @@ export const TYPE_CONFIGS: TypeConfig[] = [
   },
   {
     kind: 'grades',
-    label: 'Pay Grades',
-    singular: 'Pay Grade',
-    plural: 'Pay Grades',
+    label: 'Grades',
+    singular: 'Grade',
+    plural: 'Grades',
     adminResource: 'grades',
     employeeKey: 'grade_id',
     hasParent: false,
@@ -289,15 +355,38 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     disabledFields: [],
   },
   {
-    kind: 'bands',
-    label: 'Bands',
-    singular: 'Band',
-    plural: 'Bands',
-    adminResource: null,
+    kind: 'pay-grades',
+    label: 'Pay Grades (example)',
+    singular: 'Pay Grade',
+    plural: 'Pay Grades',
+    adminResource: 'pay-grades',
     employeeKey: null,
     hasParent: false,
     hasEmployees: false,
-    extraFields: [],
+    extraFields: [
+      { key: 'min_pay', label: 'Minimum pay', type: 'number', placeholder: 'e.g. 300000' },
+      { key: 'mid_pay', label: 'Mid pay', type: 'number', placeholder: 'e.g. 400000' },
+      { key: 'max_pay', label: 'Maximum pay', type: 'number', placeholder: 'e.g. 500000' },
+      {
+        key: 'currency',
+        label: 'Currency',
+        type: 'text',
+        placeholder: 'INR',
+        hint: 'Defaults to INR when left blank. Indicative only — real compensation lives in payroll.',
+      },
+    ],
+    disabledFields: [],
+  },
+  {
+    kind: 'bands',
+    label: 'Bands (example)',
+    singular: 'Band',
+    plural: 'Bands',
+    adminResource: 'bands',
+    employeeKey: null,
+    hasParent: false,
+    hasEmployees: false,
+    extraFields: [{ key: 'pay_grade', label: 'Pay grade', type: 'fk', fk: 'pay-grade' }],
     disabledFields: [],
   },
 ];
@@ -422,6 +511,35 @@ export interface AdminUnitRow {
  */
 export async function adminList(resource: string): Promise<AdminUnitRow[] | null> {
   const res = await fetch(`${baseFor(resource)}?pageSize=1000`, { credentials: 'include' });
+  if (!res.ok) return null;
+  let json: unknown = null;
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
+  const data = (json as { data?: unknown })?.data ?? json;
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { results?: unknown })?.results)
+      ? ((data as { results?: unknown }).results as AdminUnitRow[])
+      : null;
+  if (!rows) return null;
+  return rows as AdminUnitRow[];
+}
+
+/**
+ * GET /api/admin/org/<resource>/?pageSize=1000&<params> — filtered admin list
+ * (e.g. signatories scoped with `?legal_entity=<id>`, bands with
+ * `?pay_grade=<id>`). Same envelope handling as adminList; null when the
+ * caller may not read it.
+ */
+export async function adminListFiltered(
+  resource: string,
+  params: Record<string, string>,
+): Promise<AdminUnitRow[] | null> {
+  const query = new URLSearchParams({ pageSize: '1000', ...params }).toString();
+  const res = await fetch(`${baseFor(resource)}?${query}`, { credentials: 'include' });
   if (!res.ok) return null;
   let json: unknown = null;
   try {
