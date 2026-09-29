@@ -1,6 +1,8 @@
 from django.contrib import admin
 
 from employees.models import (
+    AuthorizedSignatory,
+    Band,
     BankDetails,
     BusinessUnit,
     CodeScheme,
@@ -13,8 +15,10 @@ from employees.models import (
     IdentityDocument,
     JobTitle,
     LegalEntity,
+    LegalEntityBankAccount,
     Location,
     OrgSetting,
+    PayGrade,
     Resignation,
 )
 
@@ -22,6 +26,31 @@ admin.site.register(Location)
 admin.site.register(LegalEntity)
 admin.site.register(BusinessUnit)
 admin.site.register(CostCenter)
+
+
+@admin.register(AuthorizedSignatory)
+class AuthorizedSignatoryAdmin(admin.ModelAdmin):
+    list_display = ["name", "legal_entity", "designation", "is_active"]
+    list_filter = ["legal_entity", "is_active"]
+    search_fields = ["name", "designation", "email"]
+
+
+@admin.register(LegalEntityBankAccount)
+class LegalEntityBankAccountAdmin(admin.ModelAdmin):
+    list_display = ["bank_name", "legal_entity", "account_type", "is_active"]
+    list_filter = ["legal_entity", "account_type", "is_active"]
+
+
+@admin.register(PayGrade)
+class PayGradeAdmin(admin.ModelAdmin):
+    list_display = ["name", "code", "currency", "is_active"]
+    list_filter = ["is_active"]
+
+
+@admin.register(Band)
+class BandAdmin(admin.ModelAdmin):
+    list_display = ["name", "pay_grade", "is_active"]
+    list_filter = ["pay_grade", "is_active"]
 
 
 @admin.register(Department)

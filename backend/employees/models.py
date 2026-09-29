@@ -67,6 +67,8 @@ class Department(SoftDeleteNamedModel):
         on_delete=models.SET_NULL,
         related_name="departments",
     )
+    # Keka parity: distribution-list alias shown on the department screen.
+    email_alias = models.CharField(max_length=150, blank=True, default="")
 
 
 class JobTitle(SoftDeleteNamedModel):
@@ -108,6 +110,15 @@ class Location(SoftDeleteNamedModel):
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_BRANCH)
+    # Keka parity: who runs this location + its distribution-list alias.
+    location_head = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="headed_locations",
+    )
+    email_alias = models.CharField(max_length=150, blank=True, default="")
 
 
 class LegalEntity(SoftDeleteNamedModel):
@@ -115,9 +126,67 @@ class LegalEntity(SoftDeleteNamedModel):
     seeded (see employees/migrations for the seed migration) — but this is a real
     table from day one so a second entity is a data change, not a schema change.
 
-    Tax/registration/signatory columns are deliberately NOT here — the payroll
-    module owns those (LegalEntityPayrollProfile) and links later."""
+    Registration columns below are Keka parity (Registration Information tab).
+    Tax/statutory filing columns stay in the payroll module
+    (LegalEntityPayrollProfile) — nothing here FKs to payroll."""
 
+    TYPE_LIMITED_LIABILITY = "limited_liability"
+    TYPE_PRIVATE_LIMITED = "private_limited"
+    TYPE_PUBLIC_LIMITED = "public_limited"
+    TYPE_LLP = "llp"
+    TYPE_PARTNERSHIP = "partnership"
+    TYPE_SOLE_PROPRIETORSHIP = "sole_proprietorship"
+    TYPE_OF_BUSINESS_CHOICES = [
+        (TYPE_LIMITED_LIABILITY, "Limited Liability"),
+        (TYPE_PRIVATE_LIMITED, "Private Limited"),
+        (TYPE_PUBLIC_LIMITED, "Public Limited"),
+        (TYPE_LLP, "LLP"),
+        (TYPE_PARTNERSHIP, "Partnership"),
+        (TYPE_SOLE_PROPRIETORSHIP, "Sole Proprietorship"),
+    ]
+
+    SECTOR_PROFESSIONALS = "professionals"
+    SECTOR_MANUFACTURING = "manufacturing"
+    SECTOR_IT_SOFTWARE = "it_software"
+    SECTOR_SERVICES = "services"
+    SECTOR_FINANCE = "finance"
+    SECTOR_OTHER = "other"
+    SECTOR_CHOICES = [
+        (SECTOR_PROFESSIONALS, "Professionals"),
+        (SECTOR_MANUFACTURING, "Manufacturing Industry"),
+        (SECTOR_IT_SOFTWARE, "IT & Software"),
+        (SECTOR_SERVICES, "Services"),
+        (SECTOR_FINANCE, "Finance"),
+        (SECTOR_OTHER, "Other"),
+    ]
+
+    FY_APR_MAR = "april_march"
+    FY_JAN_DEC = "january_december"
+    FY_JUL_JUN = "july_june"
+    FINANCIAL_YEAR_CHOICES = [
+        (FY_APR_MAR, "April - March"),
+        (FY_JAN_DEC, "January - December"),
+        (FY_JUL_JUN, "July - June"),
+    ]
+
+    legal_name = models.CharField(max_length=200, blank=True, default="")
+    company_identification_number = models.CharField(max_length=50, blank=True, default="")
+    date_of_incorporation = models.DateField(null=True, blank=True)
+    type_of_business = models.CharField(
+        max_length=30, choices=TYPE_OF_BUSINESS_CHOICES, blank=True, default=""
+    )
+    sector = models.CharField(max_length=30, choices=SECTOR_CHOICES, blank=True, default="")
+    # Free text storing the Keka label incl. code, e.g.
+    # 'Chartered Accountants, Auditors, etc. (601)'.
+    nature_of_business = models.CharField(max_length=200, blank=True, default="")
+    address_line1 = models.CharField(max_length=200, blank=True, default="")
+    address_line2 = models.CharField(max_length=200, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    state = models.CharField(max_length=100, blank=True, default="")
+    zip_code = models.CharField(max_length=20, blank=True, default="")
+    financial_year = models.CharField(
+        max_length=20, choices=FINANCIAL_YEAR_CHOICES, blank=True, default=""
+    )
     registered_address = models.ForeignKey(
         Location, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
@@ -168,6 +237,116 @@ class CostCenter(SoftDeleteNamedModel):
         on_delete=models.SET_NULL,
         related_name="cost_centers",
     )
+    # Keka parity: distribution-list alias shown on the cost-center screen.
+    email_alias = models.CharField(max_length=150, blank=True, default="")
+
+
+class AuthorizedSignatory(models.Model):
+    """A person authorised to sign for a legal entity (Keka inner tab
+    "Authorized Signatories"). Informational only — deliberately NOT an FK to
+    Employee, so non-employee directors/partners can be listed. Never
+    hard-delete history: use is_active."""
+
+    legal_entity = models.ForeignKey(
+        LegalEntity, on_delete=models.CASCADE, related_name="authorized_signatories"
+    )
+    name = models.CharField(max_length=200)
+    designation = models.CharField(max_length=150, blank=True, default="")
+    email = models.EmailField(blank=True, default="")
+    din_or_pan = models.CharField(max_length=30, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.legal_entity_id})"
+
+
+class LegalEntityBankAccount(models.Model):
+    """A company bank account of a legal entity (Keka inner tab "Bank
+    Details"). Named LegalEntityBankAccount (not BankDetails) because
+    employees.BankDetails already means an employee's salary account.
+    Never hard-delete history: use is_active."""
+
+    ACCOUNT_SAVINGS = "savings"
+    ACCOUNT_CURRENT = "current"
+    ACCOUNT_TYPE_CHOICES = [
+        (ACCOUNT_SAVINGS, "Savings"),
+        (ACCOUNT_CURRENT, "Current"),
+    ]
+
+    legal_entity = models.ForeignKey(
+        LegalEntity, on_delete=models.CASCADE, related_name="bank_accounts"
+    )
+    bank_name = models.CharField(max_length=150)
+    account_number = models.CharField(max_length=34)
+    ifsc_code = models.CharField(max_length=11)
+    branch = models.CharField(max_length=150, blank=True, default="")
+    account_type = models.CharField(
+        max_length=20, choices=ACCOUNT_TYPE_CHOICES, blank=True, default=""
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["bank_name", "account_number"]
+
+    def __str__(self):
+        return f"{self.bank_name} …{self.account_number[-4:]} ({self.legal_entity_id})"
+
+
+# NOTE (placeholder): PayGrade/Band below carry EXAMPLE fields only — the
+# product owner has not shared the Keka Pay Grades / Bands screenshots yet.
+# They are standalone reference tables with NO link to payroll by design.
+# Revisit (rename/extend/drop) once the real screenshots land.
+
+
+class PayGrade(models.Model):
+    """EXAMPLE placeholder pay grade (e.g. E1, M2) with an indicative pay
+    range. Money here is indicative only — real compensation lives in the
+    payroll module, which does NOT point at this table."""
+
+    name = models.CharField(max_length=150, unique=True)
+    code = models.CharField(max_length=30, blank=True, default="", db_index=True)
+    description = models.TextField(blank=True, default="")
+    min_pay = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    mid_pay = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    max_pay = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=10, default="INR")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class Band(models.Model):
+    """EXAMPLE placeholder band (e.g. Individual Contributor, Manager) —
+    optionally tied to a PayGrade. See PayGrade note above."""
+
+    name = models.CharField(max_length=150, unique=True)
+    code = models.CharField(max_length=30, blank=True, default="", db_index=True)
+    description = models.TextField(blank=True, default="")
+    pay_grade = models.ForeignKey(
+        PayGrade, null=True, blank=True, on_delete=models.SET_NULL, related_name="bands"
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 
 class Team(SoftDeleteNamedModel):

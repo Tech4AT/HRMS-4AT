@@ -21,7 +21,9 @@ from rest_framework import serializers
 from accounts.models import Role
 from core.enums import EmployeeStatus, EmploymentType
 from employees.models import (
+    AuthorizedSignatory,
     BusinessUnit,
+    Band,
     CodeScheme,
     CostCenter,
     Department,
@@ -31,9 +33,11 @@ from employees.models import (
     JobFamily,
     JobTitle,
     LegalEntity,
+    LegalEntityBankAccount,
     Level,
     Location,
     OrgSetting,
+    PayGrade,
     Position,
     Team,
 )
@@ -601,6 +605,7 @@ class _DepartmentAdmin(_OrgUnitSerializer):
             "cost_center_name",
             "business_unit",
             "business_unit_name",
+            "email_alias",
         ]
         read_only_fields = [
             *_OrgUnitSerializer.Meta.read_only_fields,
@@ -664,6 +669,8 @@ DesignationAdminSerializer = JobTitleAdminSerializer
 
 
 class LocationAdminSerializer(_OrgUnitSerializer):
+    location_head_name = serializers.SerializerMethodField()
+
     class Meta(_OrgUnitSerializer.Meta):
         model = Location
         fields = [
@@ -678,7 +685,17 @@ class LocationAdminSerializer(_OrgUnitSerializer):
             "latitude",
             "longitude",
             "type",
+            "location_head",
+            "location_head_name",
+            "email_alias",
         ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "location_head_name",
+        ]
+
+    def get_location_head_name(self, obj):
+        return _person_name(getattr(obj, "location_head", None))
 
 
 class LegalEntityAdminSerializer(_OrgUnitSerializer):
@@ -690,6 +707,18 @@ class LegalEntityAdminSerializer(_OrgUnitSerializer):
         model = LegalEntity
         fields = [
             *_OrgUnitSerializer.Meta.fields,
+            "legal_name",
+            "company_identification_number",
+            "date_of_incorporation",
+            "type_of_business",
+            "sector",
+            "nature_of_business",
+            "address_line1",
+            "address_line2",
+            "city",
+            "state",
+            "zip_code",
+            "financial_year",
             "registered_address",
             "registered_address_name",
             "country",
@@ -765,6 +794,7 @@ class CostCenterAdminSerializer(_OrgUnitSerializer):
             "owner_name",
             "legal_entity",
             "legal_entity_name",
+            "email_alias",
         ]
         read_only_fields = [
             *_OrgUnitSerializer.Meta.read_only_fields,
@@ -1027,3 +1057,96 @@ class HierarchyRuleSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class AuthorizedSignatorySerializer(serializers.ModelSerializer):
+    """One authorised signatory of a legal entity (Keka inner tab)."""
+
+    legal_entity_name = serializers.CharField(
+        source="legal_entity.name", read_only=True, default=None
+    )
+
+    class Meta:
+        model = AuthorizedSignatory
+        fields = [
+            "id",
+            "legal_entity",
+            "legal_entity_name",
+            "name",
+            "designation",
+            "email",
+            "din_or_pan",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "legal_entity_name", "created_at", "updated_at"]
+
+
+class LegalEntityBankAccountSerializer(serializers.ModelSerializer):
+    """One company bank account of a legal entity (Keka "Bank Details" tab)."""
+
+    legal_entity_name = serializers.CharField(
+        source="legal_entity.name", read_only=True, default=None
+    )
+
+    class Meta:
+        model = LegalEntityBankAccount
+        fields = [
+            "id",
+            "legal_entity",
+            "legal_entity_name",
+            "bank_name",
+            "account_number",
+            "ifsc_code",
+            "branch",
+            "account_type",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "legal_entity_name", "created_at", "updated_at"]
+
+
+class PayGradeSerializer(serializers.ModelSerializer):
+    """EXAMPLE placeholder pay grade — see PayGrade model note."""
+
+    class Meta:
+        model = PayGrade
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "min_pay",
+            "mid_pay",
+            "max_pay",
+            "currency",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class BandSerializer(serializers.ModelSerializer):
+    """EXAMPLE placeholder band — see Band model note."""
+
+    pay_grade_name = serializers.CharField(
+        source="pay_grade.name", read_only=True, default=None
+    )
+
+    class Meta:
+        model = Band
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "pay_grade",
+            "pay_grade_name",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "pay_grade_name", "created_at", "updated_at"]

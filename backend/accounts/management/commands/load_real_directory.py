@@ -27,7 +27,7 @@ from employees.models import (
     Position,
     Team,
 )
-from employees.org_seed import seed_derived_org_masters
+from employees.org_seed import seed_derived_org_masters, seed_keka_org_details
 
 DEMO_PW = "Welcome@123"
 ADMIN_EMAIL = "admin@hrms.local"
@@ -224,9 +224,10 @@ class Command(BaseCommand):
             # the real directory just loaded — idempotent, so every boot
             # rebuilds them identically after the wipe above.
             seed_counts = seed_derived_org_masters()
+            keka_counts = seed_keka_org_details()
 
         self.stdout.write(self.style.SUCCESS(
             f"Loaded {len(emps)} employees, {linked} manager links. "
-            f"Derived masters: {seed_counts}. Logins:"))
+            f"Derived masters: {seed_counts}. Keka details: {keka_counts}. Logins:"))
         for em, pw, note in logins:
             self.stdout.write(f"  {em} / {pw}   [{note}]")

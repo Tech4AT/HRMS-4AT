@@ -35,12 +35,16 @@ from collections import Counter
 from django.db import transaction
 
 from employees.models import (
+    AuthorizedSignatory,
+    Band,
     BusinessUnit,
     CostCenter,
     Department,
     Employee,
     Grade,
     LegalEntity,
+    LegalEntityBankAccount,
+    PayGrade,
     Position,
     Team,
 )
@@ -229,3 +233,152 @@ def seed_derived_org_masters():
         ).update(position=position)
 
     return created
+
+
+# --- Keka parity backfill (example values) ------------------------------------
+# Idempotent: fills LegalEntity registration columns only when blank, and
+# get-or-creates exactly one example bank row / two signatories / three pay
+# grades / two bands. A human edit is never overwritten — every field or row
+# set here survives re-runs unchanged. Safe to call on every boot after
+# seed_derived_org_masters().
+#
+# Provenance: company name "4AT Consulting LLP" and Hyderabad come from the
+# real roster; everything marked EXAMPLE below (CIN, street address,
+# incorporation date left NULL, account numbers, pay ranges) is a placeholder
+# the product owner must confirm — no verified source was shared.
+
+# Keep within LegalEntity.company_identification_number max_length=50.
+EXAMPLE_CIN = "U72200TG2015PTC000000 (EXAMPLE — verify with CS)"
+EXAMPLE_STREET = "Hyderabad office street address (EXAMPLE — verify with HR)"
+
+# (name, code, description, min_pay, mid_pay, max_pay) — EXAMPLE ranges.
+EXAMPLE_PAY_GRADES = [
+    ("E1 — Associate", "E1", "EXAMPLE entry-level grade", 300000, 400000, 500000),
+    ("E2 — Senior Associate", "E2", "EXAMPLE experienced individual grade", 500000, 650000, 800000),
+    ("M1 — Manager", "M1", "EXAMPLE first-line manager grade", 800000, 1000000, 1200000),
+]
+
+# (name, code, description, pay_grade_code or None) — EXAMPLE bands.
+EXAMPLE_BANDS = [
+    ("Individual Contributor", "IC", "EXAMPLE non-manager band", "E2"),
+    ("People Manager", "MGR", "EXAMPLE manager band", "M1"),
+]
+
+
+@transaction.atomic
+def seed_keka_org_details():
+    """Backfill Keka registration/bank/signatory/pay example rows.
+
+    Returns the number of rows/fields *created or filled* per key
+    (re-runs return zeros).
+    """
+    created = {
+        "legal_entity_backfilled": 0,
+        "authorized_signatory": 0,
+        "bank_account": 0,
+        "pay_grade": 0,
+        "band": 0,
+    }
+    entities = list(LegalEntity.objects.order_by("id"))
+    if not entities:
+        return created
+
+    for entity in entities:
+        fills = {}
+        if not entity.currency:
+            fills["currency"] = "INR"
+        if not entity.financial_year:
+            fills["financial_year"] = LegalEntity.FY_APR_MAR
+        if not entity.company_identification_number:
+            fills["company_identification_number"] = EXAMPLE_CIN
+        # date_of_incorporation has no verified source — leave NULL rather
+        # than fabricate a date.
+        if not entity.address_line1:
+            fills["address_line1"] = EXAMPLE_STREET
+        if not entity.city:
+            fills["city"] = "Hyderabad"
+        if not entity.state:
+            fills["state"] = "Telangana"
+        if not entity.country:
+            fills["country"] = "India"
+        if fills:
+            for field, value in fills.items():
+                setattr(entity, field, value)
+            entity.save(update_fields=[*fills, "updated_at"])
+            created["legal_entity_backfilled"] += 1
+
+        if not entity.authorized_signatories.filter(is_active=True).exists():
+            for name, designation, email in _example_signatories():
+                _, was_created = AuthorizedSignatory.objects.get_or_create(
+                    legal_entity=entity,
+                    name=name,
+                    defaults={
+                        "designation": designation,
+                        "email": email,
+                    },
+                )
+                created["authorized_signatory"] += int(was_created)
+
+        if not entity.bank_accounts.filter(is_active=True).exists():
+            _, was_created = LegalEntityBankAccount.objects.get_or_create(
+                legal_entity=entity,
+                account_number="50100223456789 (EXAMPLE — verify)",
+                defaults={
+                    "bank_name": "HDFC Bank (EXAMPLE — verify)",
+                    "ifsc_code": "HDFC0000000",
+                    "branch": "Hyderabad (EXAMPLE — verify)",
+                    "account_type": LegalEntityBankAccount.ACCOUNT_CURRENT,
+                },
+            )
+            created["bank_account"] += int(was_created)
+
+    for name, code, description, lo, mid, hi in EXAMPLE_PAY_GRADES:
+        _, was_created = PayGrade.objects.get_or_create(
+            name=name,
+            defaults={
+                "code": code,
+                "description": description,
+                "min_pay": lo,
+                "mid_pay": mid,
+                "max_pay": hi,
+                "currency": "INR",
+            },
+        )
+        created["pay_grade"] += int(was_created)
+
+    grades_by_code = {g.code: g for g in PayGrade.objects.filter(code__in=["E1", "E2", "M1"])}
+    for name, code, description, grade_code in EXAMPLE_BANDS:
+        _, was_created = Band.objects.get_or_create(
+            name=name,
+            defaults={
+                "code": code,
+                "description": description,
+                "pay_grade": grades_by_code.get(grade_code),
+            },
+        )
+        created["band"] += int(was_created)
+
+    return created
+
+
+def _example_signatories():
+    """(name, designation, email) drawn ONLY from real employee rows.
+
+    The two busiest managers stand in as example signatories; when the
+    directory is empty (e.g. a bare test DB) this returns [] and the caller
+    seeds nothing rather than inventing people.
+    """
+    employees = list(
+        Employee.objects.select_related("user").exclude(status=Employee.STATUS_EXITED)
+    )
+    if not employees:
+        return []
+    counts = _report_counts()
+    ranked = sorted(
+        employees, key=lambda e: (-counts.get(e.pk, 0), e.employee_code)
+    )
+    out = []
+    for e in ranked[:2]:
+        full = e.user.get_full_name().strip() or e.employee_code
+        out.append((full, (e.designation.name if e.designation_id else ""), e.user.email))
+    return out
