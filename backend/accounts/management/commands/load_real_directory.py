@@ -13,6 +13,7 @@ Re-runnable: it wipes first.
 
 import os
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -225,6 +226,14 @@ class Command(BaseCommand):
             # rebuilds them identically after the wipe above.
             seed_counts = seed_derived_org_masters()
             keka_counts = seed_keka_org_details()
+
+            # Laptop inventory from the mounted HR export (gitignored PII).
+            # Skipped when the file isn't mounted — must never break boot.
+            assets_csv = os.environ.get("ASSETS_CSV", "/data/docs/asset_laptops.csv")
+            if os.path.exists(assets_csv):
+                call_command("import_assets", path=assets_csv)
+            else:
+                self.stdout.write(f"  WARNING: assets CSV not mounted, skipping: {assets_csv}")
 
         self.stdout.write(self.style.SUCCESS(
             f"Loaded {len(emps)} employees, {linked} manager links. "
