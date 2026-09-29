@@ -243,3 +243,29 @@ def test_nothing_is_sent_when_lms_is_not_configured():
         counts = dispatcher.dispatch_due()
     assert "skipped" in counts
     assert outbound()[0].status == SyncStatus.PENDING
+
+
+def test_real_day1_activation_provisions_then_moves_to_onboarding_path(monkeypatch):
+    """The existing onboarding flow (onboarding.services.activate_day1) is what
+    turns a preboarding hire into an LMS learner: EMPLOYEE_CREATED first, then
+    ONBOARDING_STAGE_CHANGED so the LMS can assign the onboarding path."""
+    from types import SimpleNamespace
+
+    from onboarding import services
+    from onboarding.models import OFFER_ACCEPTED, OnboardingProfile
+
+    employee = EmployeeFactory(status="pre_onboarding")
+    profile = OnboardingProfile.objects.create(employee=employee, stage="preboarding")
+    assert types(employee) == []  # nothing is sent for a preboarding hire
+
+    monkeypatch.setattr(
+        OnboardingProfile,
+        "current_offer_letter",
+        property(lambda self: SimpleNamespace(status=OFFER_ACCEPTED)),
+    )
+    assert services.activate_day1(profile) is True
+
+    assert types(employee) == ["EMPLOYEE_CREATED", "ONBOARDING_STAGE_CHANGED"]
+    created, stage = outbound(employee)
+    assert created.payload["employee"]["employment_status"] == "ACTIVE"
+    assert stage.payload["onboarding"] == {"previous_stage": "preboarding", "stage": "onboarding"}
