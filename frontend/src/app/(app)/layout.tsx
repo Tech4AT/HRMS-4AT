@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
@@ -19,12 +19,17 @@ import {
   GridIcon,
   SettingsIcon,
   HelpIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  FingerprintIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   SearchIcon,
   IdCardIcon,
+  ClipboardCheckIcon,
+  DocumentIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -124,6 +129,8 @@ function getActiveChild<T extends { href: string; matchPrefixes?: string[] }>(
 
 const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, href: '/', roles: ['admin', 'employee', 'superadmin'] },
+  { id: 'my-onboarding', label: 'My Onboarding', icon: ClipboardCheckIcon, href: '/me/onboarding', roles: ['employee'] },
+  { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
   {
     // Approvals lives under Attendance, not as its own top-level item - it's
@@ -152,6 +159,8 @@ const navItems: NavItem[] = [
       { label: 'Settings', href: '/attendance/settings', requireAnyPermission: ['attendance.settings.manage', 'calendar.manage'] },
     ],
   },
+  // Timesheet page is a coming-soon placeholder (no dedicated backend yet);
+  // the Attendance/Leave backends it sits beside are real and proxied.
   { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet', roles: ['admin', 'employee', 'superadmin'] },
   {
     id: 'finances',
@@ -174,24 +183,41 @@ const navItems: NavItem[] = [
   },
   { id: 'team', label: 'My Team', icon: TeamIcon, href: '/team', roles: ['admin', 'employee', 'superadmin'] },
   {
-    // One Organisation menu; which sub-links show depends on the viewer's
-    // access (directory/chart/documents for everyone, manage + all-employees
-    // only for those with the rights).
+    // Org menu: directory/chart visible to all; admin sections gated to admin+.
     id: 'org',
-    label: 'Organisation',
+    label: 'Organization',
     icon: GlobeIcon,
-    href: '/org',
-    roles: ['admin', 'employee', 'superadmin'],
+    href: '/org-module',
+    roles: ['admin', 'superadmin'],
     children: [
-      { label: 'Employee Directory', href: '/org?tab=directory' },
-      { label: 'Organisation Chart', href: '/org?tab=chart' },
-      { label: 'Documents', href: '/org?tab=documents' },
+      { label: 'Dashboard', href: '/org-module', roles: ['admin', 'superadmin'] },
+      { label: 'Employee Directory', href: '/org?tab=directory', requireAnyPermission: ['employees.read', 'employees.write'] },
+      { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
+      { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
+      { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },
+      { label: 'Job Architecture', href: '/org-module/job-families', roles: ['admin', 'superadmin'] },
       {
         label: 'Manage Structure',
         href: '/manage-org',
+        roles: ['admin', 'superadmin'],
         requireAnyPermission: ['employees.write', 'org.manage'],
       },
-      { label: 'All Employees', href: '/employees', roles: ['superadmin'], requireOrgScope: true },
+      { label: 'Onboarding', href: '/onboarding', roles: ['admin', 'superadmin'] },
+      { label: 'Org Changes', href: '/org-module/promotions', roles: ['admin', 'superadmin'] },
+      { label: 'Exits', href: '/exits', roles: ['superadmin'] },
+      { label: 'Settings', href: '/org-module/org-configuration', roles: ['superadmin'] },
+    ],
+  },
+  {
+    // Employee self-service: org directory and chart, visible to all roles.
+    id: 'directory',
+    label: 'Directory',
+    icon: GlobeIcon,
+    href: '/org',
+    roles: ['employee'],
+    children: [
+      { label: 'Employee Directory', href: '/org?tab=directory' },
+      { label: 'Organisation Chart', href: '/org?tab=chart' },
     ],
   },
   {
@@ -229,11 +255,17 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
+  '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
+  '/me/documents': { title: 'My Documents', subtitle: 'View and download your employment documents' },
+  '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
+  '/me/exit': { title: 'My Exit', subtitle: 'Submit or manage your resignation' },
+  '/exits': { title: 'Exits', subtitle: 'Review resignations and record employee exits' },
+  '/policies': { title: 'Policies', subtitle: 'Manage company policies and track employee acknowledgments' },
   '/engage': { title: 'Engage', subtitle: 'Connect with colleagues and stay updated with your organization' },
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
   '/apps': { title: 'Apps', subtitle: 'Access the tools and applications available to you' },
@@ -250,13 +282,17 @@ function getPageTitle(pathname: string) {
   return match ? pageTitles[match] : null;
 }
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, hasOrgScope, hasPermission } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // Sidebar submenu accordion (test-v1): sections with visible children get
+  // an expand/collapse chevron; the tab row under the header stays as the
+  // merge's secondary navigation for the active section.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -333,6 +369,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
     const active = isActive(item);
+    const visibleChildren = item.children?.filter(canAccess) ?? [];
+    const hasChildren = visibleChildren.length > 0;
+    const expanded = expandedId === item.id;
 
     return (
       <div key={item.id} className="group/nav relative">
@@ -360,6 +399,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {item.badge}
             </span>
           ) : null}
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setExpandedId(expanded ? null : item.id);
+              }}
+              aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
+              aria-expanded={expanded}
+              className={`-my-1 -mr-1 p-1 rounded-md hover:bg-white/10 transition-colors ${collapsed ? 'md:hidden' : ''}`}
+            >
+              <ChevronDownIcon
+                className={`w-4 h-4 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+              />
+            </button>
+          ) : null}
         </Link>
 
         {/* Collapsed-state tooltip */}
@@ -367,6 +423,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <span className="hidden md:group-hover/nav:block absolute left-full top-1/2 -translate-y-1/2 ml-2 z-50 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs font-medium px-2.5 py-1.5 shadow-lg pointer-events-none">
             {item.label}
           </span>
+        ) : null}
+
+        {hasChildren && expanded && !collapsed ? (
+          <div className="mt-1 ml-8 space-y-0.5 border-l border-slate-700 pl-3">
+            {visibleChildren.map((child) => (
+              <Link
+                key={child.label}
+                href={child.href}
+                className="block px-2 py-1.5 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                {child.label}
+              </Link>
+            ))}
+          </div>
         ) : null}
       </div>
     );
@@ -477,11 +547,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Shared top bar, visible on every page */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
           {currentPageTitle ? (
-            <div className="min-w-0 shrink-0">
-              <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
-              {currentPageTitle.subtitle ? (
-                <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+            <div className="min-w-0 shrink-0 flex items-center gap-1.5">
+              {pathname !== '/' ? (
+                <button
+                  type="button"
+                  onClick={() => router.back()}
+                  aria-label="Go back"
+                  title="Go back"
+                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
+                >
+                  <ChevronLeftIcon className="w-5 h-5" />
+                </button>
               ) : null}
+              <div className="min-w-0">
+                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
+                {currentPageTitle.subtitle ? (
+                  <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -506,6 +589,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               title="Help"
             >
               <HelpIcon className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => router.push('/attendance')}
+              className="shrink-0 flex items-center gap-2 pl-3 pr-4 py-2.5 rounded-full border border-indigo-200 text-indigo-600 text-sm font-semibold hover:bg-indigo-50 transition-colors"
+              title="Quick Check In"
+            >
+              <FingerprintIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">Quick Check In</span>
             </button>
             <NotificationsDropdown />
             <div className="pl-2 sm:pl-3 border-l border-slate-200">
@@ -540,5 +631,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto">{children}</div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() inside needs a Suspense boundary for static prerendering
+// (test-v1 wrapped its search-param reader the same way).
+export default function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense fallback={null}>
+      <AppLayoutInner>{children}</AppLayoutInner>
+    </Suspense>
   );
 }
