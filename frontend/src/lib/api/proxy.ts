@@ -137,7 +137,9 @@ export function createBackendProxyRoute(
   const make =
     (method: Method): RouteHandler =>
     async (req, ctx) => {
-      const { path = [] } = await ctx.params;
+      // ctx.params is absent on a base (non-catch-all) route.ts, so guard it —
+      // otherwise destructuring undefined throws a 500 (e.g. /api/assets list).
+      const { path = [] } = (await ctx.params) ?? {};
       const backendPath = `/${backendPrefix}/${path.join('/')}${req.nextUrl.search}`;
 
       const init: RequestInit = { method };
