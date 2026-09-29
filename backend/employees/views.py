@@ -436,7 +436,7 @@ class _OrgUnitAdminViewSet(AuditedModelViewSet):
     permission_classes = [HasPermissionCode]
     required_permission = "org.manage"
     model = None
-    search_on_code = False
+    search_on_code = True
 
     def get_queryset(self):
         queryset = self.model.objects.annotate(employee_count=Count("employees", distinct=True))
@@ -470,7 +470,7 @@ class DepartmentAdminViewSet(_OrgUnitAdminViewSet):
         return (
             super()
             .get_queryset()
-            .select_related("parent")
+            .select_related("parent", "head__user", "cost_center", "business_unit")
             .annotate(child_count=Count("children", distinct=True))
         )
 
@@ -510,11 +510,40 @@ class LegalEntityAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = LegalEntityAdminSerializer
     audit_entity_type = "LegalEntity"
 
+    def get_queryset(self):
+        return super().get_queryset().select_related("registered_address")
+
 
 class BusinessUnitAdminViewSet(_OrgUnitAdminViewSet):
     model = BusinessUnit
     serializer_class = BusinessUnitAdminSerializer
     audit_entity_type = "BusinessUnit"
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .select_related("legal_entity", "head__user", "parent")
+            .annotate(child_count=Count("children", distinct=True))
+        )
+
+    def _blockers(self, instance):
+        return instance.employees.count() + instance.children.count()
+
+    def perform_destroy(self, instance):
+        people, children = instance.employees.count(), instance.children.count()
+        if children:
+            noun = "division" if children == 1 else "divisions"
+            raise Conflict(
+                f"'{instance.name}' has {children} {noun}. "
+                "Move or remove them first, or deactivate it instead of deleting it."
+            )
+        if people:
+            raise Conflict(
+                f"{people} {'person is' if people == 1 else 'people are'} still assigned to "
+                f"'{instance.name}'. Move them first, or deactivate it instead of deleting it."
+            )
+        AuditedModelViewSet.perform_destroy(self, instance)
 
 
 class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
@@ -522,6 +551,9 @@ class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = CostCenterAdminSerializer
     audit_entity_type = "CostCenter"
     search_on_code = True
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("owner__user", "legal_entity")
 
 
 class TeamAdminViewSet(AuditedModelViewSet):
@@ -542,8 +574,8 @@ class TeamAdminViewSet(AuditedModelViewSet):
 
 
 class JobFamilyAdminViewSet(AuditedModelViewSet):
-    """Job families are referenced by nothing, so like teams they carry no
-    delete blockers. ?search= filters by name."""
+    """Job families group levels and titles — a family with levels, titles or
+    child families cannot be deleted. ?search= filters by name or code."""
 
     permission_classes = [HasPermissionCode]
     required_permission = "org.manage"
@@ -551,11 +583,22 @@ class JobFamilyAdminViewSet(AuditedModelViewSet):
     audit_entity_type = "JobFamily"
 
     def get_queryset(self):
-        queryset = JobFamily.objects.all()
+        queryset = JobFamily.objects.select_related("parent")
         search = self.request.query_params.get("search")
         if search:
-            queryset = queryset.filter(name__icontains=search)
+            queryset = queryset.filter(Q(name__icontains=search) | Q(code__icontains=search))
         return queryset.order_by("name")
+
+    def perform_destroy(self, instance):
+        titles = instance.job_titles.count() if hasattr(instance, "job_titles") else 0
+        blockers = instance.levels.count() + titles + instance.children.count()
+        if blockers:
+            noun = "assignment" if blockers == 1 else "assignments"
+            raise Conflict(
+                f"{blockers} level/title {noun} still point at "
+                f"'{instance.name}'. Move them first, or deactivate it instead of deleting it."
+            )
+        super().perform_destroy(instance)
 
 
 class _JobArchAdminViewSet(_OrgUnitAdminViewSet):
@@ -585,11 +628,17 @@ class LevelAdminViewSet(_JobArchAdminViewSet):
     serializer_class = LevelAdminSerializer
     audit_entity_type = "Level"
 
+    def get_queryset(self):
+        return super().get_queryset().select_related("job_family")
+
 
 class GradeAdminViewSet(_JobArchAdminViewSet):
     model = Grade
     serializer_class = GradeAdminSerializer
     audit_entity_type = "Grade"
+
+    def get_queryset(self):
+        return super().get_queryset().select_related("level")
 
 
 class PositionAdminViewSet(AuditedModelViewSet):

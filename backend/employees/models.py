@@ -16,9 +16,16 @@ from core.enums import EmployeeStatus, EmploymentType
 class SoftDeleteNamedModel(models.Model):
     """Shared shape for the small reference tables below: a unique name and an
     is_active flag instead of ever hard-deleting a row a historical Employee
-    might still point to."""
+    might still point to.
+
+    `code` is the short finance/HR code for the row (e.g. "ENG", "G3") — it is
+    indexed for lookups but deliberately NOT globally unique, since different
+    entity types (and different legal entities) may reuse the same short code.
+    `description` is free text shown on the admin screens."""
 
     name = models.CharField(max_length=150, unique=True)
+    code = models.CharField(max_length=30, blank=True, default="", db_index=True)
+    description = models.TextField(blank=True, default="")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -39,6 +46,27 @@ class Department(SoftDeleteNamedModel):
     parent = models.ForeignKey(
         "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
     )
+    head = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="headed_departments",
+    )
+    cost_center = models.ForeignKey(
+        "CostCenter",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="departments",
+    )
+    business_unit = models.ForeignKey(
+        "BusinessUnit",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="departments",
+    )
 
 
 class Designation(SoftDeleteNamedModel):
@@ -46,23 +74,88 @@ class Designation(SoftDeleteNamedModel):
 
 
 class Location(SoftDeleteNamedModel):
-    pass
+    """A place of work. Address fields are informational (payroll owns
+    statutory addresses later); `type` marks HQ vs branch vs remote."""
+
+    TYPE_HQ = "hq"
+    TYPE_BRANCH = "branch"
+    TYPE_REMOTE = "remote"
+    TYPE_CHOICES = [
+        (TYPE_HQ, "Headquarters"),
+        (TYPE_BRANCH, "Branch"),
+        (TYPE_REMOTE, "Remote"),
+    ]
+
+    address_line1 = models.CharField(max_length=200, blank=True, default="")
+    address_line2 = models.CharField(max_length=200, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    state = models.CharField(max_length=100, blank=True, default="")
+    country = models.CharField(max_length=100, blank=True, default="")
+    postal_code = models.CharField(max_length=20, blank=True, default="")
+    timezone = models.CharField(max_length=50, blank=True, default="")
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_BRANCH)
 
 
 class LegalEntity(SoftDeleteNamedModel):
     """The company operates as a single legal entity today — exactly one row is
     seeded (see employees/migrations for the seed migration) — but this is a real
-    table from day one so a second entity is a data change, not a schema change."""
+    table from day one so a second entity is a data change, not a schema change.
+
+    Tax/registration/signatory columns are deliberately NOT here — the payroll
+    module owns those (LegalEntityPayrollProfile) and links later."""
+
+    registered_address = models.ForeignKey(
+        Location, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    country = models.CharField(max_length=100, blank=True, default="")
+    currency = models.CharField(max_length=10, default="INR")
+    logo = models.URLField(max_length=500, blank=True, default="")
 
 
 class BusinessUnit(SoftDeleteNamedModel):
-    """A line of business or division that cuts across departments."""
+    """A line of business or division that cuts across departments. `parent`
+    builds the Division tier: a BusinessUnit with parent=None is a top-level
+    unit, one with a parent is a Division inside it."""
+
+    legal_entity = models.ForeignKey(
+        LegalEntity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="business_units",
+    )
+    head = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="headed_business_units",
+    )
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
+    )
 
 
 class CostCenter(SoftDeleteNamedModel):
-    """A budget line employees are charged to. `code` is the finance code."""
+    """A budget line employees are charged to. `code` comes from the shared
+    base (the finance code); `owner` is whoever approves spend against it."""
 
-    code = models.CharField(max_length=30, blank=True)
+    owner = models.ForeignKey(
+        "Employee",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="owned_cost_centers",
+    )
+    legal_entity = models.ForeignKey(
+        LegalEntity,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="cost_centers",
+    )
 
 
 class Team(SoftDeleteNamedModel):
@@ -80,17 +173,34 @@ class Team(SoftDeleteNamedModel):
 
 class JobFamily(SoftDeleteNamedModel):
     """A broad occupation group (e.g. Engineering, Design) — a standalone
-    reference table; positions point at level/grade, not at the family."""
+    reference table; positions point at level/grade, not at the family.
+    `parent` groups families (e.g. "Technology" -> "Engineering")."""
+
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="children"
+    )
 
 
 class Level(SoftDeleteNamedModel):
     """A seniority rung (e.g. L1 Associate … L5 Principal) shared across
-    families. Referenced by Position and directly by Employee."""
+    families. Referenced by Position and directly by Employee. `rank` orders
+    rungs numerically (higher = more senior); `job_family` scopes the rung
+    to one family, or null when it is shared."""
+
+    rank = models.IntegerField(default=0)
+    job_family = models.ForeignKey(
+        JobFamily, null=True, blank=True, on_delete=models.SET_NULL, related_name="levels"
+    )
 
 
 class Grade(SoftDeleteNamedModel):
     """A pay band (e.g. G1 … G4). Referenced by Position and directly by
-    Employee."""
+    Employee. NO pay columns here — money lives in the payroll module, which
+    links to Grade later."""
+
+    level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="grades"
+    )
 
 
 class Position(models.Model):

@@ -507,7 +507,7 @@ class _OrgUnitSerializer(serializers.ModelSerializer):
     employee_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
-        fields = ["id", "name", "is_active", "employee_count", "created_at"]
+        fields = ["id", "name", "code", "description", "is_active", "employee_count", "created_at"]
         read_only_fields = ["id", "employee_count", "created_at"]
 
 
@@ -525,14 +525,53 @@ def _org_serializer(model, extra_fields=(), extra_read_only=(), **declared):
     return type(name, (_OrgUnitSerializer,), {"Meta": meta, **declared})
 
 
+def _person_name(employee):
+    """Display name for an Employee FK: full name, falling back to code."""
+    if employee is None:
+        return None
+    user = getattr(employee, "user", None)
+    if user is None:
+        return employee.employee_code
+    full = f"{user.first_name} {user.last_name}".strip()
+    return full or user.get_username()
+
+
 class _DepartmentAdmin(_OrgUnitSerializer):
     parent_name = serializers.CharField(source="parent.name", read_only=True, default=None)
     child_count = serializers.IntegerField(read_only=True, default=0)
+    head_name = serializers.SerializerMethodField()
+    cost_center_name = serializers.CharField(
+        source="cost_center.name", read_only=True, default=None
+    )
+    business_unit_name = serializers.CharField(
+        source="business_unit.name", read_only=True, default=None
+    )
 
     class Meta(_OrgUnitSerializer.Meta):
         model = Department
-        fields = [*_OrgUnitSerializer.Meta.fields, "parent", "parent_name", "child_count"]
-        read_only_fields = [*_OrgUnitSerializer.Meta.read_only_fields, "parent_name", "child_count"]
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "parent",
+            "parent_name",
+            "child_count",
+            "head",
+            "head_name",
+            "cost_center",
+            "cost_center_name",
+            "business_unit",
+            "business_unit_name",
+        ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "parent_name",
+            "child_count",
+            "head_name",
+            "cost_center_name",
+            "business_unit_name",
+        ]
+
+    def get_head_name(self, obj):
+        return _person_name(getattr(obj, "head", None))
 
     def validate(self, attrs):
         parent = attrs.get("parent")
@@ -554,10 +593,119 @@ class _DepartmentAdmin(_OrgUnitSerializer):
 
 DepartmentAdminSerializer = _DepartmentAdmin
 DesignationAdminSerializer = _org_serializer(Designation)
-LocationAdminSerializer = _org_serializer(Location)
-LegalEntityAdminSerializer = _org_serializer(LegalEntity)
-BusinessUnitAdminSerializer = _org_serializer(BusinessUnit)
-CostCenterAdminSerializer = _org_serializer(CostCenter, extra_fields=["code"])
+
+
+class LocationAdminSerializer(_OrgUnitSerializer):
+    class Meta(_OrgUnitSerializer.Meta):
+        model = Location
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "address_line1",
+            "address_line2",
+            "city",
+            "state",
+            "country",
+            "postal_code",
+            "timezone",
+            "latitude",
+            "longitude",
+            "type",
+        ]
+
+
+class LegalEntityAdminSerializer(_OrgUnitSerializer):
+    registered_address_name = serializers.CharField(
+        source="registered_address.name", read_only=True, default=None
+    )
+
+    class Meta(_OrgUnitSerializer.Meta):
+        model = LegalEntity
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "registered_address",
+            "registered_address_name",
+            "country",
+            "currency",
+            "logo",
+        ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "registered_address_name",
+        ]
+
+
+class BusinessUnitAdminSerializer(_OrgUnitSerializer):
+    legal_entity_name = serializers.CharField(
+        source="legal_entity.name", read_only=True, default=None
+    )
+    head_name = serializers.SerializerMethodField()
+    parent_name = serializers.CharField(source="parent.name", read_only=True, default=None)
+    child_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta(_OrgUnitSerializer.Meta):
+        model = BusinessUnit
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "legal_entity",
+            "legal_entity_name",
+            "head",
+            "head_name",
+            "parent",
+            "parent_name",
+            "child_count",
+        ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "legal_entity_name",
+            "head_name",
+            "parent_name",
+            "child_count",
+        ]
+
+    def get_head_name(self, obj):
+        return _person_name(getattr(obj, "head", None))
+
+    def validate(self, attrs):
+        parent = attrs.get("parent")
+        if parent is not None and self.instance is not None:
+            if parent.pk == self.instance.pk:
+                raise serializers.ValidationError(
+                    {"parent": "A business unit cannot be under itself."}
+                )
+            cursor, seen = parent, set()
+            while cursor is not None and cursor.pk not in seen:
+                if cursor.pk == self.instance.pk:
+                    raise serializers.ValidationError(
+                        {"parent": "A business unit cannot sit under its own division."}
+                    )
+                seen.add(cursor.pk)
+                cursor = cursor.parent
+        return attrs
+
+
+class CostCenterAdminSerializer(_OrgUnitSerializer):
+    owner_name = serializers.SerializerMethodField()
+    legal_entity_name = serializers.CharField(
+        source="legal_entity.name", read_only=True, default=None
+    )
+
+    class Meta(_OrgUnitSerializer.Meta):
+        model = CostCenter
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "owner",
+            "owner_name",
+            "legal_entity",
+            "legal_entity_name",
+        ]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "owner_name",
+            "legal_entity_name",
+        ]
+
+    def get_owner_name(self, obj):
+        return _person_name(getattr(obj, "owner", None))
 
 
 class TeamAdminSerializer(serializers.ModelSerializer):
@@ -596,26 +744,68 @@ class _JobArchAdminSerializer(_OrgUnitSerializer):
 
 
 class LevelAdminSerializer(_JobArchAdminSerializer):
+    job_family_name = serializers.CharField(
+        source="job_family.name", read_only=True, default=None
+    )
+
     class Meta(_OrgUnitSerializer.Meta):
         model = Level
-        fields = [*_OrgUnitSerializer.Meta.fields, "position_count"]
-        read_only_fields = [*_OrgUnitSerializer.Meta.read_only_fields, "position_count"]
+        fields = [*_OrgUnitSerializer.Meta.fields, "position_count", "rank", "job_family", "job_family_name"]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "position_count",
+            "job_family_name",
+        ]
 
 
 class GradeAdminSerializer(_JobArchAdminSerializer):
+    level_name = serializers.CharField(source="level.name", read_only=True, default=None)
+
     class Meta(_OrgUnitSerializer.Meta):
         model = Grade
-        fields = [*_OrgUnitSerializer.Meta.fields, "position_count"]
-        read_only_fields = [*_OrgUnitSerializer.Meta.read_only_fields, "position_count"]
+        fields = [*_OrgUnitSerializer.Meta.fields, "position_count", "level", "level_name"]
+        read_only_fields = [
+            *_OrgUnitSerializer.Meta.read_only_fields,
+            "position_count",
+            "level_name",
+        ]
 
 
 class JobFamilyAdminSerializer(serializers.ModelSerializer):
-    """Job families are referenced by nothing, so there is no count to report."""
+    """Job families group levels; deleting one with levels/titles fails."""
+
+    parent_name = serializers.CharField(source="parent.name", read_only=True, default=None)
 
     class Meta:
         model = JobFamily
-        fields = ["id", "name", "is_active", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "is_active",
+            "parent",
+            "parent_name",
+            "created_at",
+        ]
+        read_only_fields = ["id", "parent_name", "created_at"]
+
+    def validate(self, attrs):
+        parent = attrs.get("parent")
+        if parent is not None and self.instance is not None:
+            if parent.pk == self.instance.pk:
+                raise serializers.ValidationError(
+                    {"parent": "A job family cannot be under itself."}
+                )
+            cursor, seen = parent, set()
+            while cursor is not None and cursor.pk not in seen:
+                if cursor.pk == self.instance.pk:
+                    raise serializers.ValidationError(
+                        {"parent": "A job family cannot sit under its own child."}
+                    )
+                seen.add(cursor.pk)
+                cursor = cursor.parent
+        return attrs
 
 
 class PositionAdminSerializer(serializers.ModelSerializer):
