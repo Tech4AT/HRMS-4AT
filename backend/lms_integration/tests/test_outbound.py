@@ -269,3 +269,25 @@ def test_real_day1_activation_provisions_then_moves_to_onboarding_path(monkeypat
     created, stage = outbound(employee)
     assert created.payload["employee"]["employment_status"] == "ACTIVE"
     assert stage.payload["onboarding"] == {"previous_stage": "preboarding", "stage": "onboarding"}
+
+
+def test_snapshot_carries_the_department_path():
+    parent = DepartmentFactory(name="Audit & Assurance")
+    child = DepartmentFactory(name="InfoSec Audit")
+    child.parent = parent
+    child.save()
+    employee = EmployeeFactory(status="active", department=child)
+    snapshot = outbound(employee)[0].payload["employee"]
+    assert snapshot["department_path"] == ["Audit & Assurance", "InfoSec Audit"]
+
+
+def test_moving_a_department_updates_everyone_under_it():
+    top = DepartmentFactory(name="Audit & Assurance")
+    team = DepartmentFactory(name="SOX")
+    employee = EmployeeFactory(status="active", department=team)
+    dispatcher.dispatch_due(client=FakeLms())
+    team.parent = top
+    team.save()
+    last = outbound(employee)[-1]
+    assert last.event_type == "EMPLOYEE_UPDATED"
+    assert last.payload["employee"]["department_path"] == ["Audit & Assurance", "SOX"]

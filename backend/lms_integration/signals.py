@@ -16,7 +16,7 @@ from django.db import transaction
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
-from employees.models import Employee
+from employees.models import Department, Employee
 from lms_integration import events
 from lms_integration.models import LmsIdentityLink
 
@@ -51,6 +51,50 @@ def _queue_employee_events(sender, instance, created, raw=False, **kwargs):
         logger.exception("LMS: could not queue events for employee %s", instance.pk)
     finally:
         instance._lms_before = events.tracked_values(instance)
+
+
+@receiver(pre_save, sender=Department, dispatch_uid="lms_department_pre_save")
+def _remember_department(sender, instance, raw=False, **kwargs):
+    if raw or not events.enabled():
+        return
+    instance._lms_before = (
+        Department.objects.filter(pk=instance.pk).values_list("name", "parent_id").first()
+        if instance.pk
+        else None
+    )
+
+
+@receiver(post_save, sender=Department, dispatch_uid="lms_department_post_save")
+def _queue_department_change(sender, instance, created, raw=False, **kwargs):
+    """A renamed or moved department changes the department path of everyone
+    in it and below it, and with it the LMS training they must complete."""
+    if raw or created or not events.enabled():
+        return
+    before = getattr(instance, "_lms_before", None)
+    if before is None or before == (instance.name, instance.parent_id):
+        return
+    try:
+        with transaction.atomic():
+            subtree, frontier = {instance.pk}, {instance.pk}
+            while frontier:
+                frontier = (
+                    set(
+                        Department.objects.filter(parent_id__in=frontier).values_list(
+                            "pk", flat=True
+                        )
+                    )
+                    - subtree
+                )
+                subtree |= frontier
+            linked = Employee.objects.filter(
+                department_id__in=subtree, lms_link__isnull=False
+            ).select_related("department", "manager", "user")
+            for employee in linked:
+                events.enqueue(employee, events.EMPLOYEE_UPDATED)
+    except Exception:  # noqa: BLE001
+        logger.exception("LMS: could not queue events for department %s", instance.pk)
+    finally:
+        instance._lms_before = (instance.name, instance.parent_id)
 
 
 def _connect_onboarding():

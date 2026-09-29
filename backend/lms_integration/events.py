@@ -75,6 +75,19 @@ def _name(obj):
     return None if obj is None else obj.name
 
 
+def department_path(department) -> list[str]:
+    """Department names from the top of the hierarchy down to the employee's
+    own, e.g. ["Audit & Assurance", "InfoSec Audit"]. The LMS enrols a learner
+    in the programs linked to any department on this path, so training linked
+    to a parent department covers every department under it."""
+    names, seen = [], set()
+    while department is not None and department.pk not in seen:
+        seen.add(department.pk)
+        names.append(department.name)
+        department = department.parent
+    return list(reversed(names))
+
+
 def employee_snapshot(employee) -> dict:
     """Data Mapping §1, minimised (Contract §4): identity + org references
     only. No personal details (phone, DOB, bank, ids) ever leave HRMS.
@@ -94,6 +107,7 @@ def employee_snapshot(employee) -> dict:
         "employment_type": (employee.employment_type or "").upper(),
         "department_id": _ref(employee.department),
         "department_name": _name(employee.department),
+        "department_path": department_path(employee.department),
         "designation_id": _ref(employee.designation),
         "designation_name": _name(employee.designation),
         "grade_id": _ref(employee.grade),
