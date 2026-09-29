@@ -24,7 +24,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         model = Document
         fields = [
             'id', 'entity_type', 'entity_id', 'employee_id', 'original_filename',
-            'content_type', 'size',
+            'content_type', 'size', 'audience', 'acknowledgement_required',
             'url', 'view_url', 'download_url', 'uploaded_at', 'expiry_date', 'is_expired',
             'file_size', 'uploaded_by', 'uploaded_by_name',
         ]

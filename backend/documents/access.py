@@ -85,15 +85,10 @@ def _subject_employee_id(document):
     return None
 
 
-def can_access(user, document) -> bool:
-    if is_hr_admin(user):
-        return True
-    # Undeclared entity_type: denied outright, even to the owning employee.
-    # The app only ever creates the ENTITY_PERMISSIONS types above; anything
-    # else is a probing or corrupt row and must not leak through the
-    # owner shortcut below.
-    if document.entity_type not in ENTITY_PERMISSIONS:
-        return False
+def _entity_allowed(user, document) -> bool:
+    """The pre-audience grant paths: owner shortcut, finance, access grants,
+    manager-visible org types, and the RBAC-code mapping. Audience (below)
+    only ever restricts past this point, never widens."""
     me = getattr(getattr(user, 'employee', None), 'id', None)
     subject_id = _subject_employee_id(document)
     if subject_id is not None and me is not None and subject_id == me:
@@ -118,6 +113,42 @@ def can_access(user, document) -> bool:
         if subject_id in set(scope_ids):
             return True
     return False
+
+
+def _audience_allows(user, document) -> bool:
+    """Per-document audience gate. Runs AFTER _entity_allowed — a document the
+    entity rules already deny stays denied; this only narrows further."""
+    from .models import Document
+
+    audience = getattr(document, 'audience', None) or Document.AUDIENCE_ALL_EMPLOYEES
+    if audience == Document.AUDIENCE_ALL_EMPLOYEES:
+        return True
+    if audience == Document.AUDIENCE_HR_ONLY:
+        return False  # HR Admin returned True before this is ever reached.
+    me = getattr(getattr(user, 'employee', None), 'id', None)
+    subject_id = _subject_employee_id(document)
+    if audience == Document.AUDIENCE_EMPLOYEE:
+        return me is not None and subject_id is not None and me == subject_id
+    if audience == Document.AUDIENCE_HR_AND_MANAGER:
+        # HR Admin is handled above; a manager is anyone whose scope covers
+        # the subject employee — the same visibility the manager-readable org
+        # types above already key off (default employees.read scope).
+        return subject_id is not None and subject_id in visible_employee_ids(user)
+    return False  # Unknown audience value: deny rather than leak.
+
+
+def can_access(user, document) -> bool:
+    if is_hr_admin(user):
+        return True
+    # Undeclared entity_type: denied outright, even to the owning employee.
+    # The app only ever creates the ENTITY_PERMISSIONS types above; anything
+    # else is a probing or corrupt row and must not leak through the
+    # owner shortcut below.
+    if document.entity_type not in ENTITY_PERMISSIONS:
+        return False
+    if not _entity_allowed(user, document):
+        return False
+    return _audience_allows(user, document)
 
 
 def can_access_entity(user, entity_type: str, entity_id) -> bool:

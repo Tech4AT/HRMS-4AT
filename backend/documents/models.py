@@ -19,6 +19,24 @@ class Document(models.Model):
     # Python-side default is what makes creates work — without an explicit
     # field Django assumes a DB-generated AutoField and inserts NULL).
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Audience/visibility: who may see this document, enforced in access.py
+    # alongside the entity_type rules. It only ever RESTRICTS — never widens
+    # past what the entity_type + scope engine already allow. HR Admin always
+    # sees everything. Default all_employees preserves existing behavior.
+    AUDIENCE_HR_ONLY = "hr_only"
+    AUDIENCE_HR_AND_MANAGER = "hr_and_manager"
+    AUDIENCE_EMPLOYEE = "employee"
+    AUDIENCE_ALL_EMPLOYEES = "all_employees"
+    AUDIENCE_CHOICES = [
+        (AUDIENCE_HR_ONLY, "HR only"),
+        (AUDIENCE_HR_AND_MANAGER, "HR + Manager"),
+        (AUDIENCE_EMPLOYEE, "Employee (owner only)"),
+        (AUDIENCE_ALL_EMPLOYEES, "All employees"),
+    ]
+    audience = models.CharField(max_length=32, choices=AUDIENCE_CHOICES, default=AUDIENCE_ALL_EMPLOYEES)
+    # Whether employees must explicitly acknowledge this document (tracked in
+    # DocumentAcknowledgement below).
+    acknowledgement_required = models.BooleanField(default=False)
     # What this file is attached to, e.g. ("payslip", <employee id>).
     entity_type = models.CharField(max_length=64)
     entity_id = models.CharField(max_length=64)
@@ -92,3 +110,28 @@ class DocumentAccessLog(models.Model):
 
     def __str__(self):
         return f"{self.document_id} {self.action} by {self.performed_by_id}"
+
+
+class DocumentAcknowledgement(models.Model):
+    """One row per (document, employee) pair recording that the employee
+    acknowledged the document. Created/updated by POST
+    /documents/<id>/acknowledge; read scope-filtered by GET
+    /documents/<id>/acknowledgements."""
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="acknowledgements")
+    employee = models.ForeignKey(
+        "employees.Employee",
+        on_delete=models.CASCADE,
+        related_name="document_acknowledgements",
+    )
+    acknowledged_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-acknowledged_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["document", "employee"], name="unique_document_acknowledgement")
+        ]
+        indexes = [models.Index(fields=["document", "employee"])]
+
+    def __str__(self):
+        return f"{self.document_id} acknowledged by {self.employee_id}"
