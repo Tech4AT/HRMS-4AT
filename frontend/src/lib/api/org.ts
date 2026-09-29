@@ -171,6 +171,7 @@ export const orgApi = {
   listCostCenters: () => request<CostCenter[]>('/api/cost-centers'),
   listTeams: () => request<OrgTeam[]>('/api/teams'),
   listJobFamilies: () => request<NamedEntity[]>('/api/job-families'),
+  listJobTitles: () => request<NamedEntity[]>('/api/job-titles'),
   listLevels: () => request<NamedEntity[]>('/api/levels'),
   listGrades: () => request<NamedEntity[]>('/api/grades'),
   listPositions: () => request<OrgPosition[]>('/api/positions'),

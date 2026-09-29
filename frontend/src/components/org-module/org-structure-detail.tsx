@@ -3,10 +3,12 @@
 /**
  * Detail panel + add/edit drawer for the unified Org Structure screen.
  *
- * HARD RULE: only the fields the backend persists are editable and saved
- * (name everywhere, code for Cost Center, parent for Department). Every
- * other Keka field renders visibly DISABLED with a "not stored yet" hint —
- * never collected-and-dropped, never fake-saved.
+ * RULE: every stored column is editable and saved (name/code/description on
+ * every master, plus the per-kind `extraFields` spec in
+ * org-structure-types.ts). Keka-only fields with no backend column render
+ * visibly DISABLED with a "not stored yet" hint — never collected-and-dropped,
+ * never fake-saved. The drawer and the detail panel both render from the same
+ * `extraFields` spec, so they cannot drift apart.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -14,16 +16,33 @@ import type { OrgEmployee } from '@/lib/api/org';
 import {
   adminCreate,
   adminUpdate,
+  camelKey,
   configFor,
   fullName,
   initials,
   membersOf,
   OrgAdminError,
   type AdminWriteInput,
+  type ExtraField,
+  type FkTarget,
   type TypeConfig,
   type UnitItem,
   type UnitKind,
 } from './org-structure-types';
+
+export type FkOptions = Record<FkTarget, { id: string; name: string }[]>;
+
+export const EMPTY_FK_OPTIONS: FkOptions = {
+  employee: [],
+  department: [],
+  location: [],
+  'legal-entity': [],
+  'business-unit': [],
+  'cost-center': [],
+  'job-family': [],
+  level: [],
+  'job-title': [],
+};
 
 /* ------------------------------- employee table ---------------------------- */
 
@@ -129,10 +148,21 @@ export type DrawerState =
   | { mode: 'edit'; item: UnitItem }
   | null;
 
+/** Raw admin value -> drawer string for one spec field. */
+function adminToString(admin: Record<string, unknown> | undefined, field: ExtraField, parentId?: string | null): string {
+  if (field.key === 'parent' && (admin?.['parent'] === undefined || admin?.['parent'] === null)) {
+    return parentId ?? '';
+  }
+  const v = admin?.[camelKey(field.key)];
+  if (v === null || v === undefined) return '';
+  return String(v);
+}
+
 function UnitDrawer({
   kind,
   state,
   allUnits,
+  fkOptions,
   canManage,
   onClose,
   onSaved,
@@ -140,6 +170,7 @@ function UnitDrawer({
   kind: UnitKind;
   state: Exclude<DrawerState, null>;
   allUnits: UnitItem[];
+  fkOptions: FkOptions;
   canManage: boolean;
   onClose: () => void;
   onSaved: (saved: { id: string; name: string; code?: string }) => void;
@@ -149,7 +180,24 @@ function UnitDrawer({
 
   const [name, setName] = useState(editing?.name ?? '');
   const [code, setCode] = useState(editing?.code ?? '');
+  const [description, setDescription] = useState(editing?.description ?? '');
   const [parentId, setParentId] = useState<string>(editing?.parentId ?? '');
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const f of cfg.extraFields) {
+      if (f.type === 'boolean') continue;
+      init[f.key] = adminToString(editing?.admin, f, editing?.parentId);
+    }
+    return init;
+  });
+  const [booleans, setBooleans] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const f of cfg.extraFields) {
+      if (f.type !== 'boolean') continue;
+      init[f.key] = Boolean(editing?.admin?.[camelKey(f.key)]);
+    }
+    return init;
+  });
   const [active, setActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +205,20 @@ function UnitDrawer({
   useEffect(() => {
     setName(editing?.name ?? '');
     setCode(editing?.code ?? '');
+    setDescription(editing?.description ?? '');
     setParentId(editing?.parentId ?? '');
+    const nextValues: Record<string, string> = {};
+    for (const f of cfg.extraFields) {
+      if (f.type === 'boolean') continue;
+      nextValues[f.key] = adminToString(editing?.admin, f, editing?.parentId);
+    }
+    setValues(nextValues);
+    const nextBooleans: Record<string, boolean> = {};
+    for (const f of cfg.extraFields) {
+      if (f.type !== 'boolean') continue;
+      nextBooleans[f.key] = Boolean(editing?.admin?.[camelKey(f.key)]);
+    }
+    setBooleans(nextBooleans);
     setActive(true);
     setError(null);
     setSaving(false);
@@ -165,6 +226,8 @@ function UnitDrawer({
   }, [kind, state.mode, editing?.id]);
 
   if (!canManage || !cfg.adminResource) return null;
+
+  const setValue = (key: string, v: string) => setValues((p) => ({ ...p, [key]: v }));
 
   const parentOptions = useMemo(
     () => allUnits.filter((u) => u.id !== editing?.id),
@@ -180,9 +243,33 @@ function UnitDrawer({
     setSaving(true);
     setError(null);
     try {
-      const input: AdminWriteInput = { name: trimmed };
-      if (cfg.hasCode) input.code = code.trim();
+      const input: AdminWriteInput = {
+        name: trimmed,
+        code: code.trim(),
+        description: description.trim(),
+      };
       if (cfg.hasParent) input.parent = parentId || null;
+      for (const f of cfg.extraFields) {
+        if (f.key === 'parent' && !cfg.hasParent) {
+          input.parent = values[f.key] || null;
+          continue;
+        }
+        if (f.type === 'boolean') {
+          input[f.key] = booleans[f.key] ?? false;
+        } else if (f.type === 'fk') {
+          input[f.key] = values[f.key] || null;
+        } else if (f.type === 'number') {
+          const raw = (values[f.key] ?? '').trim();
+          input[f.key] = raw === '' ? null : Number(raw);
+          if (raw !== '' && Number.isNaN(input[f.key] as number)) {
+            throw new OrgAdminError(`${f.label} must be a number.`, 400);
+          }
+        } else if (f.type === 'select') {
+          if ((values[f.key] ?? '') !== '') input[f.key] = values[f.key];
+        } else {
+          input[f.key] = values[f.key] ?? '';
+        }
+      }
       if (state.mode === 'edit') {
         input.is_active = active;
         const saved = await adminUpdate<{ id: number | string; name: string; code?: string }>(
@@ -208,6 +295,30 @@ function UnitDrawer({
   const inputCls =
     'mt-1 block w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-400 disabled:bg-slate-50 disabled:text-slate-400';
   const hintCls = 'mt-1 text-[11px] text-slate-400';
+  const labelCls = 'block text-xs font-semibold text-slate-600';
+
+  function fkField(f: ExtraField) {
+    const opts = f.key === 'parent' && !cfg.hasParent ? parentOptions : (fkOptions[f.fk as FkTarget] ?? []);
+    return (
+      <label key={f.key} className={labelCls}>
+        {f.label}
+        <select
+          value={values[f.key] ?? ''}
+          onChange={(e) => setValue(f.key, e.target.value)}
+          aria-label={f.label}
+          className={inputCls}
+        >
+          <option value="">None</option>
+          {opts.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </select>
+        {f.hint ? <span className={hintCls}>{f.hint}</span> : null}
+      </label>
+    );
+  }
 
   return (
     <div
@@ -224,10 +335,10 @@ function UnitDrawer({
         <h3 className="text-base font-bold text-slate-900">
           {state.mode === 'add' ? `Add ${cfg.singular}` : `Edit ${cfg.singular}`}
         </h3>
-        <p className={hintCls}>Only stored fields save. The rest are shown disabled.</p>
+        <p className={hintCls}>Every field below is stored. Disabled ones are not tracked yet.</p>
 
         <div className="mt-5 space-y-4">
-          <label className="block text-xs font-semibold text-slate-600">
+          <label className={labelCls}>
             {cfg.singular} name
             <input
               type="text"
@@ -239,22 +350,32 @@ function UnitDrawer({
             />
           </label>
 
-          {cfg.hasCode ? (
-            <label className="block text-xs font-semibold text-slate-600">
-              Code
-              <input
-                type="text"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                placeholder="e.g. CC-FIN-01"
-                aria-label="Code"
-                className={inputCls}
-              />
-            </label>
-          ) : null}
+          <label className={labelCls}>
+            Code
+            <input
+              type="text"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="e.g. ENG"
+              aria-label="Code"
+              className={inputCls}
+            />
+          </label>
+
+          <label className={labelCls}>
+            Description
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What this is for…"
+              aria-label="Description"
+              rows={3}
+              className={inputCls}
+            />
+          </label>
 
           {cfg.hasParent ? (
-            <label className="block text-xs font-semibold text-slate-600">
+            <label className={labelCls}>
               Parent department
               <select
                 value={parentId}
@@ -272,22 +393,76 @@ function UnitDrawer({
             </label>
           ) : null}
 
-          {/* Description is NOT a model field (verified in models.py) — honest disabled. */}
-          <label className="block text-xs font-semibold text-slate-600">
-            Description
-            <textarea
-              value=""
-              disabled
-              placeholder="Not stored yet"
-              aria-label="Description (not stored yet)"
-              rows={3}
-              className={inputCls}
-            />
-            <span className={hintCls}>Not stored yet — the backend keeps names only.</span>
-          </label>
+          {cfg.extraFields.map((f) => {
+            if (f.type === 'fk') return fkField(f);
+            if (f.type === 'boolean') {
+              return (
+                <label key={f.key} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={booleans[f.key] ?? false}
+                    onChange={(e) => setBooleans((p) => ({ ...p, [f.key]: e.target.checked }))}
+                    className="w-4 h-4 accent-indigo-600"
+                  />
+                  {f.label}
+                </label>
+              );
+            }
+            if (f.type === 'select') {
+              return (
+                <label key={f.key} className={labelCls}>
+                  {f.label}
+                  <select
+                    value={values[f.key] ?? ''}
+                    onChange={(e) => setValue(f.key, e.target.value)}
+                    aria-label={f.label}
+                    className={inputCls}
+                  >
+                    <option value="">None</option>
+                    {(f.options ?? []).map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  {f.hint ? <span className={hintCls}>{f.hint}</span> : null}
+                </label>
+              );
+            }
+            if (f.type === 'textarea') {
+              return (
+                <label key={f.key} className={labelCls}>
+                  {f.label}
+                  <textarea
+                    value={values[f.key] ?? ''}
+                    onChange={(e) => setValue(f.key, e.target.value)}
+                    placeholder={f.placeholder}
+                    aria-label={f.label}
+                    rows={2}
+                    className={inputCls}
+                  />
+                  {f.hint ? <span className={hintCls}>{f.hint}</span> : null}
+                </label>
+              );
+            }
+            return (
+              <label key={f.key} className={labelCls}>
+                {f.label}
+                <input
+                  type={f.type === 'number' ? 'number' : 'text'}
+                  value={values[f.key] ?? ''}
+                  onChange={(e) => setValue(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                  aria-label={f.label}
+                  className={inputCls}
+                />
+                {f.hint ? <span className={hintCls}>{f.hint}</span> : null}
+              </label>
+            );
+          })}
 
           {cfg.disabledFields.map((f) => (
-            <label key={f.label} className="block text-xs font-semibold text-slate-600">
+            <label key={f.label} className={labelCls}>
               {f.label}
               <input type="text" value="" disabled placeholder="Not stored yet" aria-label={`${f.label} (not stored yet)`} className={inputCls} />
               <span className={hintCls}>{f.hint ?? 'Not stored yet.'}</span>
@@ -335,11 +510,37 @@ function UnitDrawer({
 
 type PanelTab = 'summary' | 'employees' | 'settings' | 'registration' | 'signatories' | 'bank';
 
+/** Stored extra value -> display string (FKs resolve to their *_name, then options). */
+export function displayExtra(item: UnitItem, field: ExtraField, fkOptions: FkOptions): string {
+  const admin = item.admin;
+  if (field.type === 'boolean') {
+    return admin?.[camelKey(field.key)] ? 'Yes' : 'No';
+  }
+  if (field.type === 'fk') {
+    const nameKey = `${camelKey(field.key)}Name`;
+    const named = admin?.[nameKey];
+    if (typeof named === 'string' && named) return named;
+    const raw = field.key === 'parent' ? (admin?.['parent'] ?? item.parentId) : admin?.[camelKey(field.key)];
+    if (raw === null || raw === undefined || raw === '') return '—';
+    const found = (fkOptions[field.fk as FkTarget] ?? []).find((o) => o.id === String(raw));
+    return found?.name ?? '—';
+  }
+  if (field.type === 'select' && field.options) {
+    const raw = admin?.[camelKey(field.key)];
+    if (raw === null || raw === undefined || raw === '') return '—';
+    return field.options.find((o) => o.value === String(raw))?.label ?? String(raw);
+  }
+  const raw = admin?.[camelKey(field.key)];
+  if (raw === null || raw === undefined || raw === '') return '—';
+  return String(raw);
+}
+
 export function DetailPanel({
   kind,
   item,
   employees,
   allUnits,
+  fkOptions,
   canManage,
   onEdit,
   onDelete,
@@ -349,6 +550,7 @@ export function DetailPanel({
   item: UnitItem;
   employees: OrgEmployee[];
   allUnits: UnitItem[];
+  fkOptions: FkOptions;
   canManage: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -393,14 +595,12 @@ export function DetailPanel({
     </div>
   );
 
-  const disabledHead = (
-    <span className="flex items-center gap-2">
-      <span className="flex-1 px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl text-slate-400">
-        Select an employee…
-      </span>
-      <span className="text-[11px] font-medium text-slate-400">Not tracked yet</span>
-    </span>
-  );
+  const fieldRowValue = (label: string, value: string) =>
+    fieldRow(label, value === '—' ? <span className="text-slate-400">—</span> : value);
+
+  const positionCount = typeof item.admin?.['positionCount'] === 'number' ? (item.admin['positionCount'] as number) : null;
+
+  const regField = (key: string, type: 'text' | 'fk', fk?: FkTarget): ExtraField => ({ key, label: '', type, fk });
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl">
@@ -440,31 +640,46 @@ export function DetailPanel({
         {tab === 'summary' ? (
           <div className="grid gap-6 lg:grid-cols-[1fr_240px]">
             <div>
-              {fieldRow(`${cfg.singular} Head`, disabledHead)}
-              {fieldRow('Email Alias', <span className="text-slate-400">N/A</span>)}
-              {cfg.hasCode
-                ? fieldRow('Code', item.code ? item.code : <span className="text-slate-400">—</span>)
-                : null}
+              {fieldRowValue('Code', item.code || '—')}
+              {fieldRow('Description', item.description ? item.description : <span className="text-slate-400">—</span>)}
               {cfg.hasParent
                 ? fieldRow(
                     'Parent department',
                     item.parentName ?? <span className="text-slate-400">Top level — no parent</span>,
                   )
                 : null}
-              {fieldRow(
-                'Description',
-                <span className="text-slate-400">Not stored yet — the backend keeps names only.</span>,
+              {cfg.extraFields.map((f) =>
+                fieldRowValue(f.label, displayExtra(item, f, fkOptions)),
               )}
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 h-fit">
               <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Stats</p>
-              <p className="mt-2 text-2xl font-bold text-slate-900">{members.length}</p>
-              <p className="text-xs text-slate-500">Employees</p>
+              {cfg.hasEmployees ? (
+                <>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{members.length}</p>
+                  <p className="text-xs text-slate-500">Employees</p>
+                </>
+              ) : null}
               {cfg.hasParent ? (
                 <>
                   <p className="mt-3 text-2xl font-bold text-slate-900">{children.length}</p>
                   <p className="text-xs text-slate-500">Sub-departments</p>
                 </>
+              ) : null}
+              {typeof item.childCount === 'number' && !cfg.hasParent ? (
+                <>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{item.childCount}</p>
+                  <p className="text-xs text-slate-500">Child units</p>
+                </>
+              ) : null}
+              {positionCount !== null ? (
+                <>
+                  <p className="mt-3 text-2xl font-bold text-slate-900">{positionCount}</p>
+                  <p className="text-xs text-slate-500">Approved seats</p>
+                </>
+              ) : null}
+              {!cfg.hasEmployees && cfg.hasParent === false && typeof item.childCount !== 'number' && positionCount === null ? (
+                <p className="mt-2 text-xs text-slate-500">No linked records.</p>
               ) : null}
             </div>
           </div>
@@ -487,16 +702,14 @@ export function DetailPanel({
             <h4 className="text-sm font-bold text-slate-900">Entity Details</h4>
             <div className="mt-2 grid gap-x-8 sm:grid-cols-2">
               {fieldRow('Entity name', item.name)}
-              {fieldRow('Legal name', item.name)}
-              {fieldRow('CIN / Registration no.', <span className="text-slate-400">—</span>)}
-              {fieldRow('Date of incorporation', <span className="text-slate-400">—</span>)}
-              {fieldRow('Type / Sector / Nature', <span className="text-slate-400">—</span>)}
-              {fieldRow('Currency', <span className="text-slate-400">—</span>)}
-              {fieldRow('Financial year', <span className="text-slate-400">—</span>)}
-              {fieldRow('Registered address', <span className="text-slate-400">—</span>)}
+              {fieldRowValue('Code', item.code || '—')}
+              {fieldRow('Registered address', displayExtra(item, regField('registered_address', 'fk', 'location'), fkOptions) === '—' ? <span className="text-slate-400">—</span> : displayExtra(item, regField('registered_address', 'fk', 'location'), fkOptions))}
+              {fieldRowValue('Country', displayExtra(item, regField('country', 'text'), fkOptions))}
+              {fieldRowValue('Currency', displayExtra(item, regField('currency', 'text'), fkOptions))}
+              {fieldRowValue('Logo', displayExtra(item, regField('logo', 'text'), fkOptions))}
             </div>
             <p className="mt-3 text-[11px] text-slate-400">
-              Only the name is stored by the backend. The rest are not tracked yet.
+              Tax and registration columns live in the payroll module, not here.
             </p>
           </div>
         ) : null}
