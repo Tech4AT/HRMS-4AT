@@ -17,6 +17,7 @@ import {
 import type { Lookups, Named } from '@/components/admin/org/useOrgData';
 import { EmployeeDrawer } from '@/components/admin/org/EmployeeDrawer';
 import { Badge, Notice } from '@/components/admin/ui';
+import { LearningOverview } from '@/components/learning/LearningOverview';
 
 const AVATAR_COLORS = [
   'from-slate-600 to-slate-800',
@@ -72,11 +73,12 @@ const EMPTY_LOOKUPS: Lookups = {
   costCenters: [],
 };
 
-type TabId = 'job' | 'personal' | 'documents';
+type TabId = 'job' | 'personal' | 'learning' | 'documents';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'job', label: 'Job' },
   { id: 'personal', label: 'Personal' },
+  { id: 'learning', label: 'Learning' },
   { id: 'documents', label: 'Documents' },
 ];
 
@@ -303,6 +305,8 @@ export default function EmployeeProfilePage() {
                       {personal.exit_reason && <JobField label="Reason for leaving" value={personal.exit_reason} />}
                     </dl>
                   ))}
+
+                {tab === 'learning' && <LearningOverview employeeId={employee.id} />}
 
                 {tab === 'documents' && (
                   <div className="text-sm text-gray-500">

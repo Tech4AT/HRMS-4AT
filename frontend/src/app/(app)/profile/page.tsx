@@ -16,12 +16,14 @@ import {
   PackageIcon,
   CalendarIcon,
 } from '@/components/icons';
+import { LearningOverview } from '@/components/learning/LearningOverview';
 import { exitsApi, ExitsApiError, MyResignationState, RESIGNATION_STATUS_COLOR, ResignationStatus } from '@/lib/api/exits';
 
 const tabs = [
   { id: 'about', label: 'About' },
   { id: 'profile', label: 'Profile' },
   { id: 'job', label: 'Job' },
+  { id: 'learning', label: 'Learning' },
   { id: 'exit', label: 'Exit' },
   { id: 'assets', label: 'Assets' },
 ];
@@ -788,6 +790,8 @@ export default function ProfilePage() {
             </div>
           </div>
         )}
+
+        {activeTab === 'learning' && <LearningOverview employeeId="me" showLaunch />}
 
         {activeTab === 'exit' && <ExitTab />}
 

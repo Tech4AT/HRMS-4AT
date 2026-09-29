@@ -29,6 +29,7 @@ import {
   DocumentIcon,
   CalendarCheckIcon,
   ReceiptIcon,
+  GraduationCapIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -127,6 +128,19 @@ const navItems: NavItem[] = [
     href: '/performance',
     roles: ['admin', 'employee', 'superadmin'],
   },
+  {
+    id: 'learning',
+    label: 'Learning',
+    icon: GraduationCapIcon,
+    href: '/learning',
+    roles: ['admin', 'employee', 'superadmin'],
+    requirePermission: 'lms.read',
+    children: [
+      { label: 'My Learning', href: '/learning' },
+      { label: 'Compliance', href: '/learning/compliance', roles: ['admin', 'superadmin'] },
+      { label: 'LMS Integration', href: '/learning/admin', requirePermission: 'lms.admin' },
+    ],
+  },
   { id: 'team', label: 'My Team', icon: TeamIcon, href: '/team', roles: ['admin', 'employee', 'superadmin'] },
   {
     // Org menu: directory/chart visible to all; admin sections gated to admin+.
@@ -222,7 +236,9 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
   '/apps': { title: 'Apps', subtitle: 'Access the tools and applications available to you' },
   '/reports': { title: 'Reports', subtitle: 'Headcount, attendance, leave, and payroll analytics' },
-  '/learning': { title: 'Learning', subtitle: 'Courses, certifications, and skill-building resources' },
+  '/learning': { title: 'Learning', subtitle: 'Courses, certifications, and skills from the LMS' },
+  '/learning/compliance': { title: 'Learning compliance', subtitle: 'Training completion and expiring certifications' },
+  '/learning/admin': { title: 'LMS integration', subtitle: 'Sync health, learner links and reconciliation' },
   '/career': { title: 'Career', subtitle: 'Growth plans, internal mobility, and career conversations' },
 };
 
@@ -248,8 +264,11 @@ function SubNav({ items }: { items: NavChild[] }) {
   });
   const currentTab = searchParams.get('tab');
 
+  const matches = (c: (typeof parsed)[number]) => pathname === c.path || pathname.startsWith(`${c.path}/`);
   const isActive = (c: (typeof parsed)[number]) => {
-    if (pathname !== c.path && !pathname.startsWith(`${c.path}/`)) return false;
+    if (!matches(c)) return false;
+    // A more specific sibling (/learning/compliance vs /learning) wins.
+    if (parsed.some((x) => x.path.length > c.path.length && matches(x))) return false;
     if (c.tab == null) return true;
     const tabsHere = parsed.filter((x) => x.path === c.path && x.tab != null);
     return c.tab === (currentTab ?? tabsHere[0]?.tab);

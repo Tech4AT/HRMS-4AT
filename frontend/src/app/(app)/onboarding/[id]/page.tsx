@@ -41,6 +41,7 @@ import { ConfirmDialog } from '@/components/documents/ConfirmDialog';
 import { DocumentActionMenu, type DocumentActionMenuItem } from '@/components/documents/DocumentActionMenu';
 import { DocumentDetailsDrawer, type DocumentDetailsData } from '@/components/documents/DocumentDetailsDrawer';
 import { ExpiryIndicator } from '@/components/documents/ExpiryIndicator';
+import { MandatoryTraining } from '@/components/learning/MandatoryTraining';
 
 const OFFER_PENDING_STATUSES = ['sent', 'viewed', 'awaiting_signature'];
 const OFFER_DRAFT_STATUSES = ['draft', 'generated'];
@@ -419,6 +420,11 @@ export default function OnboardingRecordDetailPage() {
           {isHrAdmin && <IdentityDocumentsSection recordId={recordId} employeeName={record.employee.name} />}
           {isHrAdmin && <EducationRecordsSection recordId={recordId} employeeName={record.employee.name} />}
           {isHrAdmin && <ResumeSection employeeId={record.employee.id} employeeName={record.employee.name} />}
+          {record.stage !== 'preboarding' && (
+            <div className="mb-6">
+              <MandatoryTraining employeeId={record.employee.id} />
+            </div>
+          )}
           {isHrAdmin && <EmployeeLettersSection recordId={recordId} />}
           {isHrAdmin && <BankDetailsSection recordId={recordId} />}
 

@@ -20,6 +20,7 @@ import { IdentityDocumentCards } from '@/components/documents/IdentityDocumentCa
 import { MyDocumentsList } from '@/components/documents/MyDocumentsList';
 import { EducationRecordCards } from '@/components/documents/EducationRecordCards';
 import { ConfirmDialog } from '@/components/documents/ConfirmDialog';
+import { MandatoryTraining } from '@/components/learning/MandatoryTraining';
 
 // Matched against onboarding/management/commands/seed_onboarding_templates.py
 // and the backend's auto-complete-on-submit logic (services.py::
@@ -124,6 +125,9 @@ export default function MyOnboardingPage() {
         <EducationRecordCards employeeId={data.employee.id} onChanged={load} />
       </div>
       <BankDetailsCard onSaved={load} />
+      <div id="training" className="mb-4 scroll-mt-4">
+        <MandatoryTraining employeeId="me" showLaunch />
+      </div>
 
       {categories.map((category) => {
         const tasks = data.tasks.filter((t) => t.category === category).sort((a, b) => a.sortOrder - b.sortOrder);
