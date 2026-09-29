@@ -31,6 +31,11 @@ from core.scope import (
 # employee-owned career buckets (resume / certificates / past experience)
 # key off employees.read.
 ENTITY_PERMISSIONS = {
+    # Org-wide policy/notice documents (Org > Organization Documents). Not tied
+    # to one employee — visibility is governed by the per-document `audience`
+    # (see _entity_allowed / _audience_allows below), not an employee-subject
+    # scope. Declared here so it isn't treated as an undeclared/probing type.
+    'organization_document': 'documents.read',
     'employee_document': 'employees.personal.read',
     'onboarding_task': 'onboarding.read',
     'identity_document': 'onboarding.read',
@@ -91,6 +96,10 @@ def _entity_allowed(user, document) -> bool:
     only ever restricts past this point, never widens."""
     me = getattr(getattr(user, 'employee', None), 'id', None)
     subject_id = _subject_employee_id(document)
+    # Org-wide documents have no employee subject; the base entity check passes
+    # for any authenticated employee and _audience_allows narrows by audience.
+    if document.entity_type == 'organization_document':
+        return me is not None
     if subject_id is not None and me is not None and subject_id == me:
         return True
     if document.entity_type in _READABLE_BY_FINANCE and is_finance(user):
@@ -133,6 +142,10 @@ def _audience_allows(user, document) -> bool:
         # HR Admin is handled above; a manager is anyone whose scope covers
         # the subject employee — the same visibility the manager-readable org
         # types above already key off (default employees.read scope).
+        if document.entity_type == 'organization_document':
+            # Org-wide: no single subject — a "manager" is anyone with
+            # oversight of at least one employee besides themselves.
+            return bool(set(visible_employee_ids(user)) - ({me} if me is not None else set()))
         return subject_id is not None and subject_id in visible_employee_ids(user)
     return False  # Unknown audience value: deny rather than leak.
 
