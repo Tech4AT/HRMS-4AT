@@ -785,6 +785,8 @@ class TeamAdminSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "code",
+            "description",
             "is_active",
             "department",
             "department_name",
