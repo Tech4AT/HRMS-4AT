@@ -197,7 +197,7 @@ A learner linked to a different employee is answered with **422
 | — | `HRMS_WEBHOOK_URL=<hrms>/api/v1/integrations/lms/events` |
 | `LMS_SSO_SECRET` | `HRMS_SSO_SECRET` (same value, 32+ chars) |
 | `LMS_SSO_LAUNCH_URL=<gateway>/auth/hrms-sso` | `LMS_FRONTEND_URL=<4AT-LMS-Frontend origin>` |
-| — | `HRMS_LMS_GROUP_REGISTRATION_ID`, `HRMS_LMS_ORGANIZATION_BRANCH_ID` (where new learners go), `HRMS_LMS_LEARNER_ROLE` (default `ROLE_STUDENT`), `HRMS_LMS_LEARNER_USER_TYPE` (default `STUDENT`), `HRMS_LMS_MANDATORY_PROGRAM_IDS` |
+| — | `HRMS_LMS_ORGANIZATION_NAME` (default `4AT Consulting LLP`), `HRMS_LMS_BRANCH_NAME` (default `4AT Internal`), `HRMS_LMS_ONBOARDING_PROGRAM_IDS` (new-joiner programs), `HRMS_LMS_LEARNER_ROLE` (default `ROLE_STUDENT`), `HRMS_LMS_LEARNER_USER_TYPE` (default `STUDENT`), `HRMS_LMS_MANDATORY_PROGRAM_IDS`; `HRMS_LMS_GROUP_REGISTRATION_ID` / `HRMS_LMS_ORGANIZATION_BRANCH_ID` as an id fallback |
 
 ### Verified
 
@@ -207,16 +207,36 @@ LMS's jjwt 0.9.1; the `#/sso` page was exercised in a browser (error and
 success paths). Not yet run end to end against a live LMS: the Liquibase
 changeset has not been applied to any database.
 
+### Where learners go and what they must learn
+
+- **Organisation / branch:** every HRMS employee becomes a learner (LMS role
+  Student, the LMS's learner role) in **4AT Consulting LLP**, branch
+  **4AT Internal**, looked up by name. Create the organisation once in each
+  LMS environment on the super admin's Group Registration screen (type
+  Corporate) with that branch.
+- **Departments:** HRMS sends each employee's department chain
+  (`department_path`, e.g. `["Audit & Assurance", "InfoSec Audit"]`). The LMS
+  creates any missing departments under 4AT and records the chain
+  (`hrms_learner_department`). Moving or renaming a department in HRMS
+  re-sends everyone in it and below it.
+- **Mandatory training by department:** an admin links a program to a
+  department on the LMS's Department screen (`department_mappings`). Everyone
+  in that department **or any department under it** is enrolled
+  automatically, including people who join later (a sweep runs every scan).
+  So GRC training linked to *Audit & Assurance* covers InfoSec Audit, SOX /
+  Design & Implementation and Venture Capital Audit; accounting courses
+  linked to *Accounting* cover Accounting and FPNA.
+- **New joiners:** when onboarding starts in HRMS, the learner is enrolled
+  in `HRMS_LMS_ONBOARDING_PROGRAM_IDS` (e.g. "New Joiner Essentials").
+- Department and onboarding programs reach HRMS as **mandatory** (onboarding
+  checklist, compliance dashboard).
+
 ### Still open
 
-- **Which organisation / branch / role** HRMS employees become learners in
-  (the local dump has no 4AT organisation).
-- **Automatic learning-path assignment** on `ROLE_CHANGED` /
-  `ONBOARDING_STAGE_CHANGED`: the LMS records these and keeps the learner in
-  sync, but enrolling into a program is left to the LMS's existing enrolment
-  until the HRMS role → LMS program mapping is decided.
 - **Certifications**: the LMS has no issued-certificate table to read from
   yet, so `CERTIFICATION_*` events are not produced.
+- Programs stay enrolled when someone moves department (their history is
+  kept); nothing is un-enrolled automatically.
 
 ## UAT mapping
 
