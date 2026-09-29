@@ -818,7 +818,13 @@ class LevelAdminSerializer(_JobArchAdminSerializer):
 
     class Meta(_OrgUnitSerializer.Meta):
         model = Level
-        fields = [*_OrgUnitSerializer.Meta.fields, "position_count", "rank", "job_family", "job_family_name"]
+        fields = [
+            *_OrgUnitSerializer.Meta.fields,
+            "position_count",
+            "rank",
+            "job_family",
+            "job_family_name",
+        ]
         read_only_fields = [
             *_OrgUnitSerializer.Meta.read_only_fields,
             "position_count",
