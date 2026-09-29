@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from employees.views import (
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
+    CodeSchemeAdminViewSet,
     CostCenterAdminViewSet,
     CostCenterViewSet,
     DepartmentAdminViewSet,
@@ -14,6 +15,7 @@ from employees.views import (
     EssProfileView,
     GradeAdminViewSet,
     GradeViewSet,
+    HierarchyRuleAdminViewSet,
     JobFamilyAdminViewSet,
     JobFamilyViewSet,
     JobTitleAdminViewSet,
@@ -25,6 +27,7 @@ from employees.views import (
     LocationAdminViewSet,
     LocationViewSet,
     OrgDirectoryViewSet,
+    OrgSettingAdminViewSet,
     PositionAdminViewSet,
     PositionViewSet,
     TeamAdminViewSet,
@@ -66,6 +69,9 @@ router.register("org/job-families", JobFamilyAdminViewSet, basename="org-jobfami
 router.register("org/levels", LevelAdminViewSet, basename="org-level")
 router.register("org/grades", GradeAdminViewSet, basename="org-grade")
 router.register("org/positions", PositionAdminViewSet, basename="org-position")
+router.register("org/org-settings", OrgSettingAdminViewSet, basename="org-orgsetting")
+router.register("org/code-schemes", CodeSchemeAdminViewSet, basename="org-codescheme")
+router.register("org/hierarchy-rules", HierarchyRuleAdminViewSet, basename="org-hierarchyrule")
 
 urlpatterns = [
     # The frontend calls this without a trailing slash.

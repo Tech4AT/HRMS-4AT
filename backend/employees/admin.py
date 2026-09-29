@@ -3,15 +3,18 @@ from django.contrib import admin
 from employees.models import (
     BankDetails,
     BusinessUnit,
+    CodeScheme,
     CostCenter,
     Department,
     EducationRecord,
     Employee,
     EmployeeLetter,
+    HierarchyRule,
     IdentityDocument,
     JobTitle,
     LegalEntity,
     Location,
+    OrgSetting,
     Resignation,
 )
 
@@ -67,3 +70,20 @@ class EmployeeLetterAdmin(admin.ModelAdmin):
 class ResignationAdmin(admin.ModelAdmin):
     list_display = ("employee", "status", "requested_last_day", "last_working_day", "initiated_by_hr", "created_at")
     list_filter = ("status", "initiated_by_hr")
+
+
+@admin.register(OrgSetting)
+class OrgSettingAdmin(admin.ModelAdmin):
+    list_display = ["key", "category", "updated_at"]
+    search_fields = ["key", "category"]
+
+
+@admin.register(CodeScheme)
+class CodeSchemeAdmin(admin.ModelAdmin):
+    list_display = ["entity_type", "prefix", "next_seq", "is_active"]
+
+
+@admin.register(HierarchyRule)
+class HierarchyRuleAdmin(admin.ModelAdmin):
+    list_display = ["id", "from_level", "from_job_title", "must_report_to_level", "active"]
+    list_filter = ["active"]

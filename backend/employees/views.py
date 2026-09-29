@@ -21,23 +21,28 @@ from core.permissions import HasPermissionCode, ScopedEmployeePermission
 from core.scope import resolve_employee_scope, user_has_permission
 from employees.models import (
     BusinessUnit,
+    CodeScheme,
     CostCenter,
     Department,
     Employee,
     Grade,
+    HierarchyRule,
     JobFamily,
     JobTitle,
     LegalEntity,
     Level,
     Location,
+    OrgSetting,
     Position,
     Team,
+    validate_manager,
 )
 from employees.serializers import (
     BusinessUnitAdminSerializer,
     BusinessUnitSerializer,
     CostCenterAdminSerializer,
     CostCenterSerializer,
+    CodeSchemeSerializer,
     DepartmentAdminSerializer,
     DepartmentSerializer,
     DesignationAdminSerializer,
@@ -48,6 +53,7 @@ from employees.serializers import (
     EssProfileWriteSerializer,
     GradeAdminSerializer,
     GradeSerializer,
+    HierarchyRuleSerializer,
     JobFamilyAdminSerializer,
     JobFamilySerializer,
     JobTitleAdminSerializer,
@@ -58,6 +64,7 @@ from employees.serializers import (
     LevelSerializer,
     LocationAdminSerializer,
     LocationSerializer,
+    OrgSettingSerializer,
     PersonalSerializer,
     PositionAdminSerializer,
     PositionSerializer,
@@ -687,3 +694,95 @@ class PositionAdminViewSet(AuditedModelViewSet):
         if status:
             queryset = queryset.filter(status=status)
         return queryset.order_by("name")
+
+
+class OrgSettingAdminViewSet(AuditedModelViewSet):
+    """Org configuration key/values. ?search= filters by key or category."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = OrgSettingSerializer
+    audit_entity_type = "OrgSetting"
+
+    def get_queryset(self):
+        queryset = OrgSetting.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(key__icontains=search) | Q(category__icontains=search)
+            )
+        return queryset.order_by("key")
+
+
+class CodeSchemeAdminViewSet(AuditedModelViewSet):
+    """Code-generation schemes. ?search= filters by entity type or prefix.
+    POST .../<id>/next-code/ emits the next code and advances the counter."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = CodeSchemeSerializer
+    audit_entity_type = "CodeScheme"
+
+    def get_queryset(self):
+        queryset = CodeScheme.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(entity_type__icontains=search) | Q(prefix__icontains=search)
+            )
+        return queryset.order_by("entity_type")
+
+    @action(detail=True, methods=["post"], url_path="next-code")
+    def next_code(self, request, pk=None):
+        scheme = self.get_object()
+        try:
+            code = CodeScheme.next_code(scheme.entity_type)
+        except ValueError as exc:
+            return Response(
+                {"success": False, "error": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response({"success": True, "data": {"code": code}})
+
+
+class HierarchyRuleAdminViewSet(AuditedModelViewSet):
+    """Reporting-line constraints. POST .../validate/ with
+    {employee_id, manager_id} pre-checks a reporting line without saving."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = HierarchyRuleSerializer
+    audit_entity_type = "HierarchyRule"
+
+    def get_queryset(self):
+        return HierarchyRule.objects.select_related(
+            "from_level", "from_job_title", "must_report_to_level"
+        ).order_by("id")
+
+    @action(detail=False, methods=["post"], url_path="validate")
+    def validate(self, request):
+        employee_id = request.data.get("employee_id")
+        manager_id = request.data.get("manager_id")
+        if not employee_id:
+            return Response(
+                {"success": False, "error": "employee_id is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            employee = Employee.objects.select_related("manager").get(pk=employee_id)
+        except Employee.DoesNotExist:
+            return Response(
+                {"success": False, "error": "Employee not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        manager = None
+        if manager_id is not None:
+            try:
+                manager = Employee.objects.get(pk=manager_id)
+            except Employee.DoesNotExist:
+                return Response(
+                    {"success": False, "error": "Manager not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+        errors = validate_manager(employee, manager)
+        return Response({"success": True, "data": {"valid": not errors, "errors": errors}})

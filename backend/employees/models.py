@@ -609,6 +609,147 @@ class EmployeeLetter(models.Model):
     def __str__(self):
         return f"{self.title} for {self.employee_id}"
 
+class OrgSetting(models.Model):
+    """A typed key/value org configuration row (e.g. onboarding defaults,
+    directory display flags). `value` is free-form JSON; `category` groups
+    keys for the settings screens. Read/written through get_setting /
+    set_setting so callers never touch the table directly."""
+
+    key = models.CharField(max_length=100, unique=True)
+    value = models.JSONField(default=dict)
+    category = models.CharField(max_length=50, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self):
+        return self.key
+
+    @classmethod
+    def get_setting(cls, key, default=None):
+        try:
+            return cls.objects.get(key=key).value
+        except cls.DoesNotExist:
+            return default
+
+    @classmethod
+    def set_setting(cls, key, value, category=""):
+        row, _ = cls.objects.get_or_create(key=key, defaults={"value": value})
+        row.value = value
+        if category:
+            row.category = category
+        row.save(update_fields=["value", "category", "updated_at"])
+        return row
+
+
+class CodeScheme(models.Model):
+    """How auto-generated codes for one entity type look (e.g. employees,
+    departments, positions): prefix + separator + zero-padded sequence.
+    next_code() renders the current code and advances the counter atomically
+    (SELECT ... FOR UPDATE), so concurrent creators never collide."""
+
+    entity_type = models.CharField(max_length=50, unique=True)
+    prefix = models.CharField(max_length=20, blank=True, default="")
+    padding = models.IntegerField(default=4)
+    next_seq = models.IntegerField(default=1)
+    separator = models.CharField(max_length=10, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["entity_type"]
+
+    def __str__(self):
+        return f"{self.entity_type} ({self.prefix}{self.separator}...)"
+
+    def render(self, seq=None):
+        seq = self.next_seq if seq is None else seq
+        return f"{self.prefix}{self.separator}{str(seq).zfill(max(self.padding, 1))}"
+
+    @classmethod
+    def next_code(cls, entity_type):
+        """Render the next code for `entity_type` and advance its counter.
+        Creates a default scheme (prefix from the entity name) on first use."""
+        from django.db import transaction
+
+        with transaction.atomic():
+            scheme, _ = cls.objects.select_for_update().get_or_create(
+                entity_type=entity_type,
+                defaults={"prefix": entity_type[:3].upper()},
+            )
+            if not scheme.is_active:
+                raise ValueError(f"Code scheme for '{entity_type}' is inactive.")
+            code = scheme.render()
+            scheme.next_seq += 1
+            scheme.save(update_fields=["next_seq", "updated_at"])
+            return code
+
+
+class HierarchyRule(models.Model):
+    """One reporting-line constraint, e.g. "L2 Engineers must report to an
+    L3+ inside their own department". A rule applies to an employee when every
+    criterion it sets matches (an unset criterion is a wildcard); a rule with
+    no criteria set applies to everyone. Inactive rules are ignored."""
+
+    from_level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    from_job_title = models.ForeignKey(
+        JobTitle, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    must_report_to_level = models.ForeignKey(
+        Level, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    same_department = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"HierarchyRule {self.pk} ({'active' if self.active else 'inactive'})"
+
+
+def validate_manager(employee, manager=None):
+    """Check `employee`'s manager against every active HierarchyRule.
+
+    Returns a list of violation strings (empty = valid). `manager` defaults
+    to the employee's current manager; pass an explicit candidate to
+    pre-check a move. Only ids are read, so API serializers can validate a
+    change before writing it."""
+
+    manager = manager if manager is not None else getattr(employee, "manager", None)
+    employee_level = getattr(employee, "level_id", None)
+    employee_title = getattr(employee, "designation_id", None)
+    employee_dept = getattr(employee, "department_id", None)
+    errors = []
+    for rule in HierarchyRule.objects.filter(active=True).order_by("id"):
+        if rule.from_level_id is not None and rule.from_level_id != employee_level:
+            continue
+        if rule.from_job_title_id is not None and rule.from_job_title_id != employee_title:
+            continue
+        if manager is None:
+            errors.append(f"Rule {rule.pk}: this role requires a manager.")
+            continue
+        want_level = rule.must_report_to_level
+        if rule.must_report_to_level_id is not None and (
+            getattr(manager, "level_id", None) != rule.must_report_to_level_id
+        ):
+            errors.append(
+                f"Rule {rule.pk}: manager must be at level '{want_level.name}'."
+                if want_level is not None
+                else f"Rule {rule.pk}: manager is at the wrong level."
+            )
+        if rule.same_department and getattr(manager, "department_id", None) != employee_dept:
+            errors.append(f"Rule {rule.pk}: manager must be in the same department.")
+    return errors
+
+
 class Resignation(models.Model):
     STATUS_SUBMITTED = "submitted"
     STATUS_ACCEPTED = "accepted"

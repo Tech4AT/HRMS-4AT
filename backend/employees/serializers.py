@@ -22,15 +22,18 @@ from accounts.models import Role
 from core.enums import EmployeeStatus, EmploymentType
 from employees.models import (
     BusinessUnit,
+    CodeScheme,
     CostCenter,
     Department,
     Employee,
     Grade,
+    HierarchyRule,
     JobFamily,
     JobTitle,
     LegalEntity,
     Level,
     Location,
+    OrgSetting,
     Position,
     Team,
 )
@@ -310,7 +313,6 @@ class EmployeeWriteSerializer(serializers.Serializer):
         manager = attrs.get("manager")
         if manager is not None and self.instance is not None:
             self._reject_reporting_cycle(self.instance, manager)
-
         current = self.instance
         joined = (
             attrs["date_of_joining"]
@@ -331,6 +333,7 @@ class EmployeeWriteSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"date_of_exit": "An exit date only applies to someone who has left."}
             )
+        self._reject_hierarchy_violations(attrs)
         return attrs
 
     @staticmethod
@@ -348,6 +351,36 @@ class EmployeeWriteSerializer(serializers.Serializer):
                 )
             seen.add(cursor.pk)
             cursor = cursor.manager
+
+    def _reject_hierarchy_violations(self, attrs):
+        """Enforce active HierarchyRules on an employee create/patch.
+
+        Builds a lightweight candidate from the instance overlaid with the
+        incoming attrs (ids only — validate_manager never touches the DB for
+        the employee side) and rejects the write when a rule is violated.
+        With no active rules this is a no-op, so existing flows are
+        unaffected. The seed loader writes via objects.create (never this
+        serializer), so booting with demo data cannot trip a rule."""
+        from employees.models import validate_manager
+
+        instance = self.instance
+        manager = attrs.get("manager", getattr(instance, "manager", None))
+
+        class _Candidate:
+            pass
+
+        candidate = _Candidate()
+        for field in ("level_id", "designation_id", "department_id"):
+            related = field[:-3]
+            if related in attrs:
+                ref = attrs[related]
+                setattr(candidate, field, ref.pk if ref is not None else None)
+            else:
+                setattr(candidate, field, getattr(instance, field, None))
+        candidate.manager = manager
+        violations = validate_manager(candidate, manager)
+        if violations:
+            raise serializers.ValidationError({"manager_id": violations})
 
     def create(self, validated):
         email = validated["work_email"]
@@ -915,3 +948,74 @@ class PositionAdminSerializer(serializers.ModelSerializer):
                 seen.add(cursor.pk)
                 cursor = cursor.reports_to
         return attrs
+
+
+class OrgSettingSerializer(serializers.ModelSerializer):
+    """Org configuration key/values. `value` is free-form JSON."""
+
+    class Meta:
+        model = OrgSetting
+        fields = ["id", "key", "value", "category", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class CodeSchemeSerializer(serializers.ModelSerializer):
+    """Code-generation schemes. `next_code_preview` shows the code the next
+    next_code() call would emit, without advancing the counter."""
+
+    next_code_preview = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CodeScheme
+        fields = [
+            "id",
+            "entity_type",
+            "prefix",
+            "padding",
+            "next_seq",
+            "separator",
+            "is_active",
+            "next_code_preview",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "next_code_preview", "created_at", "updated_at"]
+
+    def get_next_code_preview(self, obj):
+        return obj.render()
+
+
+class HierarchyRuleSerializer(serializers.ModelSerializer):
+    from_level_name = serializers.CharField(
+        source="from_level.name", read_only=True, default=None
+    )
+    from_job_title_name = serializers.CharField(
+        source="from_job_title.name", read_only=True, default=None
+    )
+    must_report_to_level_name = serializers.CharField(
+        source="must_report_to_level.name", read_only=True, default=None
+    )
+
+    class Meta:
+        model = HierarchyRule
+        fields = [
+            "id",
+            "from_level",
+            "from_level_name",
+            "from_job_title",
+            "from_job_title_name",
+            "must_report_to_level",
+            "must_report_to_level_name",
+            "same_department",
+            "active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "from_level_name",
+            "from_job_title_name",
+            "must_report_to_level_name",
+            "created_at",
+            "updated_at",
+        ]
