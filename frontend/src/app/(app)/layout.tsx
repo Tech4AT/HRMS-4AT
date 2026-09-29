@@ -125,7 +125,7 @@ const navItems: NavItem[] = [
       { label: 'Organisation Chart', href: '/org?tab=chart', roles: ['admin', 'superadmin'] },
       { label: 'Documents', href: '/org?tab=documents', roles: ['admin', 'superadmin'] },
       { label: 'Org Structure', href: '/org-module/org-structure', roles: ['admin', 'superadmin'] },
-      { label: 'Job Architecture', href: '/org-module/job-families', roles: ['admin', 'superadmin'] },
+      { label: 'Job Architecture', href: '/org-module/org-structure?tab=job-families', roles: ['admin', 'superadmin'] },
       {
         label: 'Manage Structure',
         href: '/manage-org',

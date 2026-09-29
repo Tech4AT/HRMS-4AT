@@ -1,14 +1,6 @@
-'use client';
+import { redirect } from 'next/navigation';
 
-import { orgApi } from '@/lib/api/org';
-import { NamedMasterSection } from '@/components/org-module/named-master-section';
-
+/** Job families live on the unified Org Structure screen now (Job Families tab). */
 export default function JobFamiliesPage() {
-  return (
-    <NamedMasterSection
-      title="Job Families"
-      searchPlaceholder="Search by name…"
-      load={orgApi.listJobFamilies}
-    />
-  );
+  redirect('/org-module/org-structure?tab=job-families');
 }
