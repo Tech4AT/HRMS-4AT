@@ -2,8 +2,54 @@
 Per-`entity_type` access matrix (docs/ARCHITECTURE.md primitive #6). No
 blanket rule beyond this — a role/entity_type combination not listed here is
 denied (docs/REQUIREMENTS.md open question #4).
+
+Two layers:
+
+1. `ENTITY_PERMISSIONS` — the DOC-ACL-GAP fix: every entity_type the app
+   stores maps to the RBAC permission code a non-owner must hold (at a scope
+   covering the document's employee) to read it. An entity_type with no entry
+   here is *undeclared* and denied outright (list/upload refuse it; per-row
+   `can_access` returns False for everyone but HR Admin).
+2. The legacy grants below (finance offer letters, onboarding access grants,
+   manager-visible org types) predate the mapping and are kept as additional
+   grant paths — the mapping only ever widens, never narrows.
 """
-from core.scope import is_finance, is_hr_admin, visible_employee_ids
+from core.scope import (
+    is_finance,
+    is_hr_admin,
+    resolve_employee_scope,
+    user_has_permission,
+    visible_employee_ids,
+)
+
+# entity_type -> RBAC permission code a non-owner must hold (at a scope
+# covering the document's employee) to read documents of that type.
+# 'employee_document' is the generic per-employee file bucket (Org >
+# Documents tab, HR-issued letters/certs): personal employment paperwork, so
+# it keys off employees.personal.read, the same code that gates other
+# personal details. Onboarding-flow types key off onboarding.read; the
+# employee-owned career buckets (resume / certificates / past experience)
+# key off employees.read.
+ENTITY_PERMISSIONS = {
+    'employee_document': 'employees.personal.read',
+    'onboarding_task': 'onboarding.read',
+    'identity_document': 'onboarding.read',
+    'education_record': 'onboarding.read',
+    'employee_letter': 'onboarding.read',
+    'offer_letter': 'onboarding.read',
+    'resume': 'employees.read',
+    'employee_certificate': 'employees.read',
+    'employee_experience': 'employees.read',
+}
+
+# entity_types whose entity_id IS the owning employee's pk (so "the owner"
+# can be resolved from the filter alone, even for an empty folder).
+_EMPLOYEE_KEYED_TYPES = frozenset({
+    'employee_document',
+    'resume',
+    'employee_certificate',
+    'employee_experience',
+})
 
 # entity_type -> which roles may read *any* document of that type, beyond the
 # owning employee (who can always read their own) and hr_admin (who can
@@ -24,10 +70,33 @@ _READABLE_BY_FINANCE = {'offer_letter'}
 _READABLE_BY_GRANT = {'identity_document': 'identity_documents', 'education_record': 'education'}
 
 
+def _subject_employee_id(document):
+    """The employee this document is *about*. Prefer the direct FK; fall back
+    to the entity pair for employee-keyed types (legacy rows were created with
+    only (entity_type, entity_id) and no FK — e.g. the conformance fixtures —
+    and the owner must still reach their own files)."""
+    if document.employee_id:
+        return document.employee_id
+    if document.entity_type in _EMPLOYEE_KEYED_TYPES:
+        try:
+            return int(document.entity_id)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def can_access(user, document) -> bool:
     if is_hr_admin(user):
         return True
-    if document.employee_id and document.employee_id == getattr(getattr(user, 'employee', None), 'id', None):
+    # Undeclared entity_type: denied outright, even to the owning employee.
+    # The app only ever creates the ENTITY_PERMISSIONS types above; anything
+    # else is a probing or corrupt row and must not leak through the
+    # owner shortcut below.
+    if document.entity_type not in ENTITY_PERMISSIONS:
+        return False
+    me = getattr(getattr(user, 'employee', None), 'id', None)
+    subject_id = _subject_employee_id(document)
+    if subject_id is not None and me is not None and subject_id == me:
         return True
     if document.entity_type in _READABLE_BY_FINANCE and is_finance(user):
         return True
@@ -39,4 +108,36 @@ def can_access(user, document) -> bool:
             return True
     if document.entity_type in _ORG_READABLE_BY_MANAGER and document.employee_id:
         return document.employee_id in visible_employee_ids(user)
+    # RBAC-code mapping (DOC-ACL-GAP fix): a holder of the mapped permission
+    # whose scope covers the document's employee may read it — e.g. an HR
+    # staffer granted employees.personal.read at ALL sees employee_document
+    # rows, with no role hard-coded here.
+    code = ENTITY_PERMISSIONS.get(document.entity_type)
+    if code and subject_id is not None:
+        scope_ids = resolve_employee_scope(user, code).values_list('pk', flat=True)
+        if subject_id in set(scope_ids):
+            return True
     return False
+
+
+def can_access_entity(user, entity_type: str, entity_id) -> bool:
+    """Folder-level check for `GET /documents?entityType=&entityId=`: may
+    `user` see this (type, id) bucket at all — used when no visible row
+    answers the question (empty folder, or every row filtered out). Owners
+    see their own (possibly empty) employee-keyed folder; anyone else needs
+    the mapped RBAC code at any scope (scope only matters once rows exist,
+    and an empty answer leaks nothing)."""
+    if is_hr_admin(user):
+        return True
+    code = ENTITY_PERMISSIONS.get(entity_type)
+    if code is None:
+        return False
+    if entity_type in _EMPLOYEE_KEYED_TYPES:
+        try:
+            subject_id = int(entity_id)
+        except (TypeError, ValueError):
+            return False
+        me = getattr(getattr(user, 'employee', None), 'id', None)
+        if me is not None and me == subject_id:
+            return True
+    return user_has_permission(user, code)

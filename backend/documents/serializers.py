@@ -18,13 +18,15 @@ class DocumentSerializer(serializers.ModelSerializer):
     is_expired = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()
+    uploaded_by = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
             'id', 'entity_type', 'entity_id', 'employee_id', 'original_filename',
+            'content_type', 'size',
             'url', 'view_url', 'download_url', 'uploaded_at', 'expiry_date', 'is_expired',
-            'file_size', 'uploaded_by_name',
+            'file_size', 'uploaded_by', 'uploaded_by_name',
         ]
 
     def _file_endpoint(self, obj, mode: str | None = None):
@@ -61,3 +63,6 @@ class DocumentSerializer(serializers.ModelSerializer):
             return None
         name = f'{obj.uploaded_by.first_name} {obj.uploaded_by.last_name}'.strip()
         return name or obj.uploaded_by.email
+
+    def get_uploaded_by(self, obj):
+        return obj.uploaded_by_id

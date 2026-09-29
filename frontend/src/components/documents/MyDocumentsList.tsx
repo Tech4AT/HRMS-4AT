@@ -13,7 +13,7 @@ const CATEGORY_ORDER: MyDocument['category'][] = ['Offer letter', 'Identity', 'E
  * the employee may (their own uploads, not HR-issued or verified ones). */
 export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { employeeId: number; refreshKey?: number; onChanged?: () => void }) {
   const [docs, setDocs] = useState<MyDocument[] | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyId, setBusyId] = useState<string | number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<MyDocument | null>(null);
   const [removeLoading, setRemoveLoading] = useState(false);

@@ -8,9 +8,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from audit.utils import write_audit
-from core.scope import is_hr_admin
+from core.scope import is_hr_admin, user_has_permission
 
-from .access import can_access
+from .access import ENTITY_PERMISSIONS, can_access, can_access_entity
 from .models import Document, DocumentAccessLog
 from .serializers import DocumentSerializer
 
@@ -113,19 +113,45 @@ class DocumentListUploadView(APIView):
     same task (e.g. front + back of an ID, several certificates) — nothing
     here limits it to one; the "one document per task" behavior that used
     to exist was purely a frontend UI choice (auto-completing the task on
-    first upload), not a backend rule."""
+    first upload), not a backend rule.
+
+    Query/body keys accept camelCase (the frontend convention) and snake_case
+    (the API convention) spellings; both mean the same thing.
+
+    Access: an undeclared entityType is denied outright (403 on list, 400 on
+    upload). A filtered list that the caller may not see at all is 403, not
+    an empty 200 — otherwise anyone could probe which entity ids exist by
+    watching the status stay 200. The unfiltered list needs documents.read
+    and still returns only rows `can_access` allows."""
 
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request):
-        entity_type = request.query_params.get('entityType')
-        entity_id = request.query_params.get('entityId')
-        qs = Document.objects.all()
+        entity_type = request.query_params.get('entityType') or request.query_params.get('entity_type')
+        entity_id = request.query_params.get('entityId') or request.query_params.get('entity_id')
         if entity_type:
-            qs = qs.filter(entity_type=entity_type)
-        if entity_id:
-            qs = qs.filter(entity_id=entity_id)
+            if entity_type not in ENTITY_PERMISSIONS:
+                return Response(
+                    {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Unknown document type.'}},
+                    status=403,
+                )
+            qs = Document.objects.filter(entity_type=entity_type)
+            if entity_id:
+                qs = qs.filter(entity_id=entity_id)
+            visible = [d for d in qs if can_access(request.user, d)]
+            if not visible and not can_access_entity(request.user, entity_type, entity_id):
+                return Response(
+                    {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}},
+                    status=403,
+                )
+            return Response({'success': True, 'data': DocumentSerializer(visible, many=True, context={'request': request}).data})
+        if not user_has_permission(request.user, 'documents.read') and not is_hr_admin(request.user):
+            return Response(
+                {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}},
+                status=403,
+            )
+        qs = Document.objects.all()
         visible = [d for d in qs if can_access(request.user, d)]
         return Response({'success': True, 'data': DocumentSerializer(visible, many=True, context={'request': request}).data})
 
@@ -153,9 +179,30 @@ class DocumentListUploadView(APIView):
         # user from uploading (and thus claiming ownership of) a document
         # under any other employee's id. Only HR Admin may upload on behalf
         # of someone else; everyone else can only attach documents to
-        # themselves.
-        employee_id = request.data.get('employeeId') or None
+        # themselves. An omitted employeeId defaults to the requester's own
+        # record (self-service upload); callers without an employee record
+        # must pass one explicitly and be HR Admin.
+        entity_type = request.data.get('entityType') or request.data.get('entity_type') or ''
+        entity_id = request.data.get('entityId') or request.data.get('entity_id') or ''
+        if entity_type not in ENTITY_PERMISSIONS:
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': f'Unknown document type "{entity_type}".'}},
+                status=400,
+            )
+        if not user_has_permission(request.user, 'documents.write') and not is_hr_admin(request.user):
+            return Response(
+                {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}},
+                status=403,
+            )
+        employee_id = request.data.get('employeeId') or request.data.get('employee_id') or None
         requester_employee = getattr(request.user, 'employee', None)
+        if employee_id is None:
+            if requester_employee is None and not is_hr_admin(request.user):
+                return Response(
+                    {'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'employeeId is required.'}},
+                    status=403,
+                )
+            employee_id = getattr(requester_employee, 'id', None)
         if not is_hr_admin(request.user):
             if not requester_employee or str(requester_employee.id) != str(employee_id):
                 return Response(
@@ -164,15 +211,17 @@ class DocumentListUploadView(APIView):
                 )
 
         doc = Document.objects.create(
-            entity_type=request.data.get('entityType', ''),
-            entity_id=request.data.get('entityId', ''),
+            entity_type=entity_type,
+            entity_id=entity_id,
             employee_id=employee_id,
             file=file_obj,
             original_filename=file_obj.name,
+            content_type=file_obj.content_type or '',
+            size=file_obj.size,
             uploaded_by=request.user,
-            expiry_date=request.data.get('expiryDate') or None,
+            expiry_date=request.data.get('expiryDate') or request.data.get('expiry_date') or None,
         )
-        write_audit(request.user, 'document.upload', doc.entity_type, doc.entity_id, {'documentId': doc.id, 'filename': doc.original_filename})
+        write_audit(request.user, 'document.upload', doc.entity_type, doc.entity_id, {'documentId': str(doc.id), 'filename': doc.original_filename})
         return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data}, status=201)
 
 
@@ -204,11 +253,30 @@ class DocumentDetailView(APIView):
             return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
 
         write_audit(request.user, 'document.delete', doc.entity_type, doc.entity_id, {
-            'documentId': doc.id, 'filename': doc.original_filename,
+            'documentId': str(doc.id), 'filename': doc.original_filename,
         })
         doc.file.delete(save=False)
         doc.delete()
         return Response(status=204)
+
+
+def _serve_document_file(request, doc, mode: str):
+    """Shared bytes-serving core for the view (`?mode=view`, inline) and
+    download (`?mode=download` / `/download`, attachment) endpoints. Every
+    read is logged with who, when, and from where (`DocumentAccessLog`)."""
+    DocumentAccessLog.objects.create(
+        document=doc,
+        action=DocumentAccessLog.ACTION_DOWNLOADED if mode == 'download' else DocumentAccessLog.ACTION_VIEWED,
+        performed_by=request.user,
+        ip_address=_client_ip(request),
+    )
+
+    content_type, _ = mimetypes.guess_type(doc.original_filename)
+    response = FileResponse(doc.file.open('rb'), content_type=content_type or 'application/octet-stream')
+    disposition = 'attachment' if mode == 'download' else 'inline'
+    response['Content-Disposition'] = f'{disposition}; filename="{doc.original_filename}"'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 class DocumentFileView(APIView):
@@ -235,16 +303,24 @@ class DocumentFileView(APIView):
             return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'File not found'}}, status=404)
 
         mode = 'download' if request.query_params.get('mode') == 'download' else 'view'
-        DocumentAccessLog.objects.create(
-            document=doc,
-            action=DocumentAccessLog.ACTION_DOWNLOADED if mode == 'download' else DocumentAccessLog.ACTION_VIEWED,
-            performed_by=request.user,
-            ip_address=_client_ip(request),
-        )
+        return _serve_document_file(request, doc, mode)
 
-        content_type, _ = mimetypes.guess_type(doc.original_filename)
-        response = FileResponse(doc.file.open('rb'), content_type=content_type or 'application/octet-stream')
-        disposition = 'attachment' if mode == 'download' else 'inline'
-        response['Content-Disposition'] = f'{disposition}; filename="{doc.original_filename}"'
-        response['X-Content-Type-Options'] = 'nosniff'
-        return response
+
+class DocumentDownloadView(APIView):
+    """`GET /documents/{id}/download` — always serves the bytes as an
+    attachment (save-as). Same `can_access` gate and access logging as the
+    file view; a separate route (rather than only `?mode=download`) so API
+    clients and the conformance suite have one stable download URL."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            raise Http404
+        if not can_access(request.user, doc):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        if not doc.file:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'File not found'}}, status=404)
+        return _serve_document_file(request, doc, 'download')

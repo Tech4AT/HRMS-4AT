@@ -5,11 +5,16 @@
  */
 
 export interface UploadedDocument {
-  id: number;
+  /** UUID string (Document PK is a UUID — see backend/documents/models.py). */
+  id: string | number;
   entityType: string;
   entityId: string;
   employeeId: number | null;
   originalFilename: string;
+  /** MIME type as sent by the browser on upload (may be '' if unknown). */
+  contentType: string;
+  /** Bytes as stored. */
+  size: number;
   /** Alias of `viewUrl`, kept for callers that predate the view/download split. */
   url: string | null;
   /** Opens inline (Content-Disposition: inline) — for the document viewer. */
@@ -21,13 +26,16 @@ export interface UploadedDocument {
   isExpired: boolean;
   /** Bytes; null if the file is missing from storage or its size can't be read. */
   fileSize: number | null;
+  /** Uploader's user id (null for system-generated rows). */
+  uploadedBy: number | null;
   uploadedByName: string | null;
 }
 
 /** One row of `GET /documents/mine` — every file on the signed-in
  * employee's record, including their signed offer letter. */
 export interface MyDocument {
-  id: number;
+  /** UUID string (Document PK is a UUID — see backend/documents/models.py). */
+  id: string | number;
   category: 'Offer letter' | 'Onboarding' | 'Identity' | 'Education' | 'Letters' | 'Other';
   title: string;
   entityType: string;
@@ -97,7 +105,7 @@ function buildUploadForm(
   file: File,
   entityType: string,
   entityId: string | number,
-  employeeId: number,
+  employeeId: number | string,
   expiryDate?: string | null,
 ): FormData {
   const form = new FormData();
@@ -118,7 +126,7 @@ export const documentsApi = {
     file: File,
     entityType: string,
     entityId: string | number,
-    employeeId: number,
+    employeeId: number | string,
     expiryDate?: string | null,
   ): Promise<UploadedDocument> => {
     const result = await request<UploadedDocument>('', {
@@ -133,7 +141,7 @@ export const documentsApi = {
     file: File,
     entityType: string,
     entityId: string | number,
-    employeeId: number,
+    employeeId: number | string,
     onProgress: (percent: number) => void,
     expiryDate?: string | null,
   ): Promise<UploadedDocument> => {
@@ -163,6 +171,6 @@ export const documentsApi = {
       xhr.send(buildUploadForm(file, entityType, entityId, employeeId, expiryDate));
     });
   },
-  remove: (id: number) => request<void>(`/${id}`, { method: 'DELETE' }),
+  remove: (id: string | number) => request<void>(`/${id}`, { method: 'DELETE' }),
   mine: () => request<MyDocument[]>('/mine').then((v) => v ?? []),
 };

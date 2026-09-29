@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
 import { orgApi } from '@/lib/api/org';
+import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
+import { DocumentUploadModal, formatBytes } from '@/components/documents/DocumentUploadModal';
+import { DocumentViewerModal } from '@/components/documents/DocumentViewerModal';
 
 /* ------------------------------ data ------------------------------ */
 
@@ -179,7 +182,7 @@ export default function OrgPage() {
           the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          <Documents />
+          <Documents employees={employees} meId={meId} />
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (
@@ -196,78 +199,6 @@ export default function OrgPage() {
 
 /* ------------------------------ documents ------------------------------ */
 
-interface OrgDocument {
-  title: string;
-  description: string;
-  expires: string;
-  size: string;
-  updated: string;
-}
-
-interface DocFolder {
-  name: string;
-  documents: OrgDocument[];
-}
-
-const docFolders: DocFolder[] = [
-  {
-    name: 'Human Resources Policies',
-    documents: [
-      { title: 'Employee Training and Development', description: '', expires: 'No', size: '316.60 KB', updated: '24 May 2024' },
-      { title: 'Grievance Policy', description: '', expires: 'No', size: '334.18 KB', updated: '24 May 2024' },
-      { title: 'Code of Conduct Policy', description: '', expires: 'No', size: '269.41 KB', updated: '24 May 2024' },
-      { title: 'Work From Home Policy', description: 'Guidelines for remote and hybrid working', expires: 'No', size: '258.23 KB', updated: '24 May 2024' },
-      { title: 'Drug & Alcohol Policy', description: '', expires: 'No', size: '244.01 KB', updated: '24 May 2024' },
-      { title: 'Rewards and Recognition Policy', description: '', expires: 'No', size: '260.21 KB', updated: '24 May 2024' },
-      { title: 'Leave Policy', description: 'Leave types, accrual and application process', expires: 'No', size: '376.88 KB', updated: '25 May 2024' },
-      { title: 'Hiring Policy', description: '', expires: 'No', size: '243.49 KB', updated: '25 May 2024' },
-    ],
-  },
-  {
-    name: 'Compliance Policies',
-    documents: [
-      { title: 'Anti-Bribery & Corruption Policy', description: '', expires: 'No', size: '198.44 KB', updated: '18 Apr 2024' },
-      { title: 'Whistleblower Policy', description: '', expires: 'No', size: '176.10 KB', updated: '18 Apr 2024' },
-      { title: 'Data Protection & Privacy Policy', description: 'How employee and customer data is handled', expires: 'No', size: '312.77 KB', updated: '02 May 2024' },
-      { title: 'Conflict of Interest Policy', description: '', expires: 'No', size: '154.30 KB', updated: '02 May 2024' },
-      { title: 'Regulatory Reporting Guidelines', description: '', expires: '31 Dec 2025', size: '221.09 KB', updated: '11 Jun 2024' },
-    ],
-  },
-  {
-    name: 'Operational Policies',
-    documents: [
-      { title: 'Travel & Expense Policy', description: 'Booking, limits and reimbursement claims', expires: 'No', size: '287.65 KB', updated: '09 Mar 2024' },
-      { title: 'Asset Management Policy', description: '', expires: 'No', size: '203.12 KB', updated: '09 Mar 2024' },
-    ],
-  },
-  {
-    name: 'Information Security Policies',
-    documents: [
-      { title: 'Acceptable Use Policy', description: 'Use of company devices, email and internet', expires: 'No', size: '241.88 KB', updated: '20 Feb 2024' },
-      { title: 'Password & Access Control Policy', description: '', expires: 'No', size: '188.44 KB', updated: '20 Feb 2024' },
-    ],
-  },
-  {
-    name: 'Communication Policy',
-    documents: [
-      { title: 'Internal & External Communication Guidelines', description: '', expires: 'No', size: '167.20 KB', updated: '14 Jan 2024' },
-    ],
-  },
-  {
-    name: 'Risk Management Policies',
-    documents: [
-      { title: 'Enterprise Risk Management Framework', description: '', expires: 'No', size: '402.55 KB', updated: '30 Apr 2024' },
-      { title: 'Business Continuity Plan', description: 'Response and recovery procedures', expires: '30 Apr 2025', size: '355.90 KB', updated: '30 Apr 2024' },
-    ],
-  },
-  {
-    name: 'Insurance Policy',
-    documents: [
-      { title: 'Group Health Insurance Handbook', description: 'Coverage, network hospitals and claims', expires: '31 Mar 2025', size: '512.34 KB', updated: '01 Apr 2024' },
-    ],
-  },
-];
-
 function FolderIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -276,103 +207,233 @@ function FolderIcon({ className }: { className?: string }) {
   );
 }
 
-function Documents() {
-  const [activeFolder, setActiveFolder] = useState(docFolders[0].name);
-  const [folderSearch, setFolderSearch] = useState('');
+/* Real per-employee file store (documents app, primitive #6). The previous
+   mock (hardcoded policy folders) is gone: this lists the selected
+   employee's `employee_document` bucket with live metadata, and HR/admin
+   users can upload, preview, download and delete. The backend enforces
+   everything (owner + entity_type->permission mapping + HR Admin); the
+   permission checks here only decide what UI to offer. */
+function Documents({ employees, meId }: { employees: Employee[]; meId: string | null }) {
+  const { hasPermission, hasOrgScope } = useAuth();
+  const canRead = hasPermission('documents.read');
+  const canWrite = hasPermission('documents.write');
+  // Broad-visibility users may browse anyone's bucket; everyone else is
+  // locked to their own record (the backend 403s anything else, so offering
+  // the picker would only produce failures).
+  const canSeeOthers =
+    hasOrgScope() ||
+    hasPermission('employees.write') ||
+    hasPermission('org.manage') ||
+    hasPermission('employees.personal.read');
 
-  const visibleFolders = docFolders.filter((f) =>
-    f.name.toLowerCase().includes(folderSearch.trim().toLowerCase()),
-  );
-  const folder = docFolders.find((f) => f.name === activeFolder) ?? docFolders[0];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveId = canSeeOthers ? (selectedId ?? meId ?? employees[0]?.id ?? null) : meId;
+
+  const [docs, setDocs] = useState<UploadedDocument[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [viewing, setViewing] = useState<UploadedDocument | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | number | null>(null);
+
+  const load = useCallback(async () => {
+    if (!effectiveId) {
+      setDocs([]);
+      return;
+    }
+    try {
+      setLoadError(null);
+      setDocs(await documentsApi.list('employee_document', effectiveId));
+    } catch (e) {
+      setDocs(null);
+      setLoadError(e instanceof DocumentsApiError ? e.message : 'Failed to load documents');
+    }
+  }, [effectiveId]);
+
+  useEffect(() => {
+    if (canRead) void load();
+  }, [canRead, load]);
+
+  const remove = async (doc: UploadedDocument) => {
+    setActionError(null);
+    setDeletingId(doc.id);
+    try {
+      await documentsApi.remove(doc.id);
+      setViewing((v) => (v && v.id === doc.id ? null : v));
+      await load();
+    } catch (e) {
+      setActionError(e instanceof DocumentsApiError ? e.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  if (!canRead) {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
+        <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
+        <p className="text-sm text-gray-500 mt-2">You don&apos;t have permission to view documents.</p>
+      </div>
+    );
+  }
+
+  const selected = employees.find((e) => e.id === effectiveId) ?? null;
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Documents in these folders are uploaded by admin and available for viewing by all employees.
-        </p>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Files on the selected employee&apos;s record — upload, preview, download or delete.
+          </p>
+        </div>
+        {canWrite && effectiveId && (
+          <button
+            type="button"
+            onClick={() => setShowUpload(true)}
+            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
+          >
+            Upload document
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
-        {/* Folder list */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-3 h-max">
-          <div className="relative mb-2">
-            <input
-              type="text"
-              value={folderSearch}
-              onChange={(e) => setFolderSearch(e.target.value)}
-              placeholder="Search"
-              className="w-full pl-8 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-purple-400"
-            />
-            <svg className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <circle cx="11" cy="11" r="7" />
-              <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-            </svg>
-          </div>
-          <div className="space-y-0.5">
-            {visibleFolders.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-gray-400">No folders found.</p>
-            ) : (
-              visibleFolders.map((f) => (
-                <button
-                  key={f.name}
-                  onClick={() => setActiveFolder(f.name)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                    f.name === activeFolder ? 'bg-purple-50' : 'hover:bg-gray-50'
-                  }`}
-                >
-                  <FolderIcon className={`w-4 h-4 mt-0.5 shrink-0 ${f.name === activeFolder ? 'text-purple-600' : 'text-gray-400'}`} />
-                  <span className="min-w-0">
-                    <span className={`block text-sm font-medium truncate ${f.name === activeFolder ? 'text-purple-700' : 'text-slate-800'}`}>
-                      {f.name}
-                    </span>
-                    <span className="block text-xs text-gray-400">{f.documents.length} document{f.documents.length === 1 ? '' : 's'}</span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
+      {canSeeOthers && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3 flex items-center gap-3 flex-wrap">
+          <label htmlFor="org-docs-employee" className="text-sm font-medium text-slate-700">
+            Employee
+          </label>
+          <select
+            id="org-docs-employee"
+            value={effectiveId ?? ''}
+            onChange={(e) => setSelectedId(e.target.value || null)}
+            className="min-w-0 flex-1 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-purple-400"
+          >
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.title}
+              </option>
+            ))}
+          </select>
         </div>
+      )}
 
-        {/* Document table */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
-            <span className="w-9 h-9 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
-              <FolderIcon className="w-4 h-4" />
+      {actionError && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{actionError}</p>
+      )}
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
+          <span className="w-9 h-9 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+            <FolderIcon className="w-4 h-4" />
+          </span>
+          <h3 className="text-base font-bold text-slate-900">
+            {selected ? `${selected.name}'s documents` : 'Documents'}
+          </h3>
+          {docs && (
+            <span className="text-xs text-gray-400">
+              {docs.length} document{docs.length === 1 ? '' : 's'}
             </span>
-            <h3 className="text-base font-bold text-slate-900">{folder.name}</h3>
-          </div>
-          <div className="overflow-x-auto">
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          {loadError ? (
+            <p className="px-5 py-8 text-center text-sm text-red-600">{loadError}</p>
+          ) : docs === null ? (
+            <p className="px-5 py-8 text-center text-sm text-gray-500">Loading...</p>
+          ) : docs.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-gray-500">
+              No documents on this record yet{canWrite ? ' — upload the first one above.' : '.'}
+            </p>
+          ) : (
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Document Title</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Description</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Expiration Date</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Document</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Type</th>
                   <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Size</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Last Updated</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Uploaded by</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Uploaded at</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Expires</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {folder.documents.map((doc) => (
-                  <tr key={doc.title} className="hover:bg-gray-50 transition-colors">
+                {docs.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3">
-                      <button className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline text-left">
-                        {doc.title}
+                      <button
+                        type="button"
+                        onClick={() => setViewing(doc)}
+                        className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline text-left"
+                      >
+                        {doc.originalFilename}
                       </button>
                     </td>
-                    <td className="px-5 py-3 text-sm text-gray-500">{doc.description || '—'}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.expires}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.size}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.updated}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">{doc.contentType || '—'}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {typeof doc.size === 'number' ? formatBytes(doc.size) : (doc.fileSize != null ? formatBytes(doc.fileSize) : '—')}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-700">{doc.uploadedByName || '—'}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {doc.expiryDate ?? '—'}
+                      {doc.isExpired && (
+                        <span className="ml-2 text-xs font-medium text-red-600">Expired</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-sm">
+                      <span className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setViewing(doc)}
+                          className="text-purple-600 hover:text-purple-700 hover:underline"
+                        >
+                          View
+                        </button>
+                        {doc.downloadUrl && (
+                          <a href={doc.downloadUrl} className="text-purple-600 hover:text-purple-700 hover:underline">
+                            Download
+                          </a>
+                        )}
+                        {canWrite && (
+                          <button
+                            type="button"
+                            disabled={deletingId === doc.id}
+                            onClick={() => void remove(doc)}
+                            className="text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                          >
+                            {deletingId === doc.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        )}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          )}
         </div>
       </div>
+
+      {showUpload && effectiveId && (
+        <DocumentUploadModal
+          title={`Upload to ${selected ? selected.name : 'employee'}'s record`}
+          entityType="employee_document"
+          entityId={effectiveId}
+          employeeId={Number(effectiveId)}
+          allowExpiryDate
+          onUploaded={() => {
+            setShowUpload(false);
+            void load();
+          }}
+          onClose={() => setShowUpload(false)}
+        />
+      )}
+      {viewing && <DocumentViewerModal document={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
