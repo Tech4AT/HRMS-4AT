@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
+import { canSeeToApprove } from '@/lib/auth/canApprove';
 import {
   requestsApi,
   type ApprovalRequest,
@@ -37,7 +38,7 @@ const statusStyles: Record<string, string> = {
 
 export default function ApprovalsPage() {
   const searchParams = useSearchParams();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [tab, setTab] = useState<Tab>('to-approve');
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +51,14 @@ export default function ApprovalsPage() {
     const t = searchParams.get('tab');
     if (t === 'to-approve' || t === 'mine') setTab(t);
   }, [searchParams]);
+
+  // The 'To approve' sub-nav entry is hidden from ordinary employees (see
+  // layout's requireApprover gate); keep the page consistent by steering them
+  // to 'mine' even on a direct ?tab=to-approve link. Waits for auth so the
+  // pre-login null user can't flip the tab first.
+  useEffect(() => {
+    if (!authLoading && user && !canSeeToApprove(user)) setTab('mine');
+  }, [authLoading, user]);
 
   const refresh = useCallback(async () => {
     setLoading(true);

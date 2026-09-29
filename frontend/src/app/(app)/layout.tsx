@@ -3,6 +3,7 @@
 import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
+import { canSeeToApprove } from '@/lib/auth/canApprove';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { ProfileDropdown } from '@/components/ProfileDropdown';
 import { NotificationsDropdown } from '@/components/NotificationsDropdown';
@@ -56,6 +57,9 @@ interface NavItem {
   requirePermission?: string;
   /** Only show for users holding at least one of these permission codes. */
   requireAnyPermission?: string[];
+  /** Only show for users who may approve (have reports or an approve-scoped
+   * permission) — see canSeeToApprove. */
+  requireApprover?: boolean;
   badge?: number;
   children?: NavChild[];
 }
@@ -69,6 +73,9 @@ interface NavChild {
   requireOrgScope?: boolean;
   requirePermission?: string;
   requireAnyPermission?: string[];
+  /** Only show for users who may approve (have reports or an approve-scoped
+   * permission) — see canSeeToApprove. */
+  requireApprover?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -83,7 +90,7 @@ const navItems: NavItem[] = [
     href: '/approvals',
     roles: ['admin', 'employee', 'superadmin'],
     children: [
-      { label: 'To approve', href: '/approvals?tab=to-approve' },
+      { label: 'To approve', href: '/approvals?tab=to-approve', requireApprover: true },
       { label: 'My requests', href: '/approvals?tab=mine' },
     ],
   },
@@ -314,17 +321,23 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   // Shared access test for a top-level item or a submenu child.
+  // requireApprover hides the 'To approve' entry from ordinary employees:
+  // it shows only when the user has reports (team/org scope) or holds an
+  // approve-scoped permission — see canSeeToApprove.
+  const isApprover = canSeeToApprove(user);
   const canAccess = (rules: {
     roles?: RequiredRole[];
     requireOrgScope?: boolean;
     requirePermission?: string;
     requireAnyPermission?: string[];
+    requireApprover?: boolean;
   }) =>
     !!user &&
     (!rules.roles || rules.roles.includes(user.role as RequiredRole)) &&
     (!rules.requireOrgScope || hasOrgScope()) &&
     (!rules.requirePermission || hasPermission(rules.requirePermission)) &&
-    (!rules.requireAnyPermission || rules.requireAnyPermission.some((code) => hasPermission(code)));
+    (!rules.requireAnyPermission || rules.requireAnyPermission.some((code) => hasPermission(code))) &&
+    (!rules.requireApprover || isApprover);
 
   const filteredNavItems = navItems.filter(canAccess);
 
