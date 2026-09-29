@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "org_calendar",
     "attendance",
     "leave",
+    "help",
     # approvals, notifications, documents, and further plugin apps land here
     # as Phase 0/2/3+ scaffolding proceeds (docs/TASKS.md P0-E1-03/04).
 ]
