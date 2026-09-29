@@ -20,7 +20,9 @@ from core.exceptions import Conflict
 from core.permissions import HasPermissionCode, ScopedEmployeePermission
 from core.scope import resolve_employee_scope, user_has_permission
 from employees.models import (
+    AuthorizedSignatory,
     BusinessUnit,
+    Band,
     CodeScheme,
     CostCenter,
     Department,
@@ -30,14 +32,18 @@ from employees.models import (
     JobFamily,
     JobTitle,
     LegalEntity,
+    LegalEntityBankAccount,
     Level,
     Location,
     OrgSetting,
+    PayGrade,
     Position,
     Team,
     validate_manager,
 )
 from employees.serializers import (
+    AuthorizedSignatorySerializer,
+    BandSerializer,
     BusinessUnitAdminSerializer,
     BusinessUnitSerializer,
     CodeSchemeSerializer,
@@ -59,12 +65,14 @@ from employees.serializers import (
     JobTitleAdminSerializer,
     JobTitleSerializer,
     LegalEntityAdminSerializer,
+    LegalEntityBankAccountSerializer,
     LegalEntitySerializer,
     LevelAdminSerializer,
     LevelSerializer,
     LocationAdminSerializer,
     LocationSerializer,
     OrgSettingSerializer,
+    PayGradeSerializer,
     PersonalSerializer,
     PositionAdminSerializer,
     PositionSerializer,
@@ -531,6 +539,9 @@ class LocationAdminViewSet(_OrgUnitAdminViewSet):
     serializer_class = LocationAdminSerializer
     audit_entity_type = "Location"
 
+    def get_queryset(self):
+        return super().get_queryset().select_related("location_head__user")
+
 
 class LegalEntityAdminViewSet(_OrgUnitAdminViewSet):
     model = LegalEntity
@@ -693,6 +704,95 @@ class PositionAdminViewSet(AuditedModelViewSet):
         status = self.request.query_params.get("status")
         if status:
             queryset = queryset.filter(status=status)
+        return queryset.order_by("name")
+
+
+class AuthorizedSignatoryAdminViewSet(AuditedModelViewSet):
+    """Signatories of a legal entity. ?legal_entity=<id> scopes to one entity,
+    ?search= filters by name/designation/email."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = AuthorizedSignatorySerializer
+    audit_entity_type = "AuthorizedSignatory"
+
+    def get_queryset(self):
+        queryset = AuthorizedSignatory.objects.select_related("legal_entity")
+        legal_entity = self.request.query_params.get("legal_entity")
+        if legal_entity:
+            queryset = queryset.filter(legal_entity_id=legal_entity)
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(designation__icontains=search)
+                | Q(email__icontains=search)
+            )
+        return queryset.order_by("name")
+
+
+class LegalEntityBankAccountAdminViewSet(AuditedModelViewSet):
+    """Company bank accounts of a legal entity. ?legal_entity=<id> scopes to
+    one entity, ?search= filters by bank/branch/account number."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = LegalEntityBankAccountSerializer
+    audit_entity_type = "LegalEntityBankAccount"
+
+    def get_queryset(self):
+        queryset = LegalEntityBankAccount.objects.select_related("legal_entity")
+        legal_entity = self.request.query_params.get("legal_entity")
+        if legal_entity:
+            queryset = queryset.filter(legal_entity_id=legal_entity)
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(bank_name__icontains=search)
+                | Q(branch__icontains=search)
+                | Q(account_number__icontains=search)
+            )
+        return queryset.order_by("bank_name", "account_number")
+
+
+class PayGradeAdminViewSet(AuditedModelViewSet):
+    """EXAMPLE placeholder pay grades — see PayGrade model note. ?search=
+    filters by name or code."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = PayGradeSerializer
+    audit_entity_type = "PayGrade"
+
+    def get_queryset(self):
+        queryset = PayGrade.objects.all()
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) | Q(code__icontains=search)
+            )
+        return queryset.order_by("name")
+
+
+class BandAdminViewSet(AuditedModelViewSet):
+    """EXAMPLE placeholder bands — see Band model note. ?pay_grade=<id>
+    scopes to one grade, ?search= filters by name or code."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    serializer_class = BandSerializer
+    audit_entity_type = "Band"
+
+    def get_queryset(self):
+        queryset = Band.objects.select_related("pay_grade")
+        pay_grade = self.request.query_params.get("pay_grade")
+        if pay_grade:
+            queryset = queryset.filter(pay_grade_id=pay_grade)
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) | Q(code__icontains=search)
+            )
         return queryset.order_by("name")
 
 

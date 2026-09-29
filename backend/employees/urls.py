@@ -4,6 +4,8 @@ from rest_framework.routers import DefaultRouter
 from audit.views import EmployeeActivityViewSet
 from employees.analytics_views import OrgAnalyticsSummaryView, OrgHeadcountView
 from employees.views import (
+    AuthorizedSignatoryAdminViewSet,
+    BandAdminViewSet,
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
     CodeSchemeAdminViewSet,
@@ -23,6 +25,7 @@ from employees.views import (
     JobTitleAdminViewSet,
     JobTitleViewSet,
     LegalEntityAdminViewSet,
+    LegalEntityBankAccountAdminViewSet,
     LegalEntityViewSet,
     LevelAdminViewSet,
     LevelViewSet,
@@ -30,6 +33,7 @@ from employees.views import (
     LocationViewSet,
     OrgDirectoryViewSet,
     OrgSettingAdminViewSet,
+    PayGradeAdminViewSet,
     PositionAdminViewSet,
     PositionViewSet,
     TeamAdminViewSet,
@@ -65,12 +69,24 @@ router.register("org/designations", DesignationAdminViewSet, basename="org-desig
 router.register("org/job-titles", JobTitleAdminViewSet, basename="org-jobtitle")
 router.register("org/locations", LocationAdminViewSet, basename="org-location")
 router.register("org/legal-entities", LegalEntityAdminViewSet, basename="org-legalentity")
+router.register(
+    "org/authorized-signatories",
+    AuthorizedSignatoryAdminViewSet,
+    basename="org-authorizedsignatory",
+)
+router.register(
+    "org/bank-details",
+    LegalEntityBankAccountAdminViewSet,
+    basename="org-bankdetail",
+)
 router.register("org/business-units", BusinessUnitAdminViewSet, basename="org-businessunit")
 router.register("org/cost-centers", CostCenterAdminViewSet, basename="org-costcenter")
 router.register("org/teams", TeamAdminViewSet, basename="org-team")
 router.register("org/job-families", JobFamilyAdminViewSet, basename="org-jobfamily")
 router.register("org/levels", LevelAdminViewSet, basename="org-level")
 router.register("org/grades", GradeAdminViewSet, basename="org-grade")
+router.register("org/pay-grades", PayGradeAdminViewSet, basename="org-paygrade")
+router.register("org/bands", BandAdminViewSet, basename="org-band")
 router.register("org/positions", PositionAdminViewSet, basename="org-position")
 router.register("org/org-settings", OrgSettingAdminViewSet, basename="org-orgsetting")
 router.register("org/code-schemes", CodeSchemeAdminViewSet, basename="org-codescheme")
