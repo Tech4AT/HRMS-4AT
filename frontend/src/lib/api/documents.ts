@@ -173,4 +173,122 @@ export const documentsApi = {
   },
   remove: (id: string | number) => request<void>(`/${id}`, { method: 'DELETE' }),
   mine: () => request<MyDocument[]>('/mine').then((v) => v ?? []),
+
+  /* ---------------- Parcel B: audience + acknowledgement (contract in
+   * agents/god/documents-backend-spec.md, Parcel A). Shapes are camelCase
+   * per the spec; god reconciles if Parcel A's shapes differ at merge.
+   * Every method throws DocumentsApiError (404 when Parcel A hasn't
+   * landed yet) — callers render an honest empty state, never fake rows. */
+
+  /** All documents visible to the caller (backend applies audience + scope). */
+  orgList: () => request<OrgDocument[]>('').then((v) => v ?? []),
+
+  /** HR creates an organization document. Sent as multipart (file required
+   * by the documents app) with Parcel A fields alongside. */
+  orgCreate: async (input: OrgDocCreate): Promise<OrgDocument> => {
+    const form = new FormData();
+    form.append('file', input.file);
+    form.append('entityType', 'organization_document');
+    form.append('entityId', input.entityId ?? 'org');
+    form.append('title', input.title);
+    if (input.description) form.append('description', input.description);
+    form.append('audience', input.audience);
+    form.append('acknowledgementRequired', String(input.acknowledgementRequired));
+    if (input.expiryDate) form.append('expiryDate', input.expiryDate);
+    const result = await request<OrgDocument>('', { method: 'POST', body: form });
+    return result as OrgDocument;
+  },
+
+  /** Scope-filtered status list for one document (HR/manager see only
+   * employees within their scope). */
+  acknowledgements: (id: string | number) =>
+    request<AcknowledgementStatus>(`/${id}/acknowledgements`).then(
+      (v) => v ?? { total: 0, acknowledged: 0, pending: 0, items: [] },
+    ),
+
+  /** Current employee marks a document acknowledged. */
+  acknowledge: (id: string | number) =>
+    request<void>(`/${id}/acknowledge`, { method: 'POST' }),
+
+  /** Docs the current employee must still acknowledge. */
+  pendingAcknowledgement: () =>
+    request<PendingAckDoc[]>('/pending-acknowledgement').then((v) => v ?? []),
 };
+
+/** Per-document audience/visibility (Parcel A). Further restricts — never
+ * widens past the scope engine. HR Admin always sees all. */
+export type OrgDocAudience = 'hr_only' | 'hr_and_manager' | 'employee' | 'all_employees';
+
+export const AUDIENCE_OPTIONS: { value: OrgDocAudience; label: string }[] = [
+  { value: 'hr_only', label: 'HR only' },
+  { value: 'hr_and_manager', label: 'HR + Manager' },
+  { value: 'employee', label: 'Employee' },
+  { value: 'all_employees', label: 'All employees' },
+];
+
+export function audienceLabel(audience: string | null | undefined): string {
+  return AUDIENCE_OPTIONS.find((o) => o.value === audience)?.label ?? 'All employees';
+}
+
+/** One organization document (Parcel A fields are optional so the UI also
+ * renders pre-Parcel-A rows without crashing). */
+export interface OrgDocument {
+  id: string | number;
+  title?: string | null;
+  originalFilename?: string | null;
+  description?: string | null;
+  acknowledgementRequired?: boolean;
+  acknowledgement_required?: boolean;
+  audience?: OrgDocAudience | string | null;
+  expiryDate?: string | null;
+  expiry_date?: string | null;
+  size?: number | null;
+  fileSize?: number | null;
+  uploadedAt?: string | null;
+  uploaded_at?: string | null;
+}
+
+export function orgDocTitle(d: OrgDocument): string {
+  return d.title || d.originalFilename || 'Untitled document';
+}
+
+export function orgDocAckRequired(d: OrgDocument): boolean {
+  return d.acknowledgementRequired ?? d.acknowledgement_required ?? false;
+}
+
+export interface AcknowledgementEntry {
+  employee: number | string;
+  name: string;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+  acknowledged_at?: string | null;
+}
+
+export interface AcknowledgementStatus {
+  total: number;
+  acknowledged: number;
+  pending: number;
+  items: AcknowledgementEntry[];
+}
+
+export interface PendingAckDoc {
+  id: string | number;
+  title?: string | null;
+  originalFilename?: string | null;
+  description?: string | null;
+  uploadedAt?: string | null;
+  uploaded_at?: string | null;
+  expiryDate?: string | null;
+  expiry_date?: string | null;
+}
+
+export interface OrgDocCreate {
+  file: File;
+  title: string;
+  description?: string;
+  audience: OrgDocAudience;
+  acknowledgementRequired: boolean;
+  expiryDate?: string | null;
+  /** Backend entity bucket; defaults to 'org'. */
+  entityId?: string;
+}

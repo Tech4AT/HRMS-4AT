@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { documentsApi, MyDocument } from '@/lib/api/documents';
+import { PendingAcknowledgements } from '@/components/documents/org/PendingAcknowledgements';
 import { policiesApi, PoliciesApiError, CompanyPolicy } from '@/lib/api/policies';
 
 const CATEGORY_ORDER = ['Offer letter', 'Identity', 'Education', 'Letters', 'Onboarding', 'Other'];
@@ -248,6 +249,9 @@ export default function MyDocumentsPage() {
             </div>
 
             <div className="p-6">
+              <div className="mb-4">
+                <PendingAcknowledgements />
+              </div>
               {onboardingTasks.length === 0 ? (
                 <div className="flex flex-col items-center py-20 text-center">
                   <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center mb-3 text-green-500">
