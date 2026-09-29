@@ -194,18 +194,24 @@ def test_a_write_action_without_a_write_permission_fails_loudly(action):
 
 @pytest.mark.parametrize("action", WRITE)
 def test_read_only_holder_is_refused_a_write_action(action):
-    reader = _holder_of("leave.read")
+    # NOTE (test-v1 x leave_attendance merge): these codes must stay outside
+    # every registered module namespace. baseline_self_permissions() grants
+    # any registered "<module>.write" with an Employee SELF default to every
+    # employee, so the real "leave.write" (self-service "Submit leave
+    # requests", same design as example_leave.write) is legitimately held
+    # here and would make this assertion pass for the wrong reason.
+    reader = _holder_of("widget.read")
     view = _view(action)
-    view.write_permission = "leave.write"
+    view.write_permission = "widget.write"
 
     assert ScopedEmployeePermission().has_permission(_request_for(reader), view) is False
 
 
 @pytest.mark.parametrize("action", WRITE)
 def test_write_permission_holder_may_perform_a_write_action(action):
-    writer = _holder_of("leave.write")
+    writer = _holder_of("widget.write")
     view = _view(action)
-    view.write_permission = "leave.write"
+    view.write_permission = "widget.write"
 
     assert ScopedEmployeePermission().has_permission(_request_for(writer), view) is True
 
