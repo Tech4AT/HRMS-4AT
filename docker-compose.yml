@@ -60,6 +60,11 @@ services:
       - backend
     ports:
       - "3001:3001"
+    # No restart policy meant a crashed frontend stayed down permanently (port
+    # freed, browser/curl checks against :3001 silently hit whatever else
+    # picked it up) — a client stuck on "Loading..." looked like an app bug
+    # but was actually "there is no server behind this port any more."
+    restart: unless-stopped
 
 volumes:
   hrms_pgdata:

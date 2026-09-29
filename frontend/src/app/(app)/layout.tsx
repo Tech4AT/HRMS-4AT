@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
@@ -11,6 +11,8 @@ import {
   InboxIcon,
   TeamIcon,
   WalletIcon,
+  TimerIcon,
+  CalendarCheckIcon,
   TrendingUpIcon,
   MessageCircleIcon,
   GlobeIcon,
@@ -24,7 +26,6 @@ import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   SearchIcon,
-  FingerprintIcon,
   IdCardIcon,
   ClipboardCheckIcon,
   DocumentIcon,
@@ -60,8 +61,12 @@ interface NavItem {
   children?: NavChild[];
 }
 
-/** A submenu link, optionally gated by the same access rules as a top-level
- * item, so one menu can hold links that only some roles/permissions can see. */
+/** A submenu link. Optionally gated by the same access rules as a top-level
+ * item (`roles`/`requireOrgScope`/`requirePermission`/`requireAnyPermission`),
+ * so one menu can hold links that only some roles/permissions can see (e.g.
+ * Organisation's "All Employees" is superadmin+org-scope only). Separately,
+ * `matchPrefixes` extends which URLs count as "on this child" for
+ * tab-highlighting - e.g. My Attendance also owns /leave and /me/attendance. */
 interface NavChild {
   label: string;
   href: string;
@@ -69,6 +74,56 @@ interface NavChild {
   requireOrgScope?: boolean;
   requirePermission?: string;
   requireAnyPermission?: string[];
+  matchPrefixes?: string[];
+}
+
+/** Is `pathname`(+`search`) the target of a nav child's `href`? Handles both
+ * plain-path children (Settings -> /attendance/settings) and query-tab
+ * children (Summary -> /payslips?tab=summary), where `usePathname()` alone
+ * can't tell tabs on the same path apart. `isFirst` lets the first child of a
+ * query-tab group match when no query param is present yet (pages default to
+ * their first tab), so the bar doesn't render with nothing highlighted. */
+function isChildActive(
+  child: { href: string; matchPrefixes?: string[] },
+  pathname: string,
+  searchParams: URLSearchParams,
+  isFirst: boolean,
+): boolean {
+  if (child.matchPrefixes) {
+    return child.matchPrefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  }
+  const [path, query] = child.href.split('?');
+  if (pathname !== path) return false;
+  if (!query) return true;
+  const params = new URLSearchParams(query);
+  for (const [key, value] of params.entries()) {
+    const actual = searchParams.get(key);
+    if (actual === value) continue;
+    if (isFirst && !actual) continue;
+    return false;
+  }
+  return true;
+}
+
+/** Which of a section's children (if any) owns the current URL - path-only
+ * children (Settings, Payroll Setup, ...) use longest-matching-prefix so a
+ * more specific child wins over its broader sibling; query-tab children
+ * (Summary/My Pay/..., all sharing one path) compare query params instead,
+ * since `usePathname()` can't tell them apart. A section never mixes both
+ * kinds, so checking which kind is present up front is enough. */
+function getActiveChild<T extends { href: string; matchPrefixes?: string[] }>(
+  children: T[],
+  pathname: string,
+  searchParams: URLSearchParams,
+): T | undefined {
+  const queryChildren = children.filter((c) => c.href.includes('?'));
+  if (queryChildren.length) {
+    return queryChildren.find((c, i) => isChildActive(c, pathname, searchParams, i === 0));
+  }
+  const candidates = children.flatMap((c) => (c.matchPrefixes ?? [c.href]).map((p) => ({ child: c, p })));
+  return candidates
+    .filter(({ p }) => pathname === p || pathname.startsWith(`${p}/`))
+    .sort((a, b) => b.p.length - a.p.length)[0]?.child;
 }
 
 const navItems: NavItem[] = [
@@ -77,21 +132,35 @@ const navItems: NavItem[] = [
   { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
   {
-    id: 'approvals',
-    label: 'Approvals',
-    icon: ClipboardCheckIcon,
-    href: '/approvals',
+    // Approvals lives under Attendance, not as its own top-level item - it's
+    // a review surface for WFH/Regularisation/Leave/Penalisation, each its
+    // own in-page tab (approvals/page.tsx's own SectionTabs), not a
+    // cross-module inbox. Employees who can't approve anything never see it
+    // (that page redirects them away) - self-service raise/cancel of their
+    // own requests lives on the Leave/My Attendance pages instead, not here.
+    id: 'attendance',
+    label: 'Attendance',
+    icon: CalendarCheckIcon,
+    href: '/attendance',
     roles: ['admin', 'employee', 'superadmin'],
     children: [
-      { label: 'To approve', href: '/approvals?tab=to-approve' },
-      { label: 'My requests', href: '/approvals?tab=mine' },
+      {
+        label: 'Dashboard',
+        href: '/attendance/dashboard',
+        requireAnyPermission: ['leave.approve', 'attendance.approve', 'scope.all'],
+      },
+      { label: 'My Attendance', href: '/attendance', matchPrefixes: ['/attendance', '/me/attendance', '/leave'] },
+      {
+        label: 'Approvals',
+        href: '/approvals',
+        requireAnyPermission: ['leave.approve', 'attendance.approve'],
+      },
+      { label: 'Settings', href: '/attendance/settings', requireAnyPermission: ['attendance.settings.manage', 'calendar.manage'] },
     ],
   },
-  // Attendance / Leave / Timesheet are hidden until their backends exist. The
-  // pages proxy to /api/{attendance,leave,timesheet}/* which have no matching
-  // backend route (leave's only backend is the minimal example-leave reference,
-  // missing types/balance/holidays), so they render "Upstream error". Re-add
-  // each here when its real (peer-owned) backend lands.
+  // Timesheet page is a coming-soon placeholder (no dedicated backend yet);
+  // the Attendance/Leave backends it sits beside are real and proxied.
+  { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet', roles: ['admin', 'employee', 'superadmin'] },
   {
     id: 'finances',
     label: 'My Finances',
@@ -173,9 +242,12 @@ const COLLAPSE_STORAGE_KEY = 'hrms-sidebar-collapsed';
 const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/': { title: 'Home', subtitle: 'Overview of your workday and organization updates' },
   '/inbox': { title: 'Inbox', subtitle: 'Review messages, requests, and notifications that need your attention' },
-  '/approvals': { title: 'Approvals', subtitle: 'Approve requests routed to you and track your own' },
+  '/approvals': { title: 'Approvals', subtitle: 'Review WFH, regularisation, leave, and penalisation requests routed to you' },
   '/me/attendance': { title: 'Attendance', subtitle: 'Track your attendance, timings, and attendance requests' },
   '/leave': { title: 'Leave Management', subtitle: 'View your leave balance, requests, and time off' },
+  '/attendance/dashboard': { title: 'Dashboard', subtitle: 'Attendance and leave analytics for your team or organisation' },
+  '/attendance/settings': { title: 'Settings', subtitle: 'Shifts, leave, calendar, and penalization configuration for the organisation' },
+  '/attendance/calendar': { title: 'Calendar', subtitle: 'Your attendance plus organisation holidays, WFH days, and events' },
   '/timesheet': { title: 'Timesheet', subtitle: 'Track logged hours across projects and categories' },
   '/team': { title: 'My Team', subtitle: 'View your team, schedules, and workplace activity' },
   '/employees': { title: 'Organization', subtitle: 'Manage employees and organizational documents' },
@@ -209,58 +281,11 @@ function getPageTitle(pathname: string) {
   return match ? pageTitles[match] : null;
 }
 
-/** Uniform page sub-nav: the active sidebar menu's children rendered as tabs
- * below the page heading. Reads the URL so a `?tab=` child highlights correctly
- * (defaulting to the first tab child when no tab is set). */
-function SubNav({ items }: { items: NavChild[] }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  if (items.length === 0) return null;
-
-  const parsed = items.map((c) => {
-    const [path, query] = c.href.split('?');
-    return { ...c, path, tab: query ? new URLSearchParams(query).get('tab') : null };
-  });
-  const currentTab = searchParams.get('tab');
-
-  const isActive = (c: (typeof parsed)[number]) => {
-    if (pathname !== c.path && !pathname.startsWith(`${c.path}/`)) return false;
-    if (c.tab == null) return true;
-    const tabsHere = parsed.filter((x) => x.path === c.path && x.tab != null);
-    return c.tab === (currentTab ?? tabsHere[0]?.tab);
-  };
-
-  return (
-    <div className="bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8">
-      <div className="flex gap-5 overflow-x-auto scrollbar-hide" role="tablist">
-        {parsed.map((c) => {
-          const active = isActive(c);
-          return (
-            <Link
-              key={c.href}
-              href={c.href}
-              role="tab"
-              aria-selected={active}
-              className={`px-1 py-3 border-b-2 text-sm font-semibold whitespace-nowrap transition-colors ${
-                active
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {c.label}
-            </Link>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, hasOrgScope, hasPermission } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -328,27 +353,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const filteredNavItems = navItems.filter(canAccess);
 
-  const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
+  const isActive = (item: NavItem) => {
+    if (item.href === '/') return pathname === '/';
+    if (pathname.startsWith(item.href)) return true;
+    return item.children ? !!getActiveChild(item.children, pathname, searchParams) : false;
+  };
 
   const currentPageTitle = getPageTitle(pathname);
 
-  // The sidebar menu the current page belongs to, and its access-filtered
-  // children — mirrored as a sub-nav bar under the page heading (uniform).
-  const matchPath = (h: string) => {
-    const p = h.split('?')[0];
-    return p === '/' ? pathname === '/' : pathname === p || pathname.startsWith(`${p}/`);
-  };
-  const activeItem = navItems.find(
-    (it) => matchPath(it.href) || it.children?.some((c) => matchPath(c.href)),
-  );
-  const subNavChildren = activeItem?.children?.filter(canAccess) ?? [];
-
   const renderNavLink = (item: NavItem) => {
     const Icon = item.icon;
-    const active = isActive(item.href);
-    const visibleChildren = item.children?.filter(canAccess) ?? [];
-    const hasChildren = visibleChildren.length > 0;
-    const expanded = expandedId === item.id;
+    const active = isActive(item);
 
     return (
       <div key={item.id} className="group/nav relative">
@@ -376,23 +391,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {item.badge}
             </span>
           ) : null}
-          {hasChildren ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setExpandedId(expanded ? null : item.id);
-              }}
-              aria-label={expanded ? `Collapse ${item.label}` : `Expand ${item.label}`}
-              aria-expanded={expanded}
-              className={`-my-1 -mr-1 p-1 rounded-md hover:bg-white/10 transition-colors ${collapsed ? 'md:hidden' : ''}`}
-            >
-              <ChevronDownIcon
-                className={`w-4 h-4 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
-              />
-            </button>
-          ) : null}
         </Link>
 
         {/* Collapsed-state tooltip */}
@@ -401,23 +399,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             {item.label}
           </span>
         ) : null}
-
-        {hasChildren && expanded && !collapsed ? (
-          <div className="mt-1 ml-8 space-y-0.5 border-l border-slate-700 pl-3">
-            {visibleChildren.map((child) => (
-              <Link
-                key={child.label}
-                href={child.href}
-                className="block px-2 py-1.5 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              >
-                {child.label}
-              </Link>
-            ))}
-          </div>
-        ) : null}
       </div>
     );
   };
+
+  // The section owning the current page, if it groups sub-pages - rendered as
+  // a secondary tab row under the header instead of a sidebar accordion.
+  const activeSection = filteredNavItems.find((item) => item.children?.length && isActive(item));
+  const activeSectionChildren = activeSection?.children?.filter(canAccess);
 
   const sidebarContent = (
     <>
@@ -435,18 +424,28 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         >
           <XIcon className="w-5 h-5" />
         </button>
-      </div>
-
-      <div className={`hidden md:flex px-5 pb-4 ${collapsed ? 'md:justify-center md:px-0' : 'justify-end'}`}>
         <button
           onClick={toggleCollapsed}
-          className="text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg p-1.5 transition-colors"
-          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-          title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          className={`hidden md:inline-flex ml-auto shrink-0 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg p-1.5 transition-colors ${collapsed ? 'md:hidden' : ''}`}
+          aria-label="Collapse navigation"
+          title="Collapse navigation"
         >
-          {collapsed ? <PanelLeftOpenIcon className="w-[18px] h-[18px]" /> : <PanelLeftCloseIcon className="w-[18px] h-[18px]" />}
+          <PanelLeftCloseIcon className="w-[18px] h-[18px]" />
         </button>
       </div>
+
+      {collapsed ? (
+        <div className="hidden md:flex justify-center pb-4">
+          <button
+            onClick={toggleCollapsed}
+            className="text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg p-1.5 transition-colors"
+            aria-label="Expand navigation"
+            title="Expand navigation"
+          >
+            <PanelLeftOpenIcon className="w-[18px] h-[18px]" />
+          </button>
+        </div>
+      ) : null}
 
       <nav className="flex-1 min-h-0 px-3 space-y-1 overflow-y-auto scrollbar-hide">
         {filteredNavItems.map(renderNavLink)}
@@ -552,14 +551,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             >
               <HelpIcon className="w-5 h-5" />
             </button>
-            <button
-              onClick={() => router.push('/attendance')}
-              className="shrink-0 flex items-center gap-2 pl-3 pr-4 py-2.5 rounded-full border border-indigo-200 text-indigo-600 text-sm font-semibold hover:bg-indigo-50 transition-colors"
-              title="Quick Check In"
-            >
-              <FingerprintIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Quick Check In</span>
-            </button>
             <NotificationsDropdown />
             <div className="pl-2 sm:pl-3 border-l border-slate-200">
               <ProfileDropdown />
@@ -567,10 +558,27 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {subNavChildren.length > 0 ? (
-          <Suspense fallback={null}>
-            <SubNav items={subNavChildren} />
-          </Suspense>
+        {activeSectionChildren?.length ? (
+          <div className="sticky top-0 z-20 bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8">
+            <div className="flex gap-6 overflow-x-auto">
+              {activeSectionChildren.map((child) => {
+                const childActive = getActiveChild(activeSectionChildren, pathname, searchParams) === child;
+                return (
+                  <Link
+                    key={child.label}
+                    href={child.href}
+                    className={`shrink-0 px-1 py-3 border-b-2 font-semibold text-sm transition-colors ${
+                      childActive
+                        ? 'border-indigo-600 text-indigo-600'
+                        : 'border-transparent text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {child.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
         ) : null}
 
         <div className="flex-1 overflow-y-auto">{children}</div>

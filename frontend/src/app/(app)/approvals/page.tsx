@@ -1,219 +1,267 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
+import { SectionTabs, type SectionTab } from '@/components/SectionTabs';
+import { requestsApi } from '@/lib/api/requests';
 import {
-  requestsApi,
-  type ApprovalRequest,
-} from '@/lib/api/requests';
+  attendanceApi,
+  AttendanceApiError,
+  type AttendanceRequest,
+  type AttendanceRequestStatus,
+} from '@/lib/api/attendance';
+import {
+  leaveApi,
+  LeaveApiError,
+  formatDays,
+  formatDateRange,
+  statusLabel as leaveStatusLabel,
+  type LeaveRequest,
+  type LeaveType,
+} from '@/lib/api/leave';
+import { penalisationApi, PenalisationApiError, type PenalisationRecord, type PenalisationStatus } from '@/lib/api/penalisation';
 
-type Tab = 'to-approve' | 'mine';
+/* ============================== shared: approvals review (pending + history) ==============================
+ *
+ * Each of WFH/Regularisation/Leave reads its "awaiting my decision" and
+ * "already decided" lists from that module's own scoped endpoints
+ * (attendanceApi/leaveApi.getPendingApprovals/getApprovalHistory - real,
+ * scope-checked data with the rich per-domain detail the generic engine's raw
+ * payload doesn't carry), but the actual approve/reject call always goes
+ * through the *generic* approvals engine (requestsApi.approve/reject/resolve,
+ * keyed by each row's approval_request_id) - neither module exposes its own
+ * decide endpoint (docs/LEAVE-ATTENDANCE-INTEGRATION.md). */
 
-function formatDate(iso: string | null): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, {
-    year: 'numeric',
+function statusPillClass(status: string): string {
+  switch (status) {
+    case 'approved':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'submitted':
+      return 'bg-amber-100 text-amber-700';
+    case 'rejected':
+      return 'bg-red-100 text-red-700';
+    case 'cancelled':
+      return 'bg-slate-100 text-slate-600';
+    default:
+      return 'bg-slate-100 text-slate-600';
+  }
+}
+
+const attendanceStatusLabel: Record<AttendanceRequestStatus, string> = {
+  submitted: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  cancelled: 'Cancelled',
+};
+
+function fmtDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    day: '2-digit',
     month: 'short',
-    day: 'numeric',
+    year: 'numeric',
   });
 }
 
-function payloadSummary(payload: Record<string, unknown>): string {
-  const entries = Object.entries(payload ?? {});
-  if (entries.length === 0) return '—';
-  return entries
-    .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
-    .join(' · ');
+function fmtDateRange(start: string, end: string): string {
+  return start === end ? fmtDate(start) : `${fmtDate(start)} – ${fmtDate(end)}`;
 }
 
-const statusStyles: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  approved: 'bg-emerald-100 text-emerald-700',
-  rejected: 'bg-rose-100 text-rose-700',
-  withdrawn: 'bg-slate-100 text-slate-600',
-};
+interface PendingItem {
+  /** The generic approvals.Request id - what we actually decide. */
+  approvalRequestId: string;
+  /** The user id this request is actually routed to. If it isn't the viewer,
+   *  deciding it uses the approvals.manage override (resolve) instead of the
+   *  normal approve/reject, which only the named approver may call. */
+  approverId: string | null;
+  heading: string;
+  detail: string;
+}
 
-export default function ApprovalsPage() {
-  const searchParams = useSearchParams();
-  const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>('to-approve');
-  const [requests, setRequests] = useState<ApprovalRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [actingId, setActingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+interface HistoryItem {
+  id: string;
+  heading: string;
+  detail: string;
+  status: string;
+  statusLabel: string;
+  approverName?: string | null;
+  approverRemarks?: string | null;
+}
 
-  useEffect(() => {
-    const t = searchParams.get('tab');
-    if (t === 'to-approve' || t === 'mine') setTab(t);
-  }, [searchParams]);
+interface ApprovalSectionProps {
+  title: string;
+  emptyPendingLabel: string;
+  emptyHistoryLabel: string;
+  pending: PendingItem[];
+  history: HistoryItem[];
+  decidingId: string | null;
+  rejectingId: string | null;
+  rejectReason: string;
+  onSetRejecting: (id: string | null) => void;
+  onSetRejectReason: (v: string) => void;
+  approvingId: string | null;
+  approveRemarks: string;
+  onSetApproving: (id: string | null) => void;
+  onSetApproveRemarks: (v: string) => void;
+  onDecide: (item: PendingItem, approve: boolean, note?: string) => void;
+}
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setLoadFailed(false);
-    try {
-      setRequests(await requestsApi.list());
-    } catch {
-      // Never an error screen: fall back to empty states with a retry affordance.
-      setRequests([]);
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const act = useCallback(
-    async (id: string, fn: (id: string, note?: string) => Promise<unknown>) => {
-      setActingId(id);
-      setActionError(null);
-      try {
-        await fn(id, notes[id] ?? '');
-        setNotes((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        await refresh();
-      } catch (e) {
-        setActionError(e instanceof Error ? e.message : 'That action failed. Try again.');
-      } finally {
-        setActingId(null);
-      }
-    },
-    [notes, refresh],
-  );
-
-  const me = user?.id ?? null;
-  const toApprove = requests.filter((r) => r.status === 'pending' && me != null && r.approver === me);
-  const mine = requests.filter((r) => me != null && r.requester === me);
+function ApprovalSection({
+  title,
+  emptyPendingLabel,
+  emptyHistoryLabel,
+  pending,
+  history,
+  decidingId,
+  rejectingId,
+  rejectReason,
+  onSetRejecting,
+  onSetRejectReason,
+  approvingId,
+  approveRemarks,
+  onSetApproving,
+  onSetApproveRemarks,
+  onDecide,
+}: ApprovalSectionProps) {
+  const [view, setView] = useState<'pending' | 'history'>('pending');
 
   return (
-    <div className="min-h-screen bg-gray-50 font-['Inter']">
-      {/* Section tabs come from the uniform sub-nav in the app layout, driven by
-          the ?tab= query this page reads above. */}
-      <div className="p-4 sm:p-8 max-w-4xl mx-auto">
-        {actionError ? (
-          <p role="alert" className="mb-4 text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
-            {actionError}
-          </p>
-        ) : null}
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
+        <h2 className="text-base font-bold text-slate-900">{title}</h2>
+        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+          <button
+            onClick={() => setView('pending')}
+            className={`px-3 py-1.5 text-xs font-semibold transition-colors ${
+              view === 'pending' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            Pending{pending.length ? ` (${pending.length})` : ''}
+          </button>
+          <button
+            onClick={() => setView('history')}
+            className={`px-3 py-1.5 text-xs font-semibold border-l border-slate-200 transition-colors ${
+              view === 'history' ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            History
+          </button>
+        </div>
+      </div>
 
-        {loading ? (
-          <p className="text-sm text-gray-500">Loading requests...</p>
-        ) : tab === 'to-approve' ? (
-          toApprove.length === 0 ? (
-            <EmptyState
-              title="Nothing waiting for your approval"
-              body={
-                loadFailed
-                  ? 'We could not load requests right now.'
-                  : 'Requests routed to you will show up here.'
-              }
-              retry={loadFailed ? refresh : undefined}
-            />
+      <div className="p-5">
+        {view === 'pending' ? (
+          pending.length === 0 ? (
+            <p className="text-sm text-slate-400">{emptyPendingLabel}</p>
           ) : (
-            <ul className="space-y-3">
-              {toApprove.map((r) => (
-                <li key={r.id} className="bg-white border border-slate-200 rounded-xl p-4">
+            <div className="space-y-3">
+              {pending.map((item) => (
+                <div key={item.approvalRequestId} className="border border-slate-200 rounded-lg px-4 py-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 capitalize">
-                        {r.requestType} request
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        Raised {formatDate(r.createdAt)} · {payloadSummary(r.payload)}
-                      </p>
+                      <p className="text-sm font-semibold text-slate-900 truncate">{item.heading}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">{item.detail}</p>
                     </div>
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusStyles[r.status]}`}>
-                      {r.status}
-                    </span>
-                  </div>
-                  <input
-                    type="text"
-                    value={notes[r.id] ?? ''}
-                    onChange={(e) => setNotes((prev) => ({ ...prev, [r.id]: e.target.value }))}
-                    placeholder="Add a note (optional)"
-                    aria-label={`Decision note for ${r.requestType} request`}
-                    className="mt-3 w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300"
-                  />
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      disabled={actingId === r.id}
-                      onClick={() => act(r.id, (id, note) => requestsApi.approve(id, note))}
-                      className="px-4 py-2 text-sm font-semibold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-                    >
-                      {actingId === r.id ? 'Working...' : 'Approve'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={actingId === r.id}
-                      onClick={() => act(r.id, (id, note) => requestsApi.reject(id, note))}
-                      className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-                    >
-                      {actingId === r.id ? 'Working...' : 'Reject'}
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )
-        ) : (
-          <div className="space-y-4">
-            <RaiseRequest onCreated={refresh} />
-            {mine.length === 0 ? (
-              <EmptyState
-                title="You have not raised any requests"
-                body={
-                  loadFailed
-                    ? 'We could not load requests right now.'
-                    : 'Requests you raise (leave, expenses, assets…) will show up here.'
-                }
-                retry={loadFailed ? refresh : undefined}
-              />
-            ) : (
-              <ul className="space-y-3">
-                {mine.map((r) => (
-              <li key={r.id} className="bg-white border border-slate-200 rounded-xl p-4">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900 capitalize">
-                      {r.requestType} request
-                    </p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Raised {formatDate(r.createdAt)} · {payloadSummary(r.payload)}
-                    </p>
-                    {r.decisionNote ? (
-                      <p className="text-xs text-slate-600 mt-1">Note: {r.decisionNote}</p>
+                    {rejectingId !== item.approvalRequestId && approvingId !== item.approvalRequestId ? (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            onSetApproving(item.approvalRequestId);
+                            onSetApproveRemarks('');
+                          }}
+                          disabled={decidingId === item.approvalRequestId}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => {
+                            onSetRejecting(item.approvalRequestId);
+                            onSetRejectReason('');
+                          }}
+                          disabled={decidingId === item.approvalRequestId}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
                     ) : null}
                   </div>
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusStyles[r.status]}`}>
-                    {r.status}
-                  </span>
+
+                  {approvingId === item.approvalRequestId ? (
+                    <div className="flex items-center gap-2 mt-3">
+                      <input
+                        type="text"
+                        value={approveRemarks}
+                        onChange={(e) => onSetApproveRemarks(e.target.value)}
+                        placeholder="Remarks (optional)"
+                        className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                      />
+                      <button
+                        onClick={() => onDecide(item, true, approveRemarks.trim() || undefined)}
+                        disabled={decidingId === item.approvalRequestId}
+                        className="text-xs font-semibold px-3 py-2 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        Confirm approve
+                      </button>
+                      <button
+                        onClick={() => onSetApproving(null)}
+                        className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {rejectingId === item.approvalRequestId ? (
+                    <div className="flex items-center gap-2 mt-3">
+                      <input
+                        type="text"
+                        value={rejectReason}
+                        onChange={(e) => onSetRejectReason(e.target.value)}
+                        placeholder="Reason for rejecting this request (required)"
+                        className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
+                      />
+                      <button
+                        onClick={() => onDecide(item, false, rejectReason.trim())}
+                        disabled={decidingId === item.approvalRequestId || rejectReason.trim().length === 0}
+                        className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Confirm reject
+                      </button>
+                      <button
+                        onClick={() => onSetRejecting(null)}
+                        className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-                {r.status === 'pending' ? (
-                  <div className="mt-3">
-                    <button
-                      type="button"
-                      disabled={actingId === r.id}
-                      onClick={() => act(r.id, (id) => requestsApi.withdraw(id))}
-                      className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-                    >
-                      {actingId === r.id ? 'Working...' : 'Withdraw'}
-                    </button>
-                  </div>
-                ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
+              ))}
+            </div>
+          )
+        ) : history.length === 0 ? (
+          <p className="text-sm text-slate-400">{emptyHistoryLabel}</p>
+        ) : (
+          <div className="space-y-2">
+            {history.map((h) => (
+              <div key={h.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 truncate">{h.heading}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{h.detail}</p>
+                  {h.approverRemarks ? (
+                    <p className="text-xs text-slate-400 mt-0.5">Remarks: {h.approverRemarks}</p>
+                  ) : null}
+                </div>
+                <div className="text-right shrink-0">
+                  <span className={`inline-flex text-[11px] font-semibold rounded-full px-2.5 py-1 ${statusPillClass(h.status)}`}>
+                    {h.statusLabel}
+                  </span>
+                  {h.approverName ? <p className="text-[11px] text-slate-400 mt-1">by {h.approverName}</p> : null}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -221,144 +269,465 @@ export default function ApprovalsPage() {
   );
 }
 
-const REQUEST_TYPES = ['leave', 'wfh', 'expense', 'asset', 'other'] as const;
+/* ============================== penalisations (no engine equivalent - see docs/LEAVE-ATTENDANCE-INTEGRATION.md) ==============================
+ *
+ * A penalisation applies automatically once the regularisation grace period
+ * lapses - there's no "raise a request, route to a manager" step, so it
+ * doesn't fit the approvals engine's pending/approved/rejected/withdrawn
+ * request lifecycle. It stays a bespoke section on this page rather than
+ * being ported onto `requestsApi`. An employee can't request an overturn
+ * themselves — only HR decides that, directly, from the Applied list.
+ * Sample-data only for now (no backend yet) - see lib/attendance/penalisation.ts. */
 
-function RaiseRequest({ onCreated }: { onCreated: () => Promise<void> | void }) {
-  const [open, setOpen] = useState(false);
-  const [type, setType] = useState<string>('leave');
-  const [reason, setReason] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const PENALISATION_FILTERS: { id: PenalisationStatus; label: string }[] = [
+  { id: 'applied', label: 'Applied' },
+  { id: 'overturned', label: 'Overturned' },
+];
 
-  const submit = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const payload: Record<string, unknown> = {};
-      if (reason.trim()) payload.reason = reason.trim();
-      if (from) payload.from = from;
-      if (to) payload.to = to;
-      await requestsApi.create(type, payload);
-      setReason('');
-      setFrom('');
-      setTo('');
-      setOpen(false);
-      await onCreated();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not raise the request. Try again.');
-    } finally {
-      setSubmitting(false);
-    }
+interface PenalisationSectionProps {
+  records: PenalisationRecord[];
+  decidingId: string | null;
+  rejectingId: string | null;
+  rejectReason: string;
+  onSetRejecting: (id: string | null) => void;
+  onSetRejectReason: (v: string) => void;
+  onDirectOverturn: (id: string) => void;
+}
+
+/** Approvals > Penalisation. A penalisation applies automatically once the
+ * regularisation grace period lapses, so there's no "pending" state to
+ * review - the two filters here are just where a penalisation currently
+ * stands: still Applied, or Overturned. An employee only ever sees their own
+ * penalisations read-only (Leave Management) - they can't request an
+ * overturn; only HR can, directly, from the Applied list here. */
+function PenalisationSection({
+  records,
+  decidingId,
+  rejectingId,
+  rejectReason,
+  onSetRejecting,
+  onSetRejectReason,
+  onDirectOverturn,
+}: PenalisationSectionProps) {
+  const [filter, setFilter] = useState<PenalisationStatus>('applied');
+  const filtered = records.filter((r) => r.status === filter);
+
+  const emptyLabel: Record<PenalisationStatus, string> = {
+    applied: 'No applied penalisations.',
+    overturned: 'No overturned penalisations yet.',
   };
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-      >
-        Raise a request
-      </button>
-    );
-  }
-
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-      <p className="text-sm font-semibold text-slate-900">Raise a request</p>
-      {error ? (
-        <p role="alert" className="text-sm text-rose-600">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap gap-3">
-        <label className="text-xs text-slate-500">
-          Type
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="mt-1 block px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl capitalize focus:outline-none focus:bg-white focus:border-slate-300"
-          >
-            {REQUEST_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="text-xs text-slate-500">
-          From
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="mt-1 block px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300"
-          />
-        </label>
-        <label className="text-xs text-slate-500">
-          To
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="mt-1 block px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300"
-          />
-        </label>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
+        <h2 className="text-base font-bold text-slate-900">Penalisations</h2>
+        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+          {PENALISATION_FILTERS.map(({ id, label }, i) => {
+            const count = records.filter((r) => r.status === id).length;
+            return (
+              <button
+                key={id}
+                onClick={() => setFilter(id)}
+                className={`px-3 py-1.5 text-xs font-semibold transition-colors ${i > 0 ? 'border-l border-slate-200' : ''} ${
+                  filter === id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                {label}
+                {count ? ` (${count})` : ''}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <input
-        type="text"
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Reason (optional)"
-        aria-label="Reason"
-        className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300"
-      />
-      <div className="flex gap-2">
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={submit}
-          className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-        >
-          {submitting ? 'Submitting...' : 'Submit'}
-        </button>
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={() => setOpen(false)}
-          className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-        >
-          Cancel
-        </button>
+
+      <div className="p-5">
+        {filtered.length === 0 ? (
+          <p className="text-sm text-slate-400">{emptyLabel[filter]}</p>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((r) => (
+              <div key={r.id} className="border border-slate-200 rounded-lg px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 truncate">
+                      {r.employeeName} — Absent {fmtDate(r.absentDate)}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {r.reason} · {r.daysOverdue} day(s) overdue
+                      {r.leaveDaysDeducted ? ` · ${r.leaveDaysDeducted} day(s) leave deducted` : ''}
+                    </p>
+                    {filter === 'overturned' ? (
+                      <p className="text-xs text-slate-400 mt-1">
+                        Overturned by {r.overturnedBy}
+                        {r.overturnedReason ? ` — ${r.overturnedReason}` : ''}
+                        {r.leaveDaysDeducted ? ` (${r.leaveDaysDeducted} day(s) leave restored)` : ''}
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {filter === 'applied' && rejectingId !== r.id ? (
+                    <button
+                      onClick={() => {
+                        onSetRejecting(r.id);
+                        onSetRejectReason('');
+                      }}
+                      disabled={decidingId === r.id}
+                      className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 shrink-0"
+                    >
+                      Overturn
+                    </button>
+                  ) : null}
+                </div>
+
+                {rejectingId === r.id ? (
+                  <div className="flex items-center gap-2 mt-3">
+                    <input
+                      type="text"
+                      value={rejectReason}
+                      onChange={(e) => onSetRejectReason(e.target.value)}
+                      placeholder="Reason for overturning (required)"
+                      className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
+                    />
+                    <button
+                      onClick={() => onDirectOverturn(r.id)}
+                      disabled={decidingId === r.id || rejectReason.trim().length === 0}
+                      className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Confirm overturn
+                    </button>
+                    <button
+                      onClick={() => onSetRejecting(null)}
+                      className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function EmptyState({
-  title,
-  body,
-  retry,
-}: {
-  title: string;
-  body: string;
-  retry?: () => void;
-}) {
+/* ============================== page ============================== */
+
+type ApprovalTabId = 'wfh' | 'regularisation' | 'leave' | 'penalisation';
+
+export default function ApprovalsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { user, isLoading: authLoading, hasPermission } = useAuth();
+  const canApproveLeave = hasPermission('leave.approve');
+  const canApproveAttendance = hasPermission('attendance.approve');
+  const canManagePenalisations = hasPermission('penalisation.manage');
+  const canApprove = canApproveLeave || canApproveAttendance || canManagePenalisations;
+
+  useEffect(() => {
+    if (!authLoading && !canApprove) router.replace('/');
+  }, [authLoading, canApprove, router]);
+
+  // Order matches the original product design: WFH, Regularisation, Leave,
+  // Penalisation. Penalisation now has its own real permission (PLAN.md
+  // Step 8) - closes the "visible to anyone who can see Approvals" gap.
+  const tabs: SectionTab[] = [
+    ...(canApproveAttendance ? [{ id: 'wfh', label: 'WFH', href: '/approvals?tab=wfh' }] : []),
+    ...(canApproveAttendance
+      ? [{ id: 'regularisation', label: 'Regularisation', href: '/approvals?tab=regularisation' }]
+      : []),
+    ...(canApproveLeave ? [{ id: 'leave', label: 'Leave', href: '/approvals?tab=leave' }] : []),
+    ...(canManagePenalisations
+      ? [{ id: 'penalisation', label: 'Penalisation', href: '/approvals?tab=penalisation' }]
+      : []),
+  ];
+  const requestedTab = searchParams.get('tab');
+  const activeTab: ApprovalTabId = (tabs.some((t) => t.id === requestedTab) ? requestedTab : tabs[0]?.id) as ApprovalTabId;
+
+  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+  const [leavePending, setLeavePending] = useState<LeaveRequest[]>([]);
+  const [leaveHistory, setLeaveHistory] = useState<LeaveRequest[]>([]);
+  const [wfhPending, setWfhPending] = useState<AttendanceRequest[]>([]);
+  const [wfhHistory, setWfhHistory] = useState<AttendanceRequest[]>([]);
+  const [regPending, setRegPending] = useState<AttendanceRequest[]>([]);
+  const [regHistory, setRegHistory] = useState<AttendanceRequest[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveRemarks, setApproveRemarks] = useState('');
+
+  // Real backend since PLAN.md Step 8.
+  const [penalisations, setPenalisations] = useState<PenalisationRecord[]>([]);
+
+  const refresh = useCallback(async () => {
+    const tasks: Promise<unknown>[] = [];
+    if (canApproveLeave) {
+      tasks.push(leaveApi.getTypes().then(setLeaveTypes));
+      tasks.push(leaveApi.getPendingApprovals().then(setLeavePending));
+      tasks.push(leaveApi.getApprovalHistory().then(setLeaveHistory));
+    }
+    if (canApproveAttendance) {
+      tasks.push(
+        attendanceApi.getPendingApprovals().then((all) => {
+          setWfhPending(all.filter((r) => r.request_type === 'wfh'));
+          setRegPending(all.filter((r) => r.request_type === 'regularisation'));
+        }),
+      );
+      tasks.push(
+        attendanceApi.getApprovalHistory().then((all) => {
+          setWfhHistory(all.filter((r) => r.request_type === 'wfh'));
+          setRegHistory(all.filter((r) => r.request_type === 'regularisation'));
+        }),
+      );
+    }
+    if (canManagePenalisations) {
+      tasks.push(penalisationApi.getAll().then(setPenalisations));
+    }
+    await Promise.all(tasks);
+  }, [canApproveLeave, canApproveAttendance, canManagePenalisations]);
+
+  useEffect(() => {
+    if (!canApprove) return;
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    refresh()
+      .catch((e) => {
+        if (active) setLoadError(e instanceof Error ? e.message : 'Failed to load approvals');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canApprove, refresh]);
+
+  const clearDecisionState = () => {
+    setRejectingId(null);
+    setRejectReason('');
+    setApprovingId(null);
+    setApproveRemarks('');
+  };
+
+  // Both Leave and Attendance (WFH/Regularisation) requests decide through
+  // the *same* generic engine endpoint - there's only one decide path in this
+  // app, unlike the pre-engine version of this page which called each
+  // module's own (now-retired) approve endpoint separately.
+  //
+  // approve()/reject() only work for the request's actual named approver
+  // (the employee's manager) - that's the engine's own rule, not a bug. An
+  // oversight viewer (e.g. HR Admin browsing every pending leave company-wide
+  // via leave.approve at ALL scope) isn't that person, so their decision goes
+  // through the approvals.manage escape hatch (resolve) instead, which is
+  // exactly what it's for. Whoever the item is actually routed to still
+  // decides through the normal path.
+  const decide = async (item: PendingItem, approve: boolean, note?: string) => {
+    const { approvalRequestId, approverId } = item;
+    const isAssignedApprover = !!user && approverId === user.id;
+    setDecidingId(approvalRequestId);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      if (isAssignedApprover) {
+        if (approve) await requestsApi.approve(approvalRequestId, note);
+        else await requestsApi.reject(approvalRequestId, note);
+      } else {
+        await requestsApi.resolve(approvalRequestId, approve ? 'approved' : 'rejected', note);
+      }
+      setActionMessage(approve ? 'Request approved.' : 'Request rejected.');
+      clearDecisionState();
+      await refresh();
+    } catch (e) {
+      setActionError(e instanceof AttendanceApiError || e instanceof LeaveApiError || e instanceof Error ? e.message : 'Could not update this request');
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
+  // A penalisation applies automatically once the regularisation grace period
+  // lapses - there's no approval step. An employee can't request an overturn
+  // themselves (Leave Management only shows them whether they've been
+  // penalised); HR overturns an Applied one directly, here.
+  const directOverturnPenalisation = async (id: string) => {
+    setDecidingId(id);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      const updated = await penalisationApi.overturn(id, rejectReason.trim());
+      setPenalisations((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      setActionMessage('Penalisation overturned.');
+      clearDecisionState();
+    } catch (e) {
+      setActionError(e instanceof PenalisationApiError ? e.message : 'Could not overturn this penalisation');
+    } finally {
+      setDecidingId(null);
+    }
+  };
+
+  const typeName = (r: LeaveRequest) => leaveTypes.find((t) => t.id === r.leave_type_id)?.name ?? r.leave_type_name ?? 'Leave';
+
+  if (authLoading || !canApprove) return null;
+
   return (
-    <div className="bg-white border border-slate-200 rounded-xl px-6 py-12 text-center">
-      <p className="text-sm font-semibold text-slate-900">{title}</p>
-      <p className="text-sm text-slate-500 mt-1">{body}</p>
-      {retry ? (
-        <button
-          type="button"
-          onClick={retry}
-          className="mt-4 px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-        >
-          Try again
-        </button>
-      ) : null}
+    <div className="min-h-screen bg-slate-50 font-['Inter']">
+      <SectionTabs tabs={tabs} active={activeTab} />
+      <div className="p-4 sm:p-8 space-y-6">
+        {(actionMessage || actionError) && (
+          <div
+            className={`rounded-lg text-sm px-4 py-3 ${
+              actionError ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'
+            }`}
+          >
+            {actionError || actionMessage}
+          </div>
+        )}
+
+        {loading ? (
+          <p className="text-sm text-slate-500">Loading approvals…</p>
+        ) : loadError ? (
+          <p className="text-sm text-red-600">{loadError}</p>
+        ) : (
+          <>
+            {activeTab === 'leave' && canApproveLeave ? (
+              <ApprovalSection
+                title="Leave Requests"
+                emptyPendingLabel="No leave requests awaiting your approval."
+                emptyHistoryLabel="No decided leave requests yet."
+                pending={leavePending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — ${typeName(r)}`,
+                    detail: `${formatDateRange(r.start_date, r.end_date, r.half_day_option)} · ${formatDays(r.duration_days)} day(s)${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
+                history={leaveHistory.map((r) => ({
+                  id: r.id,
+                  heading: `${r.employee_name || 'Employee'} — ${typeName(r)}`,
+                  detail: `${formatDateRange(r.start_date, r.end_date, r.half_day_option)} · ${formatDays(r.duration_days)} day(s)${
+                    r.status === 'rejected' && r.rejection_reason ? ` · ${r.rejection_reason}` : ''
+                  }`,
+                  status: r.status,
+                  statusLabel: leaveStatusLabel(r.status),
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
+                  approverRemarks: r.approver_remarks,
+                }))}
+                decidingId={decidingId}
+                rejectingId={rejectingId}
+                rejectReason={rejectReason}
+                onSetRejecting={setRejectingId}
+                onSetRejectReason={setRejectReason}
+                approvingId={approvingId}
+                approveRemarks={approveRemarks}
+                onSetApproving={setApprovingId}
+                onSetApproveRemarks={setApproveRemarks}
+                onDecide={decide}
+              />
+            ) : null}
+
+            {activeTab === 'wfh' && canApproveAttendance ? (
+              <ApprovalSection
+                title="Work From Home Requests"
+                emptyPendingLabel="No Work From Home requests awaiting your approval."
+                emptyHistoryLabel="No decided Work From Home requests yet."
+                pending={wfhPending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — Work From Home`,
+                    detail: `${fmtDateRange(r.start_date, r.end_date)}${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
+                history={wfhHistory.map((r) => ({
+                  id: r.id,
+                  heading: `${r.employee_name || 'Employee'} — Work From Home`,
+                  detail: `${fmtDateRange(r.start_date, r.end_date)}${
+                    r.status === 'rejected' && r.rejection_reason ? ` · ${r.rejection_reason}` : ''
+                  }`,
+                  status: r.status,
+                  statusLabel: attendanceStatusLabel[r.status],
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
+                  approverRemarks: r.approver_remarks,
+                }))}
+                decidingId={decidingId}
+                rejectingId={rejectingId}
+                rejectReason={rejectReason}
+                onSetRejecting={setRejectingId}
+                onSetRejectReason={setRejectReason}
+                approvingId={approvingId}
+                approveRemarks={approveRemarks}
+                onSetApproving={setApprovingId}
+                onSetApproveRemarks={setApproveRemarks}
+                onDecide={decide}
+              />
+            ) : null}
+
+            {activeTab === 'regularisation' && canApproveAttendance ? (
+              <ApprovalSection
+                title="Regularisation Requests"
+                emptyPendingLabel="No regularisation requests awaiting your approval."
+                emptyHistoryLabel="No decided regularisation requests yet."
+                pending={regPending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — Regularisation`,
+                    detail: `${fmtDate(r.start_date)}${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
+                history={regHistory.map((r) => ({
+                  id: r.id,
+                  heading: `${r.employee_name || 'Employee'} — Regularisation`,
+                  detail: `${fmtDate(r.start_date)}${
+                    r.status === 'rejected' && r.rejection_reason ? ` · ${r.rejection_reason}` : ''
+                  }`,
+                  status: r.status,
+                  statusLabel: attendanceStatusLabel[r.status],
+                  // Who actually decided it, not who it was routed to — the
+                  // HR override (resolve) means these can differ.
+                  approverName: r.decided_by_name ?? r.approver_name,
+                  approverRemarks: r.approver_remarks,
+                }))}
+                decidingId={decidingId}
+                rejectingId={rejectingId}
+                rejectReason={rejectReason}
+                onSetRejecting={setRejectingId}
+                onSetRejectReason={setRejectReason}
+                approvingId={approvingId}
+                approveRemarks={approveRemarks}
+                onSetApproving={setApprovingId}
+                onSetApproveRemarks={setApproveRemarks}
+                onDecide={decide}
+              />
+            ) : null}
+
+            {activeTab === 'penalisation' ? (
+              <PenalisationSection
+                records={penalisations}
+                decidingId={decidingId}
+                rejectingId={rejectingId}
+                rejectReason={rejectReason}
+                onSetRejecting={setRejectingId}
+                onSetRejectReason={setRejectReason}
+                onDirectOverturn={directOverturnPenalisation}
+              />
+            ) : null}
+          </>
+        )}
+      </div>
     </div>
   );
 }
