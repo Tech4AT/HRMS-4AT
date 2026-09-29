@@ -3,6 +3,12 @@ from rest_framework.routers import DefaultRouter
 
 from audit.views import EmployeeActivityViewSet
 from employees.analytics_views import OrgAnalyticsSummaryView, OrgHeadcountView
+from employees.reports import (
+    CustomReportViewSet,
+    ReportCatalogView,
+    ReportExportView,
+    ReportRunView,
+)
 from employees.views import (
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
@@ -76,11 +82,17 @@ router.register("org/org-settings", OrgSettingAdminViewSet, basename="org-orgset
 router.register("org/code-schemes", CodeSchemeAdminViewSet, basename="org-codescheme")
 router.register("org/hierarchy-rules", HierarchyRuleAdminViewSet, basename="org-hierarchyrule")
 
+router.register("org/reports/custom", CustomReportViewSet, basename="org-report-custom")
+
 urlpatterns = [
     # The frontend calls this without a trailing slash.
     re_path(r"^ess/profile/?$", EssProfileView.as_view(), name="ess-profile"),
     # Realtime org analytics (org.read; {success, data}, snake_case).
     re_path(r"^org/analytics/summary/?$", OrgAnalyticsSummaryView.as_view(), name="org-analytics-summary"),
     re_path(r"^org/analytics/headcount/?$", OrgHeadcountView.as_view(), name="org-analytics-headcount"),
+    # Employee reports (org.read; {success, data}, snake_case).
+    re_path(r"^org/reports/catalog/?$", ReportCatalogView.as_view(), name="org-reports-catalog"),
+    re_path(r"^org/reports/run/?$", ReportRunView.as_view(), name="org-reports-run"),
+    re_path(r"^org/reports/export/?$", ReportExportView.as_view(), name="org-reports-export"),
     *router.urls,
 ]

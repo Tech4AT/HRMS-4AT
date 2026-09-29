@@ -795,3 +795,33 @@ class Resignation(models.Model):
 
     def __str__(self):
         return f"Resignation {self.employee_id} ({self.status})"
+
+
+class CustomReport(models.Model):
+    """A saved custom report built in the Employee Reports wizard: a base
+    report type plus the picked column keys and the filter values active at
+    save time. Personal to its owner — the list view only shows the caller's
+    own rows. `base_type` is validated against the reports engine's registry
+    at write time (no DB choices, so new report types never need a schema
+    migration); `selected_fields` must be known field keys."""
+
+    name = models.CharField(max_length=150)
+    base_type = models.CharField(max_length=60)
+    selected_fields = models.JSONField(default=list)
+    filters = models.JSONField(default=dict)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="custom_reports"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "name"], name="unique_custom_report_name_per_owner"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.base_type})"
