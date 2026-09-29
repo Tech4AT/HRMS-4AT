@@ -5,27 +5,43 @@
  *
  * Each sub-tab: left rail (search + "ACTIVE <THING> (N)" grouped list with
  * avatar/initials) and a right detail panel. Lists degrade gracefully —
- * one failing list never blanks the screen (Promise.allSettled).
+ * one failing list never blanks the screen (Promise.allSettled). Every kind
+ * with an admin resource is enriched from the audited admin list (code,
+ * description, parent/child, employee counts, full camelCase row); when the
+ * caller may not read it the screen silently keeps the read-only names.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/lib/auth/useAuth';
-import { orgApi, type CostCenter, type NamedEntity, type OrgEmployee } from '@/lib/api/org';
+import { fullName, orgApi, type CostCenter, type NamedEntity, type OrgEmployee, type OrgTeam } from '@/lib/api/org';
 import {
   adminDelete,
   adminList,
   configFor,
   initials,
   membersOf,
+  mergeAdminRows,
   OrgAdminError,
   TYPE_CONFIGS,
   type UnitItem,
   type UnitKind,
 } from './org-structure-types';
-import { DetailPanel, UnitDrawer, type DrawerState } from './org-structure-detail';
+import { DetailPanel, EMPTY_FK_OPTIONS, UnitDrawer, type DrawerState, type FkOptions } from './org-structure-detail';
 
-/** Sub-tabs live on the bar. Extended group by group (one commit each). */
-export const VISIBLE_TABS: UnitKind[] = ['legal-entities', 'business-units', 'locations', 'departments', 'cost-centers', 'grades', 'bands'];
+/** Sub-tabs live on the bar. Bands has no backend and stays an honest empty. */
+export const VISIBLE_TABS: UnitKind[] = [
+  'legal-entities',
+  'business-units',
+  'locations',
+  'departments',
+  'teams',
+  'cost-centers',
+  'job-families',
+  'levels',
+  'grades',
+  'job-titles',
+  'bands',
+];
 
 function toItems(entities: NamedEntity[]): UnitItem[] {
   return entities.map((e) => ({ id: e.id, name: e.name }));
@@ -41,12 +57,22 @@ async function loadKind(kind: UnitKind): Promise<UnitItem[]> {
       return toItems(await orgApi.listLocations());
     case 'departments':
       return toItems(await orgApi.listDepartments());
+    case 'teams': {
+      const rows: OrgTeam[] = await orgApi.listTeams();
+      return rows.map((t) => ({ id: t.id, name: t.name }));
+    }
     case 'cost-centers': {
       const rows: CostCenter[] = await orgApi.listCostCenters();
       return rows.map((c) => ({ id: c.id, name: c.name, code: c.code }));
     }
+    case 'job-families':
+      return toItems(await orgApi.listJobFamilies());
+    case 'levels':
+      return toItems(await orgApi.listLevels());
     case 'grades':
       return toItems(await orgApi.listGrades());
+    case 'job-titles':
+      return toItems(await orgApi.listJobTitles());
     case 'bands':
       return [];
   }
@@ -76,6 +102,18 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletingNow, setDeletingNow] = useState(false);
 
+  /** Re-merge one kind from its admin list (used after add/edit too). */
+  const mergeKind = useCallback(async (kind: UnitKind, items: UnitItem[]): Promise<UnitItem[]> => {
+    const resource = configFor(kind).adminResource;
+    if (!resource) return items;
+    try {
+      const rows = await adminList(resource);
+      return mergeAdminRows(items, rows);
+    } catch {
+      return items;
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     const settled = await Promise.allSettled(VISIBLE_TABS.map((k) => loadKind(k)));
@@ -90,30 +128,16 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
       }
     });
 
-    // Departments: enrich with real parent/child/employee counts from the
-    // audited admin list when the caller may read it; silently keep the
-    // read-only names when not.
-    if (next.departments) {
-      try {
-        const adminRows = await adminList('departments');
-        if (adminRows) {
-          const byId = new Map(adminRows.map((r) => [String(r.id), r]));
-          const names = new Map(adminRows.map((r) => [String(r.id), r.name]));
-          next.departments = next.departments.map((d) => {
-            const row = byId.get(d.id);
-            if (!row) return d;
-            const pid = row.parent === null || row.parent === undefined ? null : String(row.parent);
-            return {
-              ...d,
-              parentId: pid,
-              parentName: pid ? (names.get(pid) ?? row.parentName ?? null) : null,
-              childCount: row.childCount ?? 0,
-            };
-          });
-        }
-      } catch {
-        // Fall back to the read-only names already loaded.
-      }
+    // Enrich every kind that has an admin resource. One slow/failing admin
+    // list never blocks the others (allSettled again).
+    const enriched = await Promise.allSettled(
+      VISIBLE_TABS.filter((k) => next[k]).map(async (kind) => ({
+        kind,
+        items: await mergeKind(kind, next[kind] as UnitItem[]),
+      })),
+    );
+    for (const r of enriched) {
+      if (r.status === 'fulfilled') next[r.value.kind] = r.value.items;
     }
 
     setUnitsByKind(next);
@@ -128,17 +152,36 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mergeKind]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   const units = unitsByKind[activeTab] ?? [];
+
+  /** FK picker options, derived from the already-loaded masters + directory. */
+  const fkOptions: FkOptions = useMemo(() => {
+    const named = (list: UnitItem[] | undefined) =>
+      (list ?? []).map((u) => ({ id: u.id, name: u.name }));
+    return {
+      ...EMPTY_FK_OPTIONS,
+      employee: directory.map((e) => ({ id: e.id, name: fullName(e) })),
+      department: named(unitsByKind.departments),
+      location: named(unitsByKind.locations),
+      'legal-entity': named(unitsByKind['legal-entities']),
+      'business-unit': named(unitsByKind['business-units']),
+      'cost-center': named(unitsByKind['cost-centers']),
+      'job-family': named(unitsByKind['job-families']),
+      level: named(unitsByKind.levels),
+      'job-title': named(unitsByKind['job-titles']),
+    };
+  }, [directory, unitsByKind]);
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return units;
-    return units.filter((u) => `${u.name} ${u.code ?? ''}`.toLowerCase().includes(q));
+    return units.filter((u) => `${u.name} ${u.code ?? ''} ${u.description ?? ''}`.toLowerCase().includes(q));
   }, [units, search]);
 
   const selected: UnitItem | null = useMemo(() => {
@@ -173,29 +216,24 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
       return { ...prev, [kind]: list };
     });
     setSelectedByKind((prev) => ({ ...prev, [kind]: saved.id }));
-    if (kind === 'departments') {
-      // Re-merge parent info after an add/edit (the admin list is the source).
-      adminList('departments')
-        .then((rows) => {
-          if (!rows) return;
-          const names = new Map(rows.map((r) => [String(r.id), r.name]));
-          setUnitsByKind((prev) => ({
-            ...prev,
-            departments: (prev.departments ?? []).map((d) => {
-              const row = rows.find((r) => String(r.id) === d.id);
-              if (!row) return d;
-              const pid = row.parent === null || row.parent === undefined ? null : String(row.parent);
-              return {
-                ...d,
-                parentId: pid,
-                parentName: pid ? (names.get(pid) ?? row.parentName ?? null) : null,
-                childCount: row.childCount ?? d.childCount ?? 0,
-              };
-            }),
-          }));
-        })
-        .catch(() => {});
-    }
+    // Re-merge the admin row so the detail panel shows the saved FKs at once.
+    mergeKind(kind, unitsByKind[kind] ?? [])
+      .then((items) => {
+        setUnitsByKind((prev) => {
+          const savedRow = items.find((u) => u.id === saved.id);
+          const list = [...(prev[kind] ?? [])];
+          const idx = list.findIndex((u) => u.id === saved.id);
+          const merged: UnitItem =
+            idx >= 0
+              ? { ...list[idx], ...(savedRow ?? {}) }
+              : ({ ...savedRow, id: saved.id, name: saved.name } as UnitItem);
+          if (idx >= 0) list[idx] = merged;
+          else list.push(merged);
+          list.sort((a, b) => a.name.localeCompare(b.name));
+          return { ...prev, [kind]: list };
+        });
+      })
+      .catch(() => {});
   }
 
   async function confirmDelete() {
@@ -341,7 +379,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
           ) : visible.length === 0 ? (
             <p className="py-8 text-center text-sm text-slate-500">
               {cfg.kind === 'bands'
-                ? 'Bands are not configured yet.'
+                ? 'Bands are not configured yet — there is no band registry on the backend.'
                 : `No ${cfg.plural.toLowerCase()} yet.`}
             </p>
           ) : (
@@ -367,7 +405,9 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block text-sm font-medium text-slate-800 truncate">{u.name}</span>
-                        {count !== null ? (
+                        {u.code ? (
+                          <span className="block text-[11px] text-slate-400 truncate">{u.code}</span>
+                        ) : count !== null ? (
                           <span className="block text-[11px] text-slate-400">
                             {count} {count === 1 ? 'employee' : 'employees'}
                           </span>
@@ -389,6 +429,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
               item={selected}
               employees={directory}
               allUnits={units}
+              fkOptions={fkOptions}
               canManage={canManage}
               onEdit={() => setDrawer({ mode: 'edit', item: selected })}
               onDelete={() => {
@@ -401,7 +442,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
             <div className="bg-white border border-slate-200 rounded-xl p-5">
               <p className="py-10 text-center text-sm text-slate-500">
                 {cfg.kind === 'bands'
-                  ? 'Bands are not configured yet.'
+                  ? 'Bands are not configured yet — there is no band registry on the backend.'
                   : `No ${cfg.plural.toLowerCase()} to show.`}
               </p>
             </div>
@@ -415,6 +456,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
           kind={activeTab}
           state={drawer}
           allUnits={units}
+          fkOptions={fkOptions}
           canManage={canManage}
           onClose={() => setDrawer(null)}
           onSaved={(saved) => upsertUnit(activeTab, saved, drawer.mode)}
