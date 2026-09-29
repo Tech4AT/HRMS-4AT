@@ -20,6 +20,13 @@ import {
   type NamedEntity,
   type OrgEmployee,
 } from '@/lib/api/org';
+import {
+  adminApi,
+  isWithheld,
+  type HeadcountBucket,
+  type OrgAnalyticsSummary,
+  type OrgHeadcountDimension,
+} from '@/lib/admin/api';
 import type { Resignation } from '@/lib/api/exits';
 
 const UNASSIGNED = 'Unassigned';
@@ -123,6 +130,42 @@ function FilterSelect({
   );
 }
 
+/** Live buckets for one headcount dimension, honouring the active master
+ * filters. Falls back to null (caller renders directory-derived data) when
+ * the endpoint is unreachable or forbidden. */
+function useHeadcountDim(
+  by: OrgHeadcountDimension,
+  filters: Record<string, string | undefined>,
+  enabled: boolean,
+): { buckets: HeadcountBucket[] | null; failed: boolean } {
+  const [buckets, setBuckets] = useState<HeadcountBucket[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const key = JSON.stringify({ by, ...filters });
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const params = JSON.parse(key) as Record<string, string | undefined> & { by: OrgHeadcountDimension };
+    const { by: dim, ...rest } = params;
+    adminApi
+      .getOrgHeadcount(dim, rest)
+      .then((r) => {
+        if (cancelled) return;
+        setBuckets(r.buckets);
+        setFailed(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBuckets(null);
+        setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key, enabled]);
+  return { buckets, failed };
+}
+
 export function AnalyticsTab({
   employees,
   departments,
@@ -154,6 +197,10 @@ export function AnalyticsTab({
   const [businessUnits, setBusinessUnits] = useState<NamedEntity[] | null>(null);
   const [costCenters, setCostCenters] = useState<CostCenter[] | null>(null);
   const [legalEntities, setLegalEntities] = useState<NamedEntity[] | null>(null);
+  // Live analytics summary (org.read-gated): totals plus the honest
+  // withheld/unavailable markers for grade/level/gender/age/tenure. A 403
+  // here falls back to the directory-derived charts below.
+  const [summary, setSummary] = useState<OrgAnalyticsSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,6 +215,21 @@ export function AnalyticsTab({
       setCostCenters(cc.status === 'fulfilled' ? cc.value : null);
       setLegalEntities(le.status === 'fulfilled' ? le.value : null);
     })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminApi
+      .getOrgAnalyticsSummary()
+      .then((s) => {
+        if (!cancelled) setSummary(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSummary(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -201,6 +263,10 @@ export function AnalyticsTab({
     () => new Map((locations ?? []).map((l) => [l.id, l.name])),
     [locations],
   );
+  const buNames = useMemo(
+    () => new Map((businessUnits ?? []).map((b) => [b.id, b.name])),
+    [businessUnits],
+  );
 
   // Filters narrow the panels built on real dims. Absent dims (dates,
   // gender, age…) have no source field, so they cannot narrow anything.
@@ -217,6 +283,25 @@ export function AnalyticsTab({
     });
   }, [employees, fDept, fLoc, fBU, fCC, fLE, fWorkerType]);
 
+  // Same filters, translated to the headcount endpoint's query params so the
+  // live charts honour the filter bar.
+  const headcountFilters = useMemo(
+    () => ({
+      department: fDept || undefined,
+      location: fLoc || undefined,
+      business_unit: fBU || undefined,
+      cost_center: fCC || undefined,
+      legal_entity: fLE || undefined,
+      employment_type: fWorkerType || undefined,
+    }),
+    [fDept, fLoc, fBU, fCC, fLE, fWorkerType],
+  );
+  const deptLive = useHeadcountDim('department', headcountFilters, live);
+  const locLive = useHeadcountDim('location', headcountFilters, live);
+  const buLive = useHeadcountDim('business_unit', headcountFilters, live);
+  const typeLive = useHeadcountDim('employment_type', headcountFilters, live);
+  const statusLive = useHeadcountDim('status', headcountFilters, live);
+
   const workerTypeOptions = useMemo(() => {
     const vals = new Set((employees ?? []).map((e) => e.employment_type).filter(Boolean));
     return [...vals].map((v) => ({ value: v, label: pretty(v) }));
@@ -229,7 +314,7 @@ export function AnalyticsTab({
     return [...vals].map((v) => ({ value: v, label: v }));
   }, [resignations]);
 
-  const byDept = useMemo(
+  const byDeptFallback = useMemo(
     () =>
       groupBy(
         filtered,
@@ -238,7 +323,7 @@ export function AnalyticsTab({
       ),
     [filtered, deptNames],
   );
-  const byLoc = useMemo(
+  const byLocFallback = useMemo(
     () =>
       groupBy(
         filtered,
@@ -247,15 +332,45 @@ export function AnalyticsTab({
       ),
     [filtered, locNames],
   );
-  const byStatus = useMemo(
+  const byStatusFallback = useMemo(
     () => groupBy(filtered, (e) => pretty(e.status || UNASSIGNED), 'headcount'),
     [filtered],
   );
-  const byType = useMemo(
+  const byBUfallback = useMemo(
+    () =>
+      groupBy(
+        filtered,
+        (e) => (e.business_unit_id && buNames.get(e.business_unit_id)) || UNASSIGNED,
+        'headcount',
+      ),
+    [filtered, buNames],
+  );
+  const byTypeFallback = useMemo(
     () =>
       groupBy(filtered, (e) => pretty(e.employment_type || UNASSIGNED), 'headcount'),
     [filtered],
   );
+
+  /** Live endpoint buckets win; directory-derived grouping is the fallback
+   * when the analytics endpoint is forbidden or unreachable. */
+  const toChart = (liveBuckets: HeadcountBucket[] | null, fallback: { name: string; headcount: number }[]) =>
+    liveBuckets !== null
+      ? liveBuckets.map((b) => ({ name: b.name, headcount: b.headcount }))
+      : fallback;
+  const byDept = toChart(deptLive.buckets, byDeptFallback);
+  const byLoc = toChart(locLive.buckets, byLocFallback);
+  const byStatus = toChart(statusLive.buckets, byStatusFallback);
+  const byType = toChart(typeLive.buckets, byTypeFallback);
+  const byBU = toChart(
+    buLive.buckets,
+    byBUfallback,
+  );
+  const chartsLive =
+    deptLive.buckets !== null ||
+    locLive.buckets !== null ||
+    buLive.buckets !== null ||
+    typeLive.buckets !== null ||
+    statusLive.buckets !== null;
 
   // Growth & retention need dated join/exit records — the roster carries no
   // dates, so every rate is honestly blank. Total attrition is the one real
@@ -337,6 +452,7 @@ export function AnalyticsTab({
               { value: 'quarter', label: 'Last quarter' },
               { value: 'year', label: 'Last year' },
             ]}
+            disabled
             disabledNote="Join/exit dates are not tracked yet"
           />
           <FilterSelect
@@ -484,14 +600,60 @@ export function AnalyticsTab({
                     </div>
                   )}
                 </Card>
+                <Card title="Headcount by Business Unit">
+                  {byBU.length === 0 ? (
+                    <EmptyNote>No employees match these filters.</EmptyNote>
+                  ) : (
+                    <div className="h-64">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={byBU} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                          <XAxis
+                            dataKey="name"
+                            tick={{ fontSize: 11 }}
+                            interval={0}
+                            angle={-18}
+                            dy={10}
+                            height={52}
+                          />
+                          <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                          <Tooltip />
+                          <Bar dataKey="headcount" name="Headcount" fill="#10b981" radius={[6, 6, 0, 0]} />
+                          <Legend wrapperStyle={{ fontSize: 12 }} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+                </Card>
               </div>
               <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {['Gender', 'Age', 'Tenure'].map((label) => (
+                {[
+                  { label: 'Grade', marker: summary?.by_grade },
+                  { label: 'Level', marker: summary?.by_level },
+                ].map(({ label, marker }) => (
                   <Card key={label} title={`Headcount by ${label}`}>
-                    <EmptyNote>Not tracked yet.</EmptyNote>
+                    <EmptyNote>
+                      {marker && isWithheld(marker)
+                        ? marker.detail
+                        : 'No source data yet.'}
+                    </EmptyNote>
                   </Card>
                 ))}
+                {(['Gender', 'Age', 'Tenure'] as const).map((label) => {
+                  const key = label.toLowerCase();
+                  const reason = summary?.unavailable?.[key];
+                  return (
+                    <Card key={label} title={`Headcount by ${label}`}>
+                      <EmptyNote>{reason ?? 'Not tracked yet.'}</EmptyNote>
+                    </Card>
+                  );
+                })}
               </div>
+              {chartsLive ? (
+                <p className="mt-3 text-[11px] text-slate-400">
+                  Breakdowns above are live from the analytics endpoint.
+                </p>
+              ) : null}
             </>
           )}
         </div>
