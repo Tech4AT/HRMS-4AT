@@ -3,7 +3,7 @@
 import { ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { DocumentTemplatesTab } from './DocumentTemplatesTab';
-import { EmployeeDocumentsTab } from './EmployeeDocumentsTab';
+import { EmployeeDocumentsTab, EmployeeLite } from './EmployeeDocumentsTab';
 import { OrganizationDocumentsTab } from './OrganizationDocumentsTab';
 
 const TABS = [
@@ -15,8 +15,10 @@ type TabKey = (typeof TABS)[number]['key'];
 
 /** Org > Documents (Keka layout): three top tabs, selected via ?dtab=. The
  * Verified Documents sub-tab reuses the live per-employee file store, passed
- * in by the org page as `verified`. */
-export function OrgDocumentsSection({ verified }: { verified: ReactNode }) {
+ * in by the org page as `verified`. The employee directory is threaded
+ * through so the verification sub-tabs can label rows without the backend
+ * denormalising org fields onto every document. */
+export function OrgDocumentsSection({ verified, employees = [] }: { verified: ReactNode; employees?: EmployeeLite[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -52,7 +54,7 @@ export function OrgDocumentsSection({ verified }: { verified: ReactNode }) {
         ))}
       </div>
       {active === 'templates' && <DocumentTemplatesTab />}
-      {active === 'employee' && <EmployeeDocumentsTab verified={verified} />}
+      {active === 'employee' && <EmployeeDocumentsTab verified={verified} employees={employees} />}
       {active === 'org' && <OrganizationDocumentsTab />}
     </div>
   );

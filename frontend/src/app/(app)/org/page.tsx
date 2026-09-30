@@ -183,7 +183,7 @@ export default function OrgPage() {
           the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} />
+          <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (
