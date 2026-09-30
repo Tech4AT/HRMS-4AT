@@ -131,7 +131,7 @@ def _value_buckets(queryset, dimension):
 def _dimension_payload(queryset, dimension):
     """Buckets for a dimension, or a withheld marker when the source data is
     genuinely absent (no employee carries a value on it)."""
-    if dimension in ("status", "employment_type"):
+    if dimension in ("status", "employment_type", "work_mode"):
         return {
             "dimension": dimension,
             "buckets": _value_buckets(queryset, dimension),
