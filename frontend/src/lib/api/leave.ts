@@ -22,7 +22,21 @@ export interface LeaveType {
   requires_approval: boolean;
   is_paid: boolean;
   description: string | null;
+  /** 'active' types can be picked for new requests; 'inactive' ones are retired
+   *  but keep every balance and request. */
   status: string;
+  /** How many balances / requests use this type. Only sent to people who manage
+   *  leave settings (null for everyone else). */
+  balance_count: number | null;
+  request_count: number | null;
+}
+
+/** What a permanent purge erased. */
+export interface LeaveTypePurgeResult {
+  id: string;
+  balances: number;
+  requests: number;
+  approvals: number;
 }
 
 /** The backend's actual wire shape for `LeaveType`/`LeaveBalanceItem`/
@@ -212,7 +226,20 @@ export const leaveApi = {
     toLeaveType(
       await request<RawLeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
     ),
+  /** Deactivate ('inactive') or reactivate ('active') a type without touching its history. */
+  setTypeStatus: async (id: string, status: 'active' | 'inactive') =>
+    toLeaveType(
+      await request<RawLeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }),
+    ),
+  /** Only succeeds for a type nothing uses; otherwise the backend answers 409. */
   deleteType: (id: string) => request<{ id: string }>(`/types/${id}`, { method: 'DELETE' }),
+  /** Irreversible: erases the type and every balance and request that uses it.
+   *  The backend requires the type's exact name as confirmation. */
+  purgeType: (id: string, confirmName: string) =>
+    request<LeaveTypePurgeResult>(`/types/${id}/purge`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm_name: confirmName }),
+    }),
   getBalance: async () => (await request<RawLeaveBalanceItem[]>('/balance')).map(toLeaveBalanceItem),
   getRequests: async () => (await request<RawLeaveRequest[]>('/requests')).map(toLeaveRequest),
   getRequest: async (id: string) => toLeaveRequest(await request<RawLeaveRequest>(`/requests/${id}`)),

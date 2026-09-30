@@ -311,7 +311,7 @@ export function PenalizationSettingsPanel() {
           className="w-full sm:w-64 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
         >
           <option value="">None — don&apos;t deduct leave</option>
-          {leaveTypes.map((t) => (
+          {leaveTypes.filter((t) => t.status === 'active').map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
@@ -352,7 +352,7 @@ export function PenalizationSettingsPanel() {
             className="w-full sm:w-64 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
           >
             <option value="">None — don&apos;t credit leave</option>
-            {leaveTypes.map((t) => (
+            {leaveTypes.filter((t) => t.status === 'active').map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>

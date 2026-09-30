@@ -592,7 +592,8 @@ export default function LeaveManagementPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600"
                   >
                     <option value="">Select</option>
-                    {types.map((t) => (
+                    {/* Deactivated types stay in history but can't take new requests. */}
+                    {types.filter((t) => t.status === 'active').map((t) => (
                       <option key={t.id} value={t.id}>
                         {t.name}
                       </option>
