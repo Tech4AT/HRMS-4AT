@@ -491,6 +491,7 @@ export function OrganizationDocumentsTab() {
                 <button type="button" onClick={remind} disabled={reminding || !docs} className={BTN_OUTLINE}>
                   {reminding ? 'Refreshing…' : 'Remind pending acknowledgements'}
                 </button>
+                <button type="button" onClick={() => setPanel(true)} className={BTN_OUTLINE}>⭱ Upload</button>
                 <button type="button" onClick={() => setPanel(true)} className={BTN_PRIMARY}>+ Add document</button>
               </>
             )}

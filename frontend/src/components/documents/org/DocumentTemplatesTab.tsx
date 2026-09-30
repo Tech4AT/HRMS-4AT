@@ -6,6 +6,7 @@ import {
   type TemplateFolder,
 } from '@/lib/api/documentTemplates';
 import { BTN_OUTLINE, BTN_PRIMARY, EmptyRow, SectionHeader, SELECT, TH } from './shared';
+import { DocumentUploadModal } from '../DocumentUploadModal';
 
 const COLS = ['Document name', 'Folder', 'Workflow enabled', 'Action type', 'Last used', 'Actions'];
 
@@ -21,6 +22,7 @@ export function DocumentTemplatesTab() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [generatingId, setGeneratingId] = useState<number | null>(null);
 
@@ -93,11 +95,30 @@ export function DocumentTemplatesTab() {
         title="Document templates"
         subtitle="Generate agreements, employee letters or compliance forms and send for signature/upload/acknowledgement."
         actions={
-          <button type="button" onClick={() => setCreating((v) => !v)} className={BTN_PRIMARY}>
-            + Create template ▾
-          </button>
+          <>
+            <button type="button" onClick={() => setUploadOpen(true)} className={BTN_OUTLINE}>
+              ⭱ Upload
+            </button>
+            <button type="button" onClick={() => setCreating((v) => !v)} className={BTN_PRIMARY}>
+              + Create template ▾
+            </button>
+          </>
         }
       />
+      {uploadOpen && (
+        <DocumentUploadModal
+          title="Upload template"
+          entityType="document_template"
+          entityId={0}
+          employeeId={0}
+          onUploaded={() => {
+            setUploadOpen(false);
+            setNotice('Template file uploaded.');
+            void load();
+          }}
+          onClose={() => setUploadOpen(false)}
+        />
+      )}
       {creating && (
         <div className="flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-4 py-3">
           <input
