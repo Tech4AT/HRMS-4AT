@@ -101,6 +101,29 @@ class Document(models.Model):
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
     expiry_date = models.DateField(null=True, blank=True)
+    # Verification workflow (Org > Employee Documents): HR/manager review of
+    # employee-submitted documents. Mirrors the employees.IdentityDocument /
+    # EducationRecord verification vocabulary (pending/verified/rejected).
+    VERIFICATION_PENDING = "pending"
+    VERIFICATION_VERIFIED = "verified"
+    VERIFICATION_REJECTED = "rejected"
+    VERIFICATION_STATUS_CHOICES = [
+        (VERIFICATION_PENDING, "Pending verification"),
+        (VERIFICATION_VERIFIED, "Verified"),
+        (VERIFICATION_REJECTED, "Rejected"),
+    ]
+    verification_status = models.CharField(
+        max_length=20, choices=VERIFICATION_STATUS_CHOICES, default=VERIFICATION_PENDING
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default="")
 
     class Meta:
         ordering = ["-uploaded_at"]
