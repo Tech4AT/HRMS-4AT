@@ -68,12 +68,17 @@ export interface TicketQueueFilters {
   category?: TicketCategory;
 }
 
-/** Who a category auto-assigns to on ticket creation - null means the
- * category has no default owner configured yet (new tickets stay unassigned). */
+/** Who owns a category: each owner works its tickets, and new tickets
+ * auto-assign to one of them (the least busy). An empty list means the category
+ * has no owner yet (new tickets stay unassigned). */
+export interface CategoryOwner {
+  id: string;
+  name: string;
+}
+
 export interface CategoryAssignment {
   category: TicketCategory;
-  assignee_id: string | null;
-  assignee_name: string | null;
+  assignees: CategoryOwner[];
 }
 
 /** Which categories the caller should see in the Resolve Tickets rail -
@@ -158,11 +163,11 @@ export const helpApi = {
   assignToMe: (id: string) => request<Ticket>(`/tickets/${id}/assign`, { method: 'PATCH', body: JSON.stringify({}) }),
   /** Category routing config - requires `help.manage`. */
   getCategoryAssignments: () => request<CategoryAssignment[]>('/category-assignments'),
-  /** `assigneeId: null` clears the category's default assignee. */
-  setCategoryAssignment: (category: TicketCategory, assigneeId: string | null) =>
+  /** Replaces the category's whole set of owners; an empty list clears it. */
+  setCategoryAssignment: (category: TicketCategory, assigneeIds: string[]) =>
     request<CategoryAssignment>('/category-assignments', {
       method: 'PUT',
-      body: JSON.stringify({ category, assignee_id: assigneeId }),
+      body: JSON.stringify({ category, assignee_ids: assigneeIds }),
     }),
   /** Which categories the caller should see in the Resolve Tickets rail. */
   getMyCategories: () => request<MyCategories>('/my-categories'),

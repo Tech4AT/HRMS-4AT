@@ -80,6 +80,52 @@ export const HelpIcon = base(
   <path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.5-3 5h2c0-2.5 3-3 3-5 0-2.21-1.79-4-4-4z" />,
 );
 
+/** Help & Support: a diagonal support ticket (text lines, notched stub) with a
+ *  gear over its corner. Mostly line work, unlike the filled icons around it,
+ *  so it strokes with `currentColor`; the gear is solid so it stays legible at
+ *  20px. */
+export function SupportTicketIcon({ className = 'w-5 h-5' }: IconProps) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* A gap is cut out of the ticket around the gear so the two stay distinct. */}
+      <mask id="support-ticket-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="white" />
+        <circle cx="17.3" cy="17.3" r="6.4" fill="black" />
+      </mask>
+      <g mask="url(#support-ticket-cut)">
+        <g transform="rotate(-35 11 10.5)">
+          {/* ticket with a notched stub */}
+          <path d="M4.5 6H14a1.5 1.5 0 003 0H18a1.5 1.5 0 011.5 1.5v6A1.5 1.5 0 0118 15h-1a1.5 1.5 0 00-3 0H4.5A1.5 1.5 0 013 13.5v-6A1.5 1.5 0 014.5 6z" />
+          {/* perforation and text lines */}
+          <path d="M15.5 7.8v5.4" strokeDasharray="1.4 1.6" />
+          <path d="M6 9.2h6M6 11.8h4" />
+        </g>
+      </g>
+      {/* gear: solid body with a hole, eight teeth */}
+      <path
+        d="M13.6 17.3a3.7 3.7 0 107.4 0 3.7 3.7 0 10-7.4 0zM15.9 17.3a1.4 1.4 0 102.8 0 1.4 1.4 0 10-2.8 0z"
+        fill="currentColor"
+        stroke="none"
+        fillRule="evenodd"
+      />
+      <path
+        d="M20.7 17.3h1.6M19.7 19.7l1.14 1.14M17.3 20.7v1.6M14.9 19.7l-1.14 1.14M13.9 17.3h-1.6M14.9 14.9l-1.14-1.14M17.3 13.9v-1.6M19.7 14.9l1.14-1.14"
+        strokeWidth={2}
+        strokeLinecap="butt"
+      />
+    </svg>
+  );
+}
+
 export const BellIcon = base(
   <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />,
 );

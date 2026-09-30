@@ -1141,10 +1141,12 @@ const KNOWN_ASSIGNEES: Record<string, string> = {
   'mock-user-1': 'Demo User',
 };
 
-let categoryAssignments: Record<string, string> = {
-  'IT & Access': 'emp-it-priya',
-  Facilities: 'emp-facilities-ravi',
-  'Finance & Admin': 'emp-finance-meera',
+// A category can have several owners; a new ticket goes to the first (the real
+// backend picks the least busy one).
+let categoryAssignments: Record<string, string[]> = {
+  'IT & Access': ['emp-it-priya'],
+  Facilities: ['emp-facilities-ravi'],
+  'Finance & Admin': ['emp-finance-meera'],
 };
 
 function handleHelp(method: string, segments: string[], query: URLSearchParams, body: any): MockResult {
@@ -1167,7 +1169,7 @@ function handleHelp(method: string, segments: string[], query: URLSearchParams, 
     if (!body?.description || !String(body.description).trim()) return fail('Description is required');
     const now = new Date().toISOString();
     const category = body.category ?? 'Others';
-    const routedAssigneeId = categoryAssignments[category] ?? null;
+    const routedAssigneeId = categoryAssignments[category]?.[0] ?? null;
     const activities: any[] = [
       { id: nextActivityId(), event_type: 'created', previous_status: null, new_status: 'New', comment: null, actor_name: 'Demo User', created_at: now },
     ];
@@ -1291,28 +1293,27 @@ function handleHelp(method: string, segments: string[], query: URLSearchParams, 
   }
   if (method === 'GET' && segments.length === 1 && segments[0] === 'category-assignments') {
     return ok(
-      HELP_CATEGORIES.map((category) => {
-        const assigneeId = categoryAssignments[category] ?? null;
-        return {
-          category,
-          assignee_id: assigneeId,
-          assignee_name: assigneeId ? (KNOWN_ASSIGNEES[assigneeId] ?? assigneeId) : null,
-        };
-      }),
+      HELP_CATEGORIES.map((category) => ({
+        category,
+        assignees: (categoryAssignments[category] ?? []).map((id) => ({ id, name: KNOWN_ASSIGNEES[id] ?? id })),
+      })),
     );
   }
   if (method === 'PUT' && segments.length === 1 && segments[0] === 'category-assignments') {
     const category = body?.category;
     if (!HELP_CATEGORIES.includes(category)) return fail('Must be a valid ticket category.');
-    const assigneeId = body?.assignee_id || null;
-    if (!assigneeId) {
+    const ids: string[] = Array.isArray(body?.assignee_ids) ? body.assignee_ids.map(String) : [];
+    if (ids.length === 0) {
       delete categoryAssignments[category];
-      return ok({ category, assignee_id: null, assignee_name: null });
+    } else {
+      // Mock-only convenience: accept any ids, and use the name already known
+      // for each (from a seed ticket) or fall back to the id itself.
+      categoryAssignments[category] = [...new Set(ids)];
     }
-    // Mock-only convenience: accept any id, and use the name already known
-    // for it (from a seed ticket) or fall back to the id itself.
-    categoryAssignments[category] = assigneeId;
-    return ok({ category, assignee_id: assigneeId, assignee_name: KNOWN_ASSIGNEES[assigneeId] ?? assigneeId });
+    return ok({
+      category,
+      assignees: (categoryAssignments[category] ?? []).map((id) => ({ id, name: KNOWN_ASSIGNEES[id] ?? id })),
+    });
   }
   if (method === 'GET' && segments.length === 1 && segments[0] === 'my-categories') {
     // The mock user always holds help.manage (see mock-auth.ts) - full admin, every category.

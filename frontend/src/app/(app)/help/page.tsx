@@ -14,6 +14,7 @@ import {
   SettingsIcon,
   WalletIcon,
 } from '@/components/icons';
+import { PeoplePicker, type PickerPerson } from '@/components/PeoplePicker';
 import { TicketFormModal } from '@/components/help/TicketFormModal';
 import { TicketDetailPanel } from '@/components/help/TicketDetailPanel';
 import { getEmployeeDirectory, type DirectoryEmployee } from '@/lib/api/employees';
@@ -356,11 +357,16 @@ function HelpPageContent() {
     };
   }, [canManage]);
 
-  const handleRoutingChange = async (category: TicketCategory, assigneeId: string | null) => {
+  const routingOptions = useMemo<PickerPerson[]>(
+    () => routingEmployees.map((e) => ({ id: e.id, name: e.name, hint: e.department })),
+    [routingEmployees],
+  );
+
+  const handleRoutingChange = async (category: TicketCategory, assigneeIds: string[]) => {
     setRoutingSaving(category);
     setRoutingError(null);
     try {
-      const updated = await helpApi.setCategoryAssignment(category, assigneeId);
+      const updated = await helpApi.setCategoryAssignment(category, assigneeIds);
       setRouting((rows) => rows.map((r) => (r.category === category ? updated : r)));
     } catch (e) {
       setRoutingError(e instanceof Error ? e.message : 'Could not update routing');
@@ -747,8 +753,9 @@ function HelpPageContent() {
             <div>
               <h2 className="text-base font-bold text-slate-900">Category Routing</h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                New tickets auto-assign to each category's owner. Setting someone here also gives them the Resolve
-                Tickets tab, scoped to just that category - admin-only.
+                A category can have several owners. Each owner gets the Resolve Tickets tab, scoped to just that
+                category, and is notified of its tickets. New tickets auto-assign to the owner with the fewest open
+                tickets - admin-only.
               </p>
             </div>
 
@@ -760,24 +767,16 @@ function HelpPageContent() {
                 <p className="text-sm text-slate-500">Loading…</p>
               ) : (
                 routing.map((row) => (
-                  <div key={row.category} className="flex items-center justify-between gap-3 py-1">
-                    <span className="text-sm font-medium text-slate-700">{row.category}</span>
-                    <select
-                      value={row.assignee_id ?? ''}
-                      disabled={routingSaving === row.category}
-                      onChange={(e) => handleRoutingChange(row.category, e.target.value || null)}
-                      className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/10 disabled:opacity-50 min-w-[200px]"
-                    >
-                      <option value="">Unassigned</option>
-                      {routingEmployees.map((emp) => (
-                        <option key={emp.id} value={emp.id}>
-                          {emp.name}
-                        </option>
-                      ))}
-                      {row.assignee_id && !routingEmployees.some((emp) => emp.id === row.assignee_id) ? (
-                        <option value={row.assignee_id}>{row.assignee_name ?? row.assignee_id}</option>
-                      ) : null}
-                    </select>
+                  <div key={row.category} className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3 py-1">
+                    <span className="text-sm font-medium text-slate-700 sm:pt-2">{row.category}</span>
+                    <PeoplePicker
+                      ariaLabel={`Owners of ${row.category}`}
+                      options={routingOptions}
+                      selected={row.assignees.map((a) => ({ id: a.id, name: a.name }))}
+                      busy={routingSaving === row.category}
+                      placeholder="Unassigned: search to add"
+                      onChange={(ids) => handleRoutingChange(row.category, ids)}
+                    />
                   </div>
                 ))
               )}

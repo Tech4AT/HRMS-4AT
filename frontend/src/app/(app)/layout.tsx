@@ -18,7 +18,7 @@ import {
   GlobeIcon,
   GridIcon,
   SettingsIcon,
-  HelpIcon,
+  SupportTicketIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
@@ -254,7 +254,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
   '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
-  '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
+  '/help': { title: 'Help & Support', subtitle: 'Raise a ticket, track its progress and find answers' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
@@ -539,7 +539,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
               className="p-2.5 text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
               title="Help"
             >
-              <HelpIcon className="w-5 h-5" />
+              <SupportTicketIcon className="w-5 h-5" />
             </button>
             <NotificationsDropdown />
             <div className="pl-2 sm:pl-3 border-l border-slate-200">

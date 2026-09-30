@@ -13,6 +13,7 @@ detail route's queryset by help.read would 404 a helper trying to act on
 someone else's ticket before the correct help.manage object check even runs.
 """
 
+from django.db import transaction
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -22,6 +23,7 @@ from rest_framework.views import APIView
 
 from audit.service import write_audit
 from core.api import FrontendEnvelopeMixin
+from core.enums import EmployeeStatus
 from core.permissions import HasPermissionCode, ScopedEmployeePermission
 from core.scope import resolve_employee_scope, user_has_permission
 from employees.models import Employee
@@ -62,16 +64,15 @@ def _owned_categories(user) -> frozenset:
 
 
 def _apply_category_routing(ticket, *, note_prefix: str = "Auto-assigned") -> None:
-    """Set `ticket.assigned_to` to whoever CategoryAssignment currently routes
-    `ticket.category` to (clearing it if there's no mapping), saving and
+    """Set `ticket.assigned_to` to one of the owners CategoryAssignment currently
+    lists for `ticket.category` (clearing it if there are none), saving and
     logging an 'assigned' activity only when the assignee actually changes.
     Used both on create and whenever an edit changes the category - without
     the latter, a ticket edited into a different category would keep
     pointing at its old category's owner instead of the new one's."""
-    routing = (
-        CategoryAssignment.objects.filter(category=ticket.category).select_related("assignee__user").first()
-    )
-    new_assignee = routing.assignee if routing is not None else None
+    # With several owners this picks the least busy one, and keeps the current
+    # assignee if they already own the (possibly new) category.
+    new_assignee = services.pick_assignee(ticket.category, current=ticket.assigned_to)
     new_assignee_id = new_assignee.pk if new_assignee is not None else None
     if new_assignee_id == ticket.assigned_to_id:
         return
@@ -316,9 +317,17 @@ class TicketViewSet(
         return Response({"success": True, "data": self.get_serializer(ticket).data})
 
 
+MAX_OWNERS_PER_CATEGORY = 25
+
+
+def _owners_payload(owners) -> list:
+    return [{"id": str(o.pk), "name": _display_name(o)} for o in owners]
+
+
 class CategoryAssignmentView(FrontendEnvelopeMixin, APIView):
-    """Category routing config - who's auto-assigned a new ticket for each
-    category (TicketViewSet.perform_create). Not employee-keyed (it's a
+    """Category routing config - who owns each category and so is auto-assigned
+    its new tickets (TicketViewSet.perform_create). A category can have several
+    owners. Not employee-keyed (it's a
     global setting, not a per-employee record), so this uses the flat
     HasPermissionCode check rather than ScopedEmployeePermission.
 
@@ -332,47 +341,81 @@ class CategoryAssignmentView(FrontendEnvelopeMixin, APIView):
     required_permission = "help.manage"
 
     def get(self, request):
-        existing = {
-            a.category: a
-            for a in CategoryAssignment.objects.select_related("assignee__user")
-        }
+        owners_by_category: dict[str, list] = {}
+        for a in CategoryAssignment.objects.select_related("assignee__user"):
+            owners_by_category.setdefault(a.category, []).append(a.assignee)
         rows = [
-            {
-                "category": category,
-                "assignee_id": str(existing[category].assignee_id) if category in existing else None,
-                "assignee_name": _display_name(existing[category].assignee) if category in existing else None,
-            }
+            {"category": category, "assignees": _owners_payload(owners_by_category.get(category, []))}
             for category in TicketCategory.values
         ]
         serializer = CategoryAssignmentSerializer(rows, many=True)
         return Response({"success": True, "data": serializer.data})
 
+    @staticmethod
+    def _requested_ids(data) -> list:
+        """The owner ids a request asks for, de-duplicated in the order given.
+        `assignee_ids` is the list form; the single `assignee_id` the screen used
+        before several owners were allowed is still accepted (empty clears)."""
+        if "assignee_ids" in data:
+            raw = data.get("assignee_ids")
+            if not isinstance(raw, list):
+                raise ValidationError({"assignee_ids": "Must be a list of employee ids."})
+        else:
+            single = data.get("assignee_id")
+            raw = [single] if single else []
+        ids = []
+        for value in raw:
+            if isinstance(value, bool) or not str(value).strip().isdigit():
+                raise ValidationError({"assignee_ids": f"Not a valid employee id: {value!r}."})
+            pk = int(str(value).strip())
+            if pk not in ids:
+                ids.append(pk)
+        if len(ids) > MAX_OWNERS_PER_CATEGORY:
+            raise ValidationError(
+                {"assignee_ids": f"A category can have at most {MAX_OWNERS_PER_CATEGORY} owners."}
+            )
+        return ids
+
     def put(self, request):
+        """Replace the whole set of owners for one category. Sending an empty
+        list clears it. Tickets already assigned to someone removed here keep
+        their assignee, as when a category was cleared before."""
         category = request.data.get("category")
         if category not in TicketCategory.values:
             raise ValidationError({"category": "Must be a valid ticket category."})
 
-        assignee_id = request.data.get("assignee_id")
-        if not assignee_id:
-            deleted, _ = CategoryAssignment.objects.filter(category=category).delete()
-            if deleted:
-                write_audit(request.user, "CategoryAssignment.cleared", "CategoryAssignment", category)
-            return Response({"success": True, "data": {"category": category, "assignee_id": None, "assignee_name": None}})
+        ids = self._requested_ids(request.data)
+        employees = {
+            e.pk: e
+            for e in Employee.objects.select_related("user")
+            .filter(pk__in=ids)
+            .exclude(status=EmployeeStatus.EXITED)
+        }
+        missing = [pk for pk in ids if pk not in employees]
+        if missing:
+            raise ValidationError(
+                {"assignee_ids": f"Not a current employee: {', '.join(str(m) for m in missing)}."}
+            )
 
-        employee = Employee.objects.filter(pk=assignee_id).first()
-        if employee is None:
-            raise ValidationError({"assignee_id": "Must reference a valid employee."})
+        with transaction.atomic():
+            current = {a.assignee_id: a for a in CategoryAssignment.objects.filter(category=category)}
+            removed = [pk for pk in current if pk not in ids]
+            added = [pk for pk in ids if pk not in current]
+            if removed:
+                CategoryAssignment.objects.filter(category=category, assignee_id__in=removed).delete()
+            for pk in added:
+                CategoryAssignment.objects.create(category=category, assignee=employees[pk])
+            if added or removed:
+                write_audit(
+                    request.user,
+                    "CategoryAssignment.set" if ids else "CategoryAssignment.cleared",
+                    "CategoryAssignment",
+                    category,
+                    {"assignees": ids, "added": added, "removed": removed},
+                )
 
-        CategoryAssignment.objects.update_or_create(category=category, defaults={"assignee": employee})
-        write_audit(
-            request.user, "CategoryAssignment.set", "CategoryAssignment", category, {"assignee": employee.pk}
-        )
-        return Response(
-            {
-                "success": True,
-                "data": {"category": category, "assignee_id": str(employee.pk), "assignee_name": _display_name(employee)},
-            }
-        )
+        owners = services.category_owners(category)
+        return Response({"success": True, "data": {"category": category, "assignees": _owners_payload(owners)}})
 
 
 class MyCategoriesView(FrontendEnvelopeMixin, APIView):
