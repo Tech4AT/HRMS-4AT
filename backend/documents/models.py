@@ -14,6 +14,32 @@ def _upload_to(instance, filename):
     return f"documents/{instance.entity_type}/{uuid.uuid4()}/{filename}"
 
 
+class DocumentFolder(models.Model):
+    """A folder in Org > Organization Documents (the Keka folder rail). PUBLIC
+    folders are visible to every employee; PRIVATE folders are HR-only. Deleting
+    a folder detaches its documents (Document.folder -> SET_NULL), it does not
+    delete them."""
+
+    VISIBILITY_PUBLIC = "public"
+    VISIBILITY_PRIVATE = "private"
+    VISIBILITY_CHOICES = [(VISIBILITY_PUBLIC, "Public"), (VISIBILITY_PRIVATE, "Private")]
+
+    name = models.CharField(max_length=200)
+    visibility = models.CharField(max_length=16, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
+    description = models.TextField(blank=True, default="")
+    ordering = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["ordering", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.visibility})"
+
+
 class Document(models.Model):
     # UUID primary key (matches the real column and migration state 0004; the
     # Python-side default is what makes creates work — without an explicit
@@ -37,6 +63,17 @@ class Document(models.Model):
     # Whether employees must explicitly acknowledge this document (tracked in
     # DocumentAcknowledgement below).
     acknowledgement_required = models.BooleanField(default=False)
+    # Organization-documents subsystem: the folder this document lives in (Org
+    # > Organization Documents folder rail). Null for employee-attached files.
+    # SET_NULL so deleting a folder detaches, never deletes, its documents.
+    folder = models.ForeignKey(
+        "DocumentFolder", null=True, blank=True, on_delete=models.SET_NULL, related_name="documents"
+    )
+    # Human-entered display name + description for organization documents (the
+    # Add-document panel). Employee-attached files leave these blank and fall
+    # back to original_filename for display.
+    title = models.CharField(max_length=255, blank=True, default="")
+    description = models.TextField(blank=True, default="")
     # What this file is attached to, e.g. ("payslip", <employee id>).
     entity_type = models.CharField(max_length=64)
     entity_id = models.CharField(max_length=64)

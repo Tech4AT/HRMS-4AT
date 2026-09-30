@@ -506,3 +506,31 @@ def _example_signatories():
         full = e.user.get_full_name().strip() or e.employee_code
         out.append((full, (e.designation.name if e.designation_id else ""), e.user.email))
     return out
+
+
+# Default PUBLIC folders for Org > Organization Documents (Keka folder rail).
+# Idempotent (get_or_create) so it survives the boot wipe/reload; never
+# duplicates or renames a folder an admin has since edited.
+DEFAULT_ORG_DOCUMENT_FOLDERS = [
+    "HR Policies",
+    "Compliance Policies",
+    "Operational Policies",
+    "Information Security Policies",
+    "Communication Policy",
+    "Risk Management Policies",
+    "Insurance Policy",
+]
+
+
+def seed_org_document_folders():
+    from documents.models import DocumentFolder
+
+    created = 0
+    for i, name in enumerate(DEFAULT_ORG_DOCUMENT_FOLDERS):
+        _, was_created = DocumentFolder.objects.get_or_create(
+            name=name,
+            visibility=DocumentFolder.VISIBILITY_PUBLIC,
+            defaults={"ordering": i},
+        )
+        created += int(was_created)
+    return {"folders_total": DocumentFolder.objects.count(), "folders_created": created}

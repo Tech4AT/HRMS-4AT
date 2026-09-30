@@ -33,6 +33,7 @@ from employees.org_seed import (
     REAL_LEGAL_ENTITY_NAME,
     seed_derived_org_masters,
     seed_keka_org_details,
+    seed_org_document_folders,
 )
 
 DEMO_PW = "Welcome@123"
@@ -231,6 +232,7 @@ class Command(BaseCommand):
             # rebuilds them identically after the wipe above.
             seed_counts = seed_derived_org_masters()
             keka_counts = seed_keka_org_details()
+            folder_counts = seed_org_document_folders()
 
             # Legal-entity link: every loaded employee belongs to the primary
             # entity, so the Legal Entity stats count them (was 0 before).

@@ -7,6 +7,10 @@ from .views import (
     DocumentDownloadView,
     DocumentFileView,
     DocumentListUploadView,
+    DocumentRemindAcknowledgementView,
+    FolderDetailView,
+    FolderDocumentsView,
+    FolderListCreateView,
     MyDocumentsView,
     PendingAcknowledgementView,
 )
@@ -21,6 +25,11 @@ urlpatterns = [
     # Static path — must be declared before the <uuid:pk> routes. (The uuid
     # converter would not match this word anyway, but keep intent explicit.)
     path("documents/pending-acknowledgement", PendingAcknowledgementView.as_view(), name="document-pending-ack"),
+    # Organization Documents folders (Org > Organization Documents folder rail).
+    path("documents/folders", FolderListCreateView.as_view(), name="document-folders"),
+    path("documents/folders/<int:pk>", FolderDetailView.as_view(), name="document-folder-detail"),
+    path("documents/folders/<int:pk>/documents", FolderDocumentsView.as_view(), name="document-folder-documents"),
+    path("documents/<uuid:pk>/remind-acknowledgement", DocumentRemindAcknowledgementView.as_view(), name="document-remind-ack"),
     path("documents/<uuid:pk>/acknowledge", DocumentAcknowledgeView.as_view(), name="document-acknowledge"),
     path("documents/<uuid:pk>/acknowledgements", DocumentAcknowledgementStatusView.as_view(), name="document-ack-status"),
     path("documents/<uuid:pk>", DocumentDetailView.as_view(), name="document-detail"),

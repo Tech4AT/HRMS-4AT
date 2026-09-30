@@ -229,6 +229,14 @@ class DocumentListUploadView(APIView):
                     status=403,
                 )
 
+        # Organization documents may be filed into a folder and carry a
+        # human-entered title/description (employee-attached files leave these
+        # blank). An unknown folder id is ignored rather than erroring the upload.
+        folder_id = request.data.get('folderId') or request.data.get('folder_id') or None
+        if folder_id is not None:
+            from .models import DocumentFolder
+            if not DocumentFolder.objects.filter(pk=folder_id).exists():
+                folder_id = None
         doc = Document.objects.create(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -243,6 +251,9 @@ class DocumentListUploadView(APIView):
             acknowledgement_required=_to_bool(
                 request.data.get('acknowledgementRequired', request.data.get('acknowledgement_required', False))
             ),
+            folder_id=folder_id,
+            title=(request.data.get('title') or '').strip(),
+            description=request.data.get('description') or '',
         )
         write_audit(request.user, 'document.upload', doc.entity_type, doc.entity_id, {'documentId': str(doc.id), 'filename': doc.original_filename})
         return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data}, status=201)
@@ -480,3 +491,170 @@ class PendingAcknowledgementView(APIView):
             for d in pending
         ]
         return Response({'success': True, 'data': data})
+
+
+def _can_manage_folders(user) -> bool:
+    """Who may create/edit/delete folders and see PRIVATE folders: HR Admin, or
+    a holder of documents.write (the same bar that gates uploading org docs)."""
+    return is_hr_admin(user) or user_has_permission(user, 'documents.write')
+
+
+def _org_doc_dict(d):
+    return {
+        'id': d.id,
+        'title': d.title or d.original_filename or d.original_name,
+        'originalFilename': d.original_filename or d.original_name,
+        'description': d.description or '',
+        'audience': d.audience,
+        'acknowledgementRequired': d.acknowledgement_required,
+        'expiryDate': d.expiry_date.isoformat() if d.expiry_date else None,
+        'size': d.size,
+        'folderId': d.folder_id,
+        'uploadedAt': d.uploaded_at.isoformat() if d.uploaded_at else None,
+    }
+
+
+def _folder_dict(f, doc_count):
+    return {
+        'id': f.id,
+        'name': f.name,
+        'visibility': f.visibility,
+        'description': f.description or '',
+        'documentCount': doc_count,
+    }
+
+
+class FolderListCreateView(APIView):
+    """`GET /documents/folders` — folders visible to the caller (PUBLIC to all,
+    PRIVATE to folder-managers only), each with its org-document count.
+    `POST` (manager only) creates a folder {name, visibility, description}."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Q
+        from .models import DocumentFolder
+        qs = DocumentFolder.objects.annotate(
+            doc_count=Count('documents', filter=Q(documents__entity_type='organization_document'))
+        )
+        if not _can_manage_folders(request.user):
+            qs = qs.filter(visibility=DocumentFolder.VISIBILITY_PUBLIC)
+        data = [_folder_dict(f, f.doc_count) for f in qs]
+        return Response({'success': True, 'data': data})
+
+    def post(self, request):
+        from .models import DocumentFolder
+        if not _can_manage_folders(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'name is required'}}, status=400)
+        visibility = request.data.get('visibility') or DocumentFolder.VISIBILITY_PUBLIC
+        if visibility not in dict(DocumentFolder.VISIBILITY_CHOICES):
+            return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': f'Unknown visibility "{visibility}".'}}, status=400)
+        f = DocumentFolder.objects.create(
+            name=name, visibility=visibility, description=request.data.get('description') or '',
+            created_by=request.user,
+        )
+        write_audit(request.user, 'document_folder.create', 'document_folder', str(f.id), {'name': f.name})
+        return Response({'success': True, 'data': _folder_dict(f, 0)}, status=201)
+
+
+class FolderDetailView(APIView):
+    """`PATCH`/`DELETE /documents/folders/<id>` (manager only). Delete detaches
+    documents (SET_NULL), it never deletes them."""
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        from .models import DocumentFolder
+        if not _can_manage_folders(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        try:
+            f = DocumentFolder.objects.get(pk=pk)
+        except DocumentFolder.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Folder not found'}}, status=404)
+        if 'name' in request.data:
+            name = (request.data.get('name') or '').strip()
+            if not name:
+                return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'name cannot be empty'}}, status=400)
+            f.name = name
+        if 'visibility' in request.data:
+            visibility = request.data.get('visibility')
+            if visibility not in dict(DocumentFolder.VISIBILITY_CHOICES):
+                return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': f'Unknown visibility "{visibility}".'}}, status=400)
+            f.visibility = visibility
+        if 'description' in request.data:
+            f.description = request.data.get('description') or ''
+        f.save()
+        return Response({'success': True, 'data': _folder_dict(f, f.documents.filter(entity_type='organization_document').count())})
+
+    def delete(self, request, pk):
+        from .models import DocumentFolder
+        if not _can_manage_folders(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        try:
+            f = DocumentFolder.objects.get(pk=pk)
+        except DocumentFolder.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Folder not found'}}, status=404)
+        write_audit(request.user, 'document_folder.delete', 'document_folder', str(f.id), {'name': f.name})
+        f.delete()  # Document.folder is SET_NULL -> documents survive, unfiled.
+        return Response(status=204)
+
+
+class FolderDocumentsView(APIView):
+    """`GET /documents/folders/<id>/documents` — the organization documents in
+    a folder the caller may see (audience-filtered via can_access)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        from .models import DocumentFolder
+        try:
+            f = DocumentFolder.objects.get(pk=pk)
+        except DocumentFolder.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Folder not found'}}, status=404)
+        if f.visibility == DocumentFolder.VISIBILITY_PRIVATE and not _can_manage_folders(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        docs = [
+            d for d in Document.objects.filter(folder=f, entity_type='organization_document')
+            if can_access(request.user, d)
+        ]
+        return Response({'success': True, 'data': [_org_doc_dict(d) for d in docs]})
+
+
+class DocumentRemindAcknowledgementView(APIView):
+    """`POST /documents/<id>/remind-acknowledgement` (manager only) — send a
+    notification to every in-scope employee who still hasn't acknowledged this
+    ack-required document. Returns {notified}."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from employees.models import Employee
+        from notifications.service import notify
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if not _can_manage_folders(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        if not doc.acknowledgement_required:
+            return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'This document does not require acknowledgement.'}}, status=400)
+
+        if is_hr_admin(request.user):
+            scope_ids = set(Employee.objects.values_list('pk', flat=True))
+        else:
+            scope_ids = set(visible_employee_ids(request.user, 'employees.read'))
+        acked = set(DocumentAcknowledgement.objects.filter(document=doc).values_list('employee_id', flat=True))
+        title = doc.title or doc.original_filename or 'a document'
+        notified = 0
+        for e in Employee.objects.filter(pk__in=scope_ids).select_related('user'):
+            if e.id in acked or getattr(e, 'user', None) is None:
+                continue
+            if not can_access(e.user, doc):
+                continue
+            notify(e.user, 'document.acknowledgement_reminder', 'Action required: acknowledge a document',
+                   f'Please review and acknowledge "{title}".')
+            notified += 1
+        return Response({'success': True, 'data': {'notified': notified}})
