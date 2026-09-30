@@ -56,6 +56,15 @@ function PencilIcon({ className }: { className?: string }) {
   );
 }
 
+/** Inline trash glyph for the HR folder delete control. */
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    </svg>
+  );
+}
+
 /** Keka "Organization documents": folder rail + folder table + Add-document
  * side panel, wired to Parcel A (audience + acknowledgement). The folder
  * rail stays empty until org-folders land; the table lists real documents
@@ -86,6 +95,8 @@ export function OrganizationDocumentsTab() {
   const [editFolderName, setEditFolderName] = useState('');
   const [editFolderVis, setEditFolderVis] = useState<FolderVisibility>('public');
   const [folderError, setFolderError] = useState<string | null>(null);
+  // Delete uses an inline confirm row (never window.confirm()).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const [panel, setPanel] = useState(false);
   const [name, setName] = useState('');
@@ -137,6 +148,7 @@ export function OrganizationDocumentsTab() {
 
   const startEditFolder = (f: DocumentFolder) => {
     setFolderError(null);
+    setConfirmDeleteId(null);
     setEditingFolderId(String(f.id));
     setEditFolderName(f.name);
     setEditFolderVis(f.visibility);
@@ -156,6 +168,26 @@ export function OrganizationDocumentsTab() {
       await loadFolders();
     } catch (e) {
       setFolderError(e instanceof DocumentsApiError ? e.message : 'Failed to update folder');
+    } finally {
+      setFolderBusy(false);
+    }
+  };
+
+  /** Delete the folder after the inline confirm. The backend detaches (never
+   * deletes) its documents; if the deleted folder was selected we fall back
+   * to "All documents", which re-runs loadDocs via its callback dependency. */
+  const deleteFolder = async (id: string) => {
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      await documentsApi.folderDelete(id);
+      setConfirmDeleteId(null);
+      if (selectedFolderId !== null && String(selectedFolderId) === id) {
+        setSelectedFolderId(null);
+      }
+      await loadFolders();
+    } catch (e) {
+      setFolderError(e instanceof DocumentsApiError ? e.message : 'Failed to delete folder');
     } finally {
       setFolderBusy(false);
     }
@@ -327,6 +359,32 @@ export function OrganizationDocumentsTab() {
                 <p className="px-1 py-2 text-xs text-gray-400">No folders</p>
               ) : (
                 list.map((f) => {
+                  if (String(confirmDeleteId) === String(f.id)) {
+                    // Inline confirm (never window.confirm()): delete detaches
+                    // the folder's documents, they move back to All documents.
+                    return (
+                      <div key={f.id} className="rounded-lg border border-red-200 bg-red-50 p-2 space-y-2">
+                        <p className="text-xs text-slate-700">
+                          Delete <span className="font-semibold">{f.name}</span>? Its{' '}
+                          {f.documentCount ?? 0} document{(f.documentCount ?? 0) === 1 ? '' : 's'} will move to All documents.
+                        </p>
+                        {folderError && <p className="text-[11px] text-red-600">{folderError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => deleteFolder(String(f.id))}
+                            disabled={folderBusy}
+                            className="flex-1 px-3 py-1.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50"
+                          >
+                            {folderBusy ? 'Deleting…' : 'Delete'}
+                          </button>
+                          <button type="button" onClick={() => setConfirmDeleteId(null)} disabled={folderBusy} className={BTN_OUTLINE}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
                   if (editingFolderId === String(f.id)) {
                     // Inline rename / visibility editor (HR only) — no modal.
                     return (
@@ -376,15 +434,30 @@ export function OrganizationDocumentsTab() {
                         <span className="text-[11px] text-gray-400">{f.documentCount ?? 0}</span>
                       </button>
                       {isHr && (
-                        <button
-                          type="button"
-                          onClick={() => startEditFolder(f)}
-                          aria-label={`Edit folder ${f.name}`}
-                          title="Rename or change visibility"
-                          className="p-1 rounded text-gray-400 hover:text-purple-600 hover:bg-purple-50 shrink-0"
-                        >
-                          <PencilIcon className="w-3.5 h-3.5" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => startEditFolder(f)}
+                            aria-label={`Edit folder ${f.name}`}
+                            title="Rename or change visibility"
+                            className="p-1 rounded text-gray-400 hover:text-purple-600 hover:bg-purple-50 shrink-0"
+                          >
+                            <PencilIcon className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFolderError(null);
+                              setEditingFolderId(null);
+                              setConfirmDeleteId(String(f.id));
+                            }}
+                            aria-label={`Delete folder ${f.name}`}
+                            title="Delete folder"
+                            className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 shrink-0"
+                          >
+                            <TrashIcon className="w-3.5 h-3.5" />
+                          </button>
+                        </>
                       )}
                     </div>
                   );
