@@ -107,6 +107,9 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
   const [failedKinds, setFailedKinds] = useState<Set<UnitKind>>(new Set());
   const [directory, setDirectory] = useState<OrgEmployee[]>([]);
   const [directoryFailed, setDirectoryFailed] = useState(false);
+  // Off by default: departments/lists show active staff only. On also pulls
+  // exited ("Relieved") people from the roster, tagged Exited.
+  const [includeFormer, setIncludeFormer] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
@@ -158,7 +161,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
     setFailedKinds(failed);
 
     try {
-      setDirectory(await orgApi.listDirectory());
+      setDirectory(await orgApi.listDirectory(includeFormer));
       setDirectoryFailed(false);
     } catch {
       setDirectory([]);
@@ -166,7 +169,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
     } finally {
       setLoading(false);
     }
-  }, [mergeKind]);
+  }, [mergeKind, includeFormer]);
 
   useEffect(() => {
     refresh();
@@ -318,7 +321,16 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
     <div>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <h2 className="text-lg font-bold text-slate-900">Org Structure</h2>
-        <span className="flex gap-2">
+        <span className="flex gap-2 items-center">
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 mr-1 cursor-pointer select-none" title="Include exited (Relieved) employees from the roster, marked Exited">
+            <input
+              type="checkbox"
+              checked={includeFormer}
+              onChange={(e) => setIncludeFormer(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Include former employees
+          </label>
           {activeTab === 'locations' ? (
             <button
               type="button"

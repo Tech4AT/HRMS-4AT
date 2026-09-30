@@ -193,3 +193,23 @@ def test_employee_without_org_links_reads_null_not_missing():
     row = _client("HR Admin").get(f"/api/v1/employees/{employee.pk}/").json()["data"]
 
     assert row["position_id"] is None and row["level_id"] is None and row["grade_id"] is None
+
+
+def test_org_directory_hides_former_staff_unless_requested():
+    """The org directory shows active staff by default; ?includeFormer=true
+    adds exited ("Relieved") people, tagged status=exited, for HR's view."""
+    from employees.models import EmployeeStatus
+
+    client = _client("HR Admin")
+    active = EmployeeFactory(status=EmployeeStatus.ACTIVE)
+    exited = EmployeeFactory(status=EmployeeStatus.EXITED)
+
+    default = client.get("/api/v1/org-directory/")
+    ids = {r["id"] for r in default.json()["data"]}
+    assert str(active.pk) in ids and str(exited.pk) not in ids
+
+    withformer = client.get("/api/v1/org-directory/?includeFormer=true")
+    ids2 = {r["id"] for r in withformer.json()["data"]}
+    assert str(active.pk) in ids2 and str(exited.pk) in ids2
+    exited_row = next(r for r in withformer.json()["data"] if r["id"] == str(exited.pk))
+    assert exited_row["status"] == "exited"

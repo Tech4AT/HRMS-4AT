@@ -96,23 +96,25 @@ class OrgDirectoryViewSet(FrontendEnvelopeMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return (
-            Employee.objects.select_related(
-                "user",
-                "manager__user",
-                "department",
-                "designation",
-                "location",
-                "legal_entity",
-                "business_unit",
-                "cost_center",
-                "position",
-                "level",
-                "grade",
-            )
-            .exclude(status=EmployeeStatus.EXITED)
-            .order_by("user__first_name", "user__last_name")
-        )
+        queryset = Employee.objects.select_related(
+            "user",
+            "manager__user",
+            "department",
+            "designation",
+            "location",
+            "legal_entity",
+            "business_unit",
+            "cost_center",
+            "position",
+            "level",
+            "grade",
+        ).order_by("user__first_name", "user__last_name")
+        # Former (exited/relieved) staff are hidden by default; ?includeFormer=true
+        # returns them too, tagged status=exited, for HR's "include former" view.
+        include_former = str(self.request.query_params.get("includeFormer", "")).lower() in ("1", "true", "yes")
+        if not include_former:
+            queryset = queryset.exclude(status=EmployeeStatus.EXITED)
+        return queryset
 
 
 class EmployeeViewSet(

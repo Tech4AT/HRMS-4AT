@@ -163,8 +163,11 @@ async function mutate<T>(path: string, body: unknown): Promise<T> {
 export const orgApi = {
   listEmployees: () => request<OrgEmployee[]>('/api/employees'),
   /** Company-wide directory (unscoped): the same rows the /org chart and
-   * directory render, so overview headcounts match them exactly. */
-  listDirectory: () => request<OrgEmployee[]>('/api/org-directory'),
+   * directory render, so overview headcounts match them exactly. Pass
+   * includeFormer to also return exited ("Relieved") staff, tagged
+   * status=exited. */
+  listDirectory: (includeFormer = false) =>
+    request<OrgEmployee[]>(`/api/org-directory${includeFormer ? '?includeFormer=true' : ''}`),
   listDepartments: () => request<NamedEntity[]>('/api/departments'),
   listDesignations: () => request<NamedEntity[]>('/api/designations'),
   listLocations: () => request<NamedEntity[]>('/api/locations'),
