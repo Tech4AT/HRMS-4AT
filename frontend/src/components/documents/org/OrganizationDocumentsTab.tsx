@@ -15,7 +15,9 @@ import {
   type FolderVisibility,
   type OrgDocAudience,
   type OrgDocument,
+  type AudienceRole,
 } from '@/lib/api/documents';
+import { adminApi, type Role } from '@/lib/admin/api';
 import { BTN_OUTLINE, BTN_PRIMARY, EmptyRow, FolderIcon, SectionHeader, SELECT, TH } from './shared';
 import { PendingAcknowledgements } from './PendingAcknowledgements';
 
@@ -113,11 +115,15 @@ export function OrganizationDocumentsTab() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const [panel, setPanel] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [descOpen, setDescOpen] = useState(false);
   const [desc, setDesc] = useState('');
   const [audience, setAudience] = useState<OrgDocAudience>('all_employees');
   const [ack, setAck] = useState(false);
+  // Role-based audience: which roles may see the doc + per-role view/ack.
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [audRoles, setAudRoles] = useState<AudienceRole[]>([]);
   const [expiryOn, setExpiryOn] = useState(false);
   const [expiry, setExpiry] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -237,6 +243,15 @@ export function OrganizationDocumentsTab() {
     if (docs) void loadStatuses(docs);
   }, [docs, loadStatuses]);
 
+  // Roles for the audience picker (HR only — the picker is HR-gated anyway).
+  useEffect(() => {
+    if (!isHr) return;
+    adminApi
+      .listRoles()
+      .then((p) => setRoles((p.results ?? []).filter((r) => r.isActive)))
+      .catch(() => setRoles([]));
+  }, [isHr]);
+
   /** "Remind pending acknowledgements" notifies every in-scope employee still
    * pending on each ack-required document in the current view, then refreshes
    * the status counts. */
@@ -268,15 +283,45 @@ export function OrganizationDocumentsTab() {
 
   const resetPanel = () => {
     setPanel(false);
+    setEditingId(null);
     setName('');
     setDescOpen(false);
     setDesc('');
     setAudience('all_employees');
     setAck(false);
+    setAudRoles([]);
     setExpiryOn(false);
     setExpiry('');
     setFile(null);
     setFormError(null);
+  };
+
+  /** Open the panel to edit an existing document (metadata + audience). No new
+   * file is uploaded on edit — the attachment field is hidden. */
+  const startEdit = (d: OrgDocument) => {
+    setEditingId(String(d.id));
+    setName(orgDocTitle(d));
+    setDesc(d.description || '');
+    setDescOpen(!!d.description);
+    setAudience((d.audience as OrgDocAudience) || 'all_employees');
+    setAck(orgDocAckRequired(d));
+    setAudRoles(d.audienceRoles ?? []);
+    setExpiryOn(!!(d.expiryDate || d.expiry_date));
+    setExpiry((d.expiryDate || d.expiry_date || '') as string);
+    setFile(null);
+    setFormError(null);
+    setPanel(true);
+  };
+
+  const toggleRole = (roleId: number) => {
+    setAudRoles((prev) =>
+      prev.some((r) => r.roleId === roleId)
+        ? prev.filter((r) => r.roleId !== roleId)
+        : [...prev, { roleId, acknowledgeRequired: false }],
+    );
+  };
+  const setRoleAck = (roleId: number, acknowledgeRequired: boolean) => {
+    setAudRoles((prev) => prev.map((r) => (r.roleId === roleId ? { ...r, acknowledgeRequired } : r)));
   };
 
   const create = async () => {
@@ -285,30 +330,44 @@ export function OrganizationDocumentsTab() {
       setFormError('Document name is required.');
       return;
     }
-    if (!file) {
+    if (!editingId && !file) {
       setFormError('Attach a file for the document.');
       return;
     }
-    const fileError = validateDocumentFile(file);
-    if (fileError) {
-      setFormError(fileError);
-      return;
+    if (file) {
+      const fileError = validateDocumentFile(file);
+      if (fileError) {
+        setFormError(fileError);
+        return;
+      }
     }
     setSaving(true);
     try {
-      await documentsApi.orgCreate({
-        file,
-        title: name.trim(),
-        description: descOpen && desc.trim() ? desc.trim() : undefined,
-        audience,
-        acknowledgementRequired: ack,
-        expiryDate: expiryOn && expiry ? expiry : null,
-        folderId: selectedFolderId ?? undefined,
-      });
+      if (editingId) {
+        await documentsApi.orgUpdate(editingId, {
+          title: name.trim(),
+          description: descOpen ? desc.trim() : '',
+          audience,
+          acknowledgementRequired: ack,
+          expiryDate: expiryOn && expiry ? expiry : null,
+          audienceRoles: audRoles,
+        });
+      } else {
+        await documentsApi.orgCreate({
+          file: file!,
+          title: name.trim(),
+          description: descOpen && desc.trim() ? desc.trim() : undefined,
+          audience,
+          acknowledgementRequired: ack,
+          expiryDate: expiryOn && expiry ? expiry : null,
+          folderId: selectedFolderId ?? undefined,
+          audienceRoles: audRoles.length ? audRoles : undefined,
+        });
+      }
       resetPanel();
       await Promise.all([loadDocs(), loadFolders()]);
     } catch (e) {
-      setFormError(e instanceof DocumentsApiError ? e.message : 'Failed to add document');
+      setFormError(e instanceof DocumentsApiError ? e.message : 'Failed to save document');
     } finally {
       setSaving(false);
     }
@@ -553,7 +612,20 @@ export function OrganizationDocumentsTab() {
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-500">{fmtSize(docSize(d))}</td>
                       <td className="px-5 py-3 text-sm text-gray-500">{fmtDate(docUpdated(d))}</td>
-                      <td className="px-5 py-3 text-sm text-gray-500">—</td>
+                      <td className="px-5 py-3 text-sm">
+                        {isHr ? (
+                          <button
+                            type="button"
+                            onClick={() => startEdit(d)}
+                            className="inline-flex items-center gap-1 text-purple-600 hover:underline"
+                            title="Edit document (audience, acknowledgement, roles)"
+                          >
+                            <PencilIcon className="w-3.5 h-3.5" /> Edit
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -625,7 +697,7 @@ export function OrganizationDocumentsTab() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h3 className="text-base font-bold text-slate-900">Add new organization document</h3>
+              <h3 className="text-base font-bold text-slate-900">{editingId ? 'Edit organization document' : 'Add new organization document'}</h3>
               <button type="button" onClick={resetPanel} aria-label="Close" className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
@@ -653,25 +725,71 @@ export function OrganizationDocumentsTab() {
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} /> Acknowledgement required from employees
               </label>
+
+              {/* Role-based audience: pick which roles see this doc and, per
+                  role, whether they must acknowledge it or only view it. When
+                  any role is ticked it takes precedence over the Audience
+                  dropdown above (which becomes the fallback). */}
+              <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                <p className="text-sm font-medium text-slate-700">Who can access (by role)</p>
+                <p className="text-[11px] text-gray-500">
+                  Tick roles that may see this document, and set each to view-only or must-acknowledge.
+                  Leave all unticked to use the Audience option above.
+                </p>
+                {roles.length === 0 ? (
+                  <p className="text-xs text-gray-400">No roles available.</p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {roles.map((r) => {
+                      const sel = audRoles.find((a) => a.roleId === r.id);
+                      return (
+                        <li key={r.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={!!sel}
+                            onChange={() => toggleRole(r.id)}
+                            aria-label={`Role ${r.name}`}
+                          />
+                          <span className="flex-1 text-slate-700">{r.name}</span>
+                          {sel && (
+                            <select
+                              value={sel.acknowledgeRequired ? 'ack' : 'view'}
+                              onChange={(e) => setRoleAck(r.id, e.target.value === 'ack')}
+                              className={`${SELECT} py-1 text-xs`}
+                              aria-label={`${r.name} access level`}
+                            >
+                              <option value="view">View only</option>
+                              <option value="ack">Must acknowledge</option>
+                            </select>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={expiryOn} onChange={(e) => setExpiryOn(e.target.checked)} /> Set expiration date for the document
               </label>
               {expiryOn && <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={SELECT} aria-label="Expiration date" />}
-              <label className="block text-sm font-medium text-slate-700">
-                Attachment
-                <input
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="mt-1 block w-full text-sm text-slate-600 file:mr-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-purple-600 file:bg-purple-50 file:border file:border-purple-200 file:rounded-lg hover:file:bg-purple-100"
-                />
-              </label>
+              {!editingId && (
+                <label className="block text-sm font-medium text-slate-700">
+                  Attachment
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    className="mt-1 block w-full text-sm text-slate-600 file:mr-3 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-purple-600 file:bg-purple-50 file:border file:border-purple-200 file:rounded-lg hover:file:bg-purple-100"
+                  />
+                </label>
+              )}
               {formError && <p className="text-sm text-red-600">{formError}</p>}
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-2">
               <button type="button" onClick={resetPanel} className={BTN_OUTLINE}>Cancel</button>
               <button type="button" onClick={create} disabled={saving} className={BTN_PRIMARY}>
-                {saving ? 'Adding…' : 'Add'}
+                {saving ? 'Saving…' : editingId ? 'Save changes' : 'Add'}
               </button>
             </div>
           </div>

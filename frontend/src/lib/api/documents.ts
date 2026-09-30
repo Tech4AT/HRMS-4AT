@@ -197,7 +197,19 @@ export const documentsApi = {
     if (input.expiryDate) form.append('expiryDate', input.expiryDate);
     if (input.folderId !== undefined && input.folderId !== null && input.folderId !== '')
       form.append('folderId', String(input.folderId));
+    if (input.audienceRoles) form.append('audienceRoles', JSON.stringify(input.audienceRoles));
     const result = await request<OrgDocument>('', { method: 'POST', body: form });
+    return result as OrgDocument;
+  },
+
+  /** HR edits an organization document's metadata + audience (roles + per-role
+   * view/acknowledge). JSON PATCH; only fields present are changed. */
+  orgUpdate: async (id: string | number, input: OrgDocUpdate): Promise<OrgDocument> => {
+    const result = await request<OrgDocument>(`/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
     return result as OrgDocument;
   },
 
@@ -321,6 +333,16 @@ export interface OrgDocument {
   fileSize?: number | null;
   uploadedAt?: string | null;
   uploaded_at?: string | null;
+  audienceRoles?: AudienceRole[];
+}
+
+/** A role that may see a document, and whether that role must acknowledge it
+ * (vs view-only). Empty list on a document => the coarse `audience` enum
+ * governs instead. */
+export interface AudienceRole {
+  roleId: number;
+  roleName?: string;
+  acknowledgeRequired: boolean;
 }
 
 export function orgDocTitle(d: OrgDocument): string {
@@ -368,4 +390,18 @@ export interface OrgDocCreate {
   entityId?: string;
   /** Organization-documents folder to file this document under. */
   folderId?: string | number | null;
+  /** Role-based audience: which roles may see it + per-role view/acknowledge.
+   * When set (non-empty) it takes precedence over `audience` on the backend. */
+  audienceRoles?: AudienceRole[];
+}
+
+/** Editable fields for an existing org document (all optional; omitted fields
+ * are left unchanged). */
+export interface OrgDocUpdate {
+  title?: string;
+  description?: string;
+  audience?: OrgDocAudience;
+  acknowledgementRequired?: boolean;
+  expiryDate?: string | null;
+  audienceRoles?: AudienceRole[];
 }

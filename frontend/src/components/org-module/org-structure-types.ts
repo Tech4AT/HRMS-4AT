@@ -489,6 +489,12 @@ export function adminDelete(resource: string, id: string): Promise<void> {
   return adminRequest<void>(`${baseFor(resource)}${id}/`, 'DELETE');
 }
 
+/** POST /api/admin/org/<resource>/<id>/add-employees/ — assign existing
+ * employees to this unit (Org Structure > unit > Employees > Add employees). */
+export function adminAddEmployees(resource: string, id: string, employeeIds: string[]): Promise<{ assigned: number }> {
+  return adminRequest<{ assigned: number }>(`${baseFor(resource)}${id}/add-employees/`, 'POST', { employeeIds });
+}
+
 /** Admin list row (camelCase renderer): the fields we merge in. */
 export interface AdminUnitRow {
   id: number | string;

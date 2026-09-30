@@ -124,10 +124,49 @@ def _entity_allowed(user, document) -> bool:
     return False
 
 
+def _user_role_ids(user) -> set:
+    try:
+        return set(user.roles.values_list('id', flat=True))
+    except Exception:
+        return set()
+
+
+def _audience_role_ids(document) -> set:
+    """Role ids this document is scoped to (empty => enum governs instead)."""
+    try:
+        return set(document.audience_roles.values_list('role_id', flat=True))
+    except Exception:
+        return set()
+
+
+def user_must_acknowledge(user, document) -> bool:
+    """Whether THIS user is required to acknowledge the document. Role-based
+    audience wins: a user must acknowledge if any role they hold is listed on
+    the document with acknowledge_required=True. With no role rows, the legacy
+    global `acknowledgement_required` flag applies."""
+    from .models import DocumentAudienceRole
+
+    if _audience_role_ids(document):
+        my_roles = _user_role_ids(user)
+        if not my_roles:
+            return False
+        return DocumentAudienceRole.objects.filter(
+            document=document, role_id__in=my_roles, acknowledge_required=True
+        ).exists()
+    return bool(getattr(document, 'acknowledgement_required', False))
+
+
 def _audience_allows(user, document) -> bool:
     """Per-document audience gate. Runs AFTER _entity_allowed — a document the
     entity rules already deny stays denied; this only narrows further."""
     from .models import Document
+
+    # Role-based audience (Org documents): when a document names specific roles,
+    # that list REPLACES the coarse enum — visible iff the user holds a listed
+    # role. HR Admin is already allowed before this runs (see can_access).
+    role_ids = _audience_role_ids(document)
+    if role_ids:
+        return bool(_user_role_ids(user) & role_ids)
 
     audience = getattr(document, 'audience', None) or Document.AUDIENCE_ALL_EMPLOYEES
     if audience == Document.AUDIENCE_ALL_EMPLOYEES:

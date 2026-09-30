@@ -452,6 +452,7 @@ export function OrgStructureScreen({ initialTab }: { initialTab?: string }) {
                 setDeleting(selected);
               }}
               onParentSaved={handleParentSaved}
+              onChanged={refresh}
             />
           ) : (
             <div className="bg-white border border-slate-200 rounded-xl p-5">

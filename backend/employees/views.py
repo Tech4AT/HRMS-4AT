@@ -462,6 +462,41 @@ class _OrgUnitAdminViewSet(AuditedModelViewSet):
     required_permission = "org.manage"
     model = None
     search_on_code = True
+    # Name of the Employee FK that assigns a person to THIS kind of unit (e.g.
+    # "department"). None => this unit has no employee-membership relation, so
+    # the add-employees action is unavailable (405).
+    employee_fk = None
+
+    @action(detail=True, methods=["post"], url_path="add-employees")
+    def add_employees(self, request, pk=None):
+        """Assign existing employees to this unit (Org Structure > unit >
+        Employees > Add employees). Body: {"employeeIds": [id, ...]}. Sets each
+        employee's unit FK to this unit; audited. HR only (org.manage)."""
+        if not self.employee_fk:
+            return Response(
+                {"success": False, "error": {"code": "NOT_SUPPORTED", "message": "This unit does not have employee members."}},
+                status=405,
+            )
+        unit = self.get_object()
+        raw = request.data.get("employeeIds") or request.data.get("employee_ids") or []
+        if not isinstance(raw, list) or not raw:
+            return Response(
+                {"success": False, "error": {"code": "VALIDATION_ERROR", "message": "employeeIds must be a non-empty list."}},
+                status=400,
+            )
+        employees = list(Employee.objects.filter(pk__in=raw))
+        with transaction.atomic():
+            for emp in employees:
+                setattr(emp, self.employee_fk, unit)
+                emp.save(update_fields=[self.employee_fk])
+        write_audit(
+            request.user,
+            "Employee.reassigned",
+            getattr(self, "audit_entity_type", None) or self.model.__name__,
+            unit.pk,
+            {"field": self.employee_fk, "employeeIds": [e.pk for e in employees]},
+        )
+        return Response({"success": True, "data": {"assigned": len(employees)}})
 
     def get_queryset(self):
         queryset = self.model.objects.annotate(employee_count=Count("employees", distinct=True))
@@ -490,6 +525,7 @@ class DepartmentAdminViewSet(_OrgUnitAdminViewSet):
     model = Department
     serializer_class = DepartmentAdminSerializer
     audit_entity_type = "Department"
+    employee_fk = "department"
 
     def get_queryset(self):
         return (

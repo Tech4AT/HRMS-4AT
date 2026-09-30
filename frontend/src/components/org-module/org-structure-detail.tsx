@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { OrgEmployee } from '@/lib/api/org';
 import {
+  adminAddEmployees,
   adminCreate,
   adminDelete,
   adminListFiltered,
@@ -570,6 +571,7 @@ export function DetailPanel({
   onEdit,
   onDelete,
   onParentSaved,
+  onChanged,
 }: {
   kind: UnitKind;
   item: UnitItem;
@@ -580,6 +582,8 @@ export function DetailPanel({
   onEdit: () => void;
   onDelete: () => void;
   onParentSaved: (childId: string, parentId: string | null) => void;
+  /** Reload the directory after employees are (re)assigned to this unit. */
+  onChanged?: () => void;
 }) {
   const cfg: TypeConfig = configFor(kind);
   const members = useMemo(
@@ -587,10 +591,46 @@ export function DetailPanel({
     [employees, cfg.employeeKey, item.id, allUnits],
   );
   const [tab, setTab] = useState<PanelTab>('summary');
+  // Add-employees picker (HR only; units that actually have an employee FK).
+  const [addOpen, setAddOpen] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [assignSearch, setAssignSearch] = useState('');
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const canAddEmployees = canManage && !!cfg.employeeKey && !!cfg.adminResource;
 
   useEffect(() => {
     setTab('summary');
+    setAddOpen(false);
+    setPicked(new Set());
+    setAssignSearch('');
+    setAssignError(null);
   }, [kind, item.id]);
+
+  const memberIds = useMemo(() => new Set(members.map((m) => String(m.id))), [members]);
+  const assignable = useMemo(() => {
+    const q = assignSearch.trim().toLowerCase();
+    return employees
+      .filter((e) => !memberIds.has(String(e.id)))
+      .filter((e) => !q || fullName(e).toLowerCase().includes(q));
+  }, [employees, memberIds, assignSearch]);
+
+  const assignEmployees = async () => {
+    if (picked.size === 0 || !cfg.adminResource) return;
+    setAssigning(true);
+    setAssignError(null);
+    try {
+      await adminAddEmployees(cfg.adminResource, item.id, [...picked]);
+      setAddOpen(false);
+      setPicked(new Set());
+      setAssignSearch('');
+      onChanged?.();
+    } catch (e) {
+      setAssignError(e instanceof OrgAdminError ? e.message : 'Failed to add employees. Try again.');
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   const children = useMemo(
     () => (cfg.hasParent ? allUnits.filter((u) => u.parentId === item.id) : []),
@@ -708,7 +748,88 @@ export function DetailPanel({
           </div>
         ) : null}
 
-        {tab === 'employees' ? <EmployeeTable rows={members} /> : null}
+        {tab === 'employees' ? (
+          <div className="space-y-3">
+            {canAddEmployees && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setAddOpen((v) => !v)}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                >
+                  + Add employees
+                </button>
+              </div>
+            )}
+            {addOpen && canAddEmployees && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-700">Add employees to {item.name}</p>
+                  <span className="text-xs text-slate-500">{picked.size} selected</span>
+                </div>
+                <input
+                  value={assignSearch}
+                  onChange={(e) => setAssignSearch(e.target.value)}
+                  placeholder="Search employees by name"
+                  className="block w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
+                  aria-label="Search employees"
+                />
+                <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                  {assignable.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-slate-400">
+                      {employees.length === 0 ? 'Directory unavailable.' : 'No employees to add.'}
+                    </p>
+                  ) : (
+                    assignable.map((e) => {
+                      const id = String(e.id);
+                      return (
+                        <label key={id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={picked.has(id)}
+                            onChange={() =>
+                              setPicked((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(id)) next.delete(id);
+                                else next.add(id);
+                                return next;
+                              })
+                            }
+                          />
+                          <span className="text-slate-800">{fullName(e)}</span>
+                          <span className="ml-auto text-xs text-slate-400">{e.employee_code || ''}</span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                {assignError && <p className="text-sm text-red-600">{assignError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddOpen(false);
+                      setPicked(new Set());
+                      setAssignError(null);
+                    }}
+                    className="px-3 py-1.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={assignEmployees}
+                    disabled={assigning || picked.size === 0}
+                    className="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {assigning ? 'Adding…' : `Add ${picked.size || ''}`.trim()}
+                  </button>
+                </div>
+              </div>
+            )}
+            <EmployeeTable rows={members} />
+          </div>
+        ) : null}
 
         {tab === 'settings' && cfg.hasParent ? (
           <DepartmentSettings

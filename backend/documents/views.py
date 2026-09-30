@@ -15,9 +15,59 @@ from core.scope import (
     visible_employee_ids,
 )
 
-from .access import ENTITY_PERMISSIONS, _subject_employee_id, can_access, can_access_entity
-from .models import Document, DocumentAccessLog, DocumentAcknowledgement
+from .access import ENTITY_PERMISSIONS, _subject_employee_id, can_access, can_access_entity, user_must_acknowledge
+from .models import Document, DocumentAccessLog, DocumentAcknowledgement, DocumentAudienceRole
 from .serializers import DocumentSerializer
+
+
+def _parse_audience_roles(raw):
+    """Accept either a JSON list (JSON body) or a JSON-encoded string
+    (multipart upload). Returns None when absent so callers can distinguish
+    "not provided" from "cleared" ([])."""
+    if raw is None or raw == '':
+        return None
+    if isinstance(raw, str):
+        import json
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+    return raw
+
+
+def _set_audience_roles(document, raw):
+    """Replace a document's role-based audience from a request payload. `raw`
+    is a list of {roleId, acknowledgeRequired}; unknown/invalid role ids are
+    skipped. Passing None leaves existing rows untouched; passing [] clears."""
+    if raw is None:
+        return
+    from accounts.models import Role
+
+    document.audience_roles.all().delete()
+    seen = set()
+    rows = []
+    for item in raw if isinstance(raw, list) else []:
+        # CamelCase parsers snake-case JSON keys (roleId -> role_id); a JSON
+        # string sent via multipart keeps camelCase. Accept both.
+        rid = item.get('roleId', item.get('role_id')) if isinstance(item, dict) else item
+        try:
+            role_id = int(rid)
+        except (TypeError, ValueError):
+            continue
+        if role_id in seen or not Role.objects.filter(pk=role_id).exists():
+            continue
+        seen.add(role_id)
+        ack = _to_bool(item.get('acknowledgeRequired', item.get('acknowledge_required', False))) if isinstance(item, dict) else False
+        rows.append(DocumentAudienceRole(document=document, role_id=role_id, acknowledge_required=ack))
+    if rows:
+        DocumentAudienceRole.objects.bulk_create(rows)
+
+
+def _audience_roles_json(document):
+    return [
+        {'roleId': r.role_id, 'roleName': r.role.name, 'acknowledgeRequired': r.acknowledge_required}
+        for r in document.audience_roles.select_related('role').all()
+    ]
 
 # Deliberately conservative — these are HR-collected identity/employment
 # documents, not a general file share. Extend if a real need shows up, never
@@ -256,6 +306,8 @@ class DocumentListUploadView(APIView):
             title=(request.data.get('title') or '').strip(),
             description=request.data.get('description') or '',
         )
+        # Role-based audience (Org documents): pick roles + per-role view/ack.
+        _set_audience_roles(doc, _parse_audience_roles(request.data.get('audienceRoles', request.data.get('audience_roles'))))
         write_audit(request.user, 'document.upload', doc.entity_type, doc.entity_id, {'documentId': str(doc.id), 'filename': doc.original_filename})
         return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data}, status=201)
 
@@ -271,6 +323,40 @@ class DocumentDetailView(APIView):
         if not can_access(request.user, doc):
             return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
         return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data})
+
+    def patch(self, request, pk):
+        """Edit an organization document's metadata + audience (HR Admin only):
+        title, description, expiry, the coarse audience enum, the global
+        acknowledgement flag, and the role-based audience (roles + per-role
+        view/acknowledge). Only organization documents are editable this way."""
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if doc.entity_type != 'organization_document':
+            return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'Only organization documents are editable.'}}, status=400)
+        if not is_hr_admin(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+
+        data = request.data
+        if 'title' in data:
+            doc.title = (data.get('title') or '').strip()
+        if 'description' in data:
+            doc.description = data.get('description') or ''
+        if 'expiryDate' in data or 'expiry_date' in data:
+            doc.expiry_date = data.get('expiryDate') or data.get('expiry_date') or None
+        if 'audience' in data:
+            audience = data.get('audience') or Document.AUDIENCE_ALL_EMPLOYEES
+            if audience not in dict(Document.AUDIENCE_CHOICES):
+                return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': f'Unknown audience "{audience}".'}}, status=400)
+            doc.audience = audience
+        if 'acknowledgementRequired' in data or 'acknowledgement_required' in data:
+            doc.acknowledgement_required = _to_bool(data.get('acknowledgementRequired', data.get('acknowledgement_required', False)))
+        doc.save()
+        if 'audienceRoles' in data or 'audience_roles' in data:
+            _set_audience_roles(doc, _parse_audience_roles(data.get('audienceRoles', data.get('audience_roles'))))
+        write_audit(request.user, 'document.update', doc.entity_type, doc.entity_id, {'documentId': str(doc.id)})
+        return Response({'success': True, 'data': _org_doc_dict(doc)})
 
     def delete(self, request, pk):
         """The "edit" a document supports is delete-and-re-upload — a
@@ -381,7 +467,7 @@ class DocumentAcknowledgeView(APIView):
             return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
         if not can_access(request.user, doc):
             return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
-        if not doc.acknowledgement_required:
+        if not user_must_acknowledge(request.user, doc):
             return Response(
                 {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'This document does not require acknowledgement.'}},
                 status=400,
@@ -476,9 +562,19 @@ class PendingAcknowledgementView(APIView):
         acked_ids = set(
             DocumentAcknowledgement.objects.filter(employee=employee).values_list('document_id', flat=True)
         )
+        # A doc needs this user's acknowledgement via the legacy global flag OR
+        # a role-based rule (audience_roles.acknowledge_required). Union both,
+        # then confirm per-user with user_must_acknowledge + can_access.
+        from django.db.models import Q
+
+        candidates = (
+            Document.objects.filter(Q(acknowledgement_required=True) | Q(audience_roles__acknowledge_required=True))
+            .exclude(id__in=acked_ids)
+            .distinct()
+        )
         pending = [
-            d for d in Document.objects.filter(acknowledgement_required=True).exclude(id__in=acked_ids)
-            if can_access(request.user, d)
+            d for d in candidates
+            if can_access(request.user, d) and user_must_acknowledge(request.user, d)
         ]
         data = [
             {
@@ -510,6 +606,7 @@ def _org_doc_dict(d):
         'description': d.description or '',
         'audience': d.audience,
         'acknowledgementRequired': d.acknowledgement_required,
+        'audienceRoles': _audience_roles_json(d),
         'expiryDate': d.expiry_date.isoformat() if d.expiry_date else None,
         'size': d.size,
         'folderId': d.folder_id,

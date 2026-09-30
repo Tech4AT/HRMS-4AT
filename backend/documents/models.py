@@ -195,3 +195,26 @@ class DocumentAcknowledgement(models.Model):
 
     def __str__(self):
         return f"{self.document_id} acknowledged by {self.employee_id}"
+
+
+class DocumentAudienceRole(models.Model):
+    """Role-based audience for a document (Org > Organization Documents): which
+    RBAC roles may see a document, and per-role whether they must acknowledge
+    it or only view it. When any rows exist for a document they REPLACE the
+    coarse `Document.audience` enum in access.py — a doc is then visible to a
+    user holding any listed role (HR Admin still sees everything). Empty => the
+    legacy enum still governs, so existing docs are unchanged."""
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="audience_roles")
+    role = models.ForeignKey("accounts.Role", on_delete=models.CASCADE, related_name="+")
+    # False => this role may only VIEW the document; True => must acknowledge.
+    acknowledge_required = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["document", "role"], name="unique_document_audience_role")
+        ]
+        indexes = [models.Index(fields=["document", "role"])]
+
+    def __str__(self):
+        return f"{self.document_id} -> role {self.role_id} (ack={self.acknowledge_required})"
