@@ -29,6 +29,7 @@ import {
   SearchIcon,
   IdCardIcon,
   ClipboardCheckIcon,
+  PackageIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -209,7 +210,7 @@ const navItems: NavItem[] = [
   {
     // Employee self-service: org directory and chart, visible to all roles.
     id: 'directory',
-    label: 'Directory',
+    label: 'Organization',
     icon: GlobeIcon,
     href: '/org',
     roles: ['employee'],
@@ -218,6 +219,10 @@ const navItems: NavItem[] = [
       { label: 'Organisation Chart', href: '/org?tab=chart' },
     ],
   },
+  // Assets: a standalone section for anyone who manages the inventory (IT / HR).
+  // Permission-gated only (no role bucket), so IT sees it regardless of archetype;
+  // ordinary employees hold assets.read at SELF only, not write, so it stays hidden.
+  { id: 'assets', label: 'Assets', icon: PackageIcon, href: '/assets', requireAnyPermission: ['assets.write'] },
   {
     id: 'payroll',
     label: 'Payroll',
