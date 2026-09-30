@@ -222,7 +222,7 @@ const navItems: NavItem[] = [
   // Assets: a standalone section for anyone who manages the inventory (IT / HR).
   // Permission-gated only (no role bucket), so IT sees it regardless of archetype;
   // ordinary employees hold assets.read at SELF only, not write, so it stays hidden.
-  { id: 'assets', label: 'Assets', icon: PackageIcon, href: '/assets', requireAnyPermission: ['assets.write'] },
+  { id: 'assets', label: 'Assets', icon: PackageIcon, href: '/assets', roles: ['admin', 'employee', 'superadmin'], requireAnyPermission: ['assets.write'] },
   {
     id: 'payroll',
     label: 'Payroll',
