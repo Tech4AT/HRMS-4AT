@@ -1,6 +1,18 @@
 from django.urls import re_path
 from rest_framework.routers import DefaultRouter
 
+from employees.profile_views import (
+    ProfileAboutView,
+    ProfileAddressView,
+    ProfileEmergencyContactDetailView,
+    ProfileEmergencyContactsView,
+    ProfileNameView,
+    ProfilePersonalView,
+    ProfileSkillDetailView,
+    ProfileSkillsView,
+    ProfileTimelineView,
+    ProfileView,
+)
 from employees.views import (
     BusinessUnitAdminViewSet,
     BusinessUnitViewSet,
@@ -61,8 +73,40 @@ router.register("org/levels", LevelAdminViewSet, basename="org-level")
 router.register("org/grades", GradeAdminViewSet, basename="org-grade")
 router.register("org/positions", PositionAdminViewSet, basename="org-position")
 
+# Employee 360 profile. `<pk>` is an employee id or `me`. Registered ahead of the
+# router so `employees/<pk>/profile/…` is never mistaken for a viewset action.
+_PROFILE = r"^employees/(?P<pk>me|\d+)/profile"
+
 urlpatterns = [
     # The frontend calls this without a trailing slash.
     re_path(r"^ess/profile/?$", EssProfileView.as_view(), name="ess-profile"),
+    re_path(rf"{_PROFILE}/?$", ProfileView.as_view(), name="employee-profile"),
+    re_path(
+        rf"{_PROFILE}/timeline/?$", ProfileTimelineView.as_view(), name="employee-profile-timeline"
+    ),
+    re_path(rf"{_PROFILE}/about/?$", ProfileAboutView.as_view(), name="employee-profile-about"),
+    re_path(rf"{_PROFILE}/skills/?$", ProfileSkillsView.as_view(), name="employee-profile-skills"),
+    re_path(
+        rf"{_PROFILE}/skills/(?P<skill_id>\d+)/?$",
+        ProfileSkillDetailView.as_view(),
+        name="employee-profile-skill",
+    ),
+    re_path(rf"{_PROFILE}/name/?$", ProfileNameView.as_view(), name="employee-profile-name"),
+    re_path(
+        rf"{_PROFILE}/personal/?$", ProfilePersonalView.as_view(), name="employee-profile-personal"
+    ),
+    re_path(
+        rf"{_PROFILE}/address/?$", ProfileAddressView.as_view(), name="employee-profile-address"
+    ),
+    re_path(
+        rf"{_PROFILE}/emergency-contacts/?$",
+        ProfileEmergencyContactsView.as_view(),
+        name="employee-profile-emergency-contacts",
+    ),
+    re_path(
+        rf"{_PROFILE}/emergency-contacts/(?P<contact_id>\d+)/?$",
+        ProfileEmergencyContactDetailView.as_view(),
+        name="employee-profile-emergency-contact",
+    ),
     *router.urls,
 ]

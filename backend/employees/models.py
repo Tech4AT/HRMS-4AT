@@ -275,6 +275,87 @@ class Employee(models.Model):
         super().save(*args, **kwargs)
 
 
+class EmployeeAddress(models.Model):
+    """Current and permanent address for one employee. Personal data: readable
+    with employees.personal.read (or by the person themselves), editable with
+    employees.personal.write (or by the person themselves). When
+    `permanent_same_as_current` is set the permanent_* columns are ignored and
+    cleared, so the two can never disagree."""
+
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="address")
+
+    current_line1 = models.CharField(max_length=200, blank=True, default="")
+    current_line2 = models.CharField(max_length=200, blank=True, default="")
+    current_city = models.CharField(max_length=100, blank=True, default="")
+    current_state = models.CharField(max_length=100, blank=True, default="")
+    current_postal_code = models.CharField(max_length=12, blank=True, default="")
+    current_country = models.CharField(max_length=100, blank=True, default="India")
+
+    permanent_same_as_current = models.BooleanField(default=True)
+    permanent_line1 = models.CharField(max_length=200, blank=True, default="")
+    permanent_line2 = models.CharField(max_length=200, blank=True, default="")
+    permanent_city = models.CharField(max_length=100, blank=True, default="")
+    permanent_state = models.CharField(max_length=100, blank=True, default="")
+    permanent_postal_code = models.CharField(max_length=12, blank=True, default="")
+    permanent_country = models.CharField(max_length=100, blank=True, default="")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Address for {self.employee_id}"
+
+
+class EmergencyContact(models.Model):
+    """Someone to call if something happens to the employee. Personal data,
+    same access rules as EmployeeAddress."""
+
+    employee = models.ForeignKey(
+        Employee, on_delete=models.CASCADE, related_name="emergency_contacts"
+    )
+    name = models.CharField(max_length=150)
+    relationship = models.CharField(max_length=60)
+    phone = models.CharField(max_length=30)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.name} ({self.relationship}) for {self.employee_id}"
+
+
+class EmployeeAbout(models.Model):
+    """The three free-text answers on a profile's About card. Self-expression,
+    not sensitive: anyone who can open the profile reads it; the person (or HR)
+    edits it. Blank means "not answered"."""
+
+    employee = models.OneToOneField(Employee, on_delete=models.CASCADE, related_name="about")
+    about = models.TextField(blank=True, default="")
+    love_about_job = models.TextField(blank=True, default="")
+    interests = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"About for {self.employee_id}"
+
+
+class EmployeeSkill(models.Model):
+    """One skill a person lists on their profile. Names are unique per person,
+    ignoring case (enforced in the serializer, since Django has no portable
+    case-insensitive unique constraint on every database we run)."""
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="skills")
+    name = models.CharField(max_length=60)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self):
+        return f"{self.name} ({self.employee_id})"
+
+
 def _mask(value: str) -> str:
     """All but the last 4 characters replaced with '•' — same convention
     for account numbers and identity document numbers."""
