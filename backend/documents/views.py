@@ -2,6 +2,7 @@ import mimetypes
 import os
 
 from django.http import FileResponse, Http404
+from django.utils import timezone
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -14,7 +15,7 @@ from core.scope import (
     visible_employee_ids,
 )
 
-from .access import ENTITY_PERMISSIONS, can_access, can_access_entity
+from .access import ENTITY_PERMISSIONS, _subject_employee_id, can_access, can_access_entity
 from .models import Document, DocumentAccessLog, DocumentAcknowledgement
 from .serializers import DocumentSerializer
 
@@ -660,3 +661,163 @@ class DocumentRemindAcknowledgementView(APIView):
                    f'Please review and acknowledge "{title}".')
             notified += 1
         return Response({'success': True, 'data': {'notified': notified}})
+
+
+# ---------------------------------------------------------------------------
+# Employee Documents verification workflow (Org > Employee Documents).
+
+
+_VERIFIABLE_ENTITY_TYPES = frozenset(t for t in ENTITY_PERMISSIONS if t != 'organization_document')
+"""Employee-subject document types the verification workflow covers: the
+generic employee_document bucket, the onboarding file types, and the
+employee-owned career buckets. Organization-wide policy docs are excluded —
+they carry the acknowledgement workflow instead."""
+
+
+def _can_verify(user, doc) -> bool:
+    """HR Admin may verify anything. Otherwise the caller needs oversight of
+    the document's subject employee (employees.read scope covering them, and
+    oversight beyond self) — the same manager notion the acknowledgement
+    status view uses. Plain employees (even the document's owner) get 403:
+    verification is an HR/manager action, never self-service."""
+    if is_hr_admin(user):
+        return True
+    subject_id = _subject_employee_id(doc)
+    if subject_id is None:
+        return False
+    caller_id = getattr(getattr(user, 'employee', None), 'id', None)
+    scope_ids = set(visible_employee_ids(user, 'employees.read'))
+    if not scope_ids or scope_ids <= {caller_id}:
+        return False
+    return subject_id in scope_ids
+
+
+def _owner_user(doc):
+    emp = getattr(doc, 'employee', None)
+    return getattr(emp, 'user', None)
+
+
+class PendingVerificationView(APIView):
+    """`GET /documents/pending-verification` — employee-submitted documents
+    awaiting verification, scope-filtered: HR/managers see pending docs for
+    employees in their scope (`can_access`, audience-aware); a plain employee
+    sees only their own pending docs."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        pending = Document.objects.filter(
+            verification_status=Document.VERIFICATION_PENDING,
+            entity_type__in=_VERIFIABLE_ENTITY_TYPES,
+        ).select_related('uploaded_by', 'verified_by')
+        visible = [d for d in pending if can_access(request.user, d)]
+        return Response({'success': True, 'data': DocumentSerializer(visible, many=True, context={'request': request}).data})
+
+
+class ExpiringDocumentsView(APIView):
+    """`GET /documents/expiring?days=30` — documents with an expiry_date on or
+    before today + N days (overdue ones included — they need action most),
+    scope-filtered via `can_access` like the list view."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            days = int(request.query_params.get('days', '30'))
+        except (TypeError, ValueError):
+            days = None
+        if days is None or days < 0:
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'days must be a non-negative integer.'}},
+                status=400,
+            )
+        cutoff = timezone.localdate() + timezone.timedelta(days=days)
+        expiring = Document.objects.filter(expiry_date__isnull=False, expiry_date__lte=cutoff).select_related(
+            'uploaded_by', 'verified_by'
+        )
+        visible = [d for d in expiring if can_access(request.user, d)]
+        return Response({'success': True, 'data': DocumentSerializer(visible, many=True, context={'request': request}).data})
+
+
+class DocumentVerifyView(APIView):
+    """`POST /documents/{id}/verify` — mark verified (HR/manager in scope).
+    Clears any earlier rejection reason; records who verified and when."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if not _can_verify(request.user, doc):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        doc.verification_status = Document.VERIFICATION_VERIFIED
+        doc.verified_by = request.user
+        doc.verified_at = timezone.now()
+        doc.rejection_reason = ''
+        doc.save()
+        write_audit(request.user, 'document.verify', doc.entity_type, doc.entity_id, {'documentId': str(doc.id)})
+        return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data})
+
+
+class DocumentRejectView(APIView):
+    """`POST /documents/{id}/reject {reason}` — mark rejected (HR/manager in
+    scope). `reason` is required and stored; the document's owner is notified
+    so they know what to fix and resubmit."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from notifications.service import notify
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if not _can_verify(request.user, doc):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'reason is required.'}},
+                status=400,
+            )
+        doc.verification_status = Document.VERIFICATION_REJECTED
+        doc.verified_by = request.user
+        doc.verified_at = timezone.now()
+        doc.rejection_reason = reason
+        doc.save()
+        owner = _owner_user(doc)
+        if owner is not None:
+            title = doc.original_filename or doc.original_name or 'your document'
+            notify(owner, 'document.rejected', 'A document was rejected',
+                   f'"{title}" was rejected: {reason}')
+        write_audit(request.user, 'document.reject', doc.entity_type, doc.entity_id, {'documentId': str(doc.id)})
+        return Response({'success': True, 'data': DocumentSerializer(doc, context={'request': request}).data})
+
+
+class DocumentNudgeView(APIView):
+    """`POST /documents/{id}/nudge` — HR/manager in scope nudges the document's
+    owner to act (the pending-on-employee poke). Returns {notified: 1}."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        from notifications.service import notify
+        try:
+            doc = Document.objects.get(pk=pk)
+        except Document.DoesNotExist:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
+        if not _can_verify(request.user, doc):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        owner = _owner_user(doc)
+        if owner is None:
+            return Response(
+                {'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'This document has no owner to notify.'}},
+                status=400,
+            )
+        title = doc.original_filename or doc.original_name or 'a document'
+        notify(owner, 'document.nudge', 'Action required on a document',
+               f'Please review "{title}" — HR is waiting on it.')
+        write_audit(request.user, 'document.nudge', doc.entity_type, doc.entity_id, {'documentId': str(doc.id)})
+        return Response({'success': True, 'data': {'notified': 1}})

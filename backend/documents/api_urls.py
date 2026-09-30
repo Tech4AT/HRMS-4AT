@@ -7,12 +7,17 @@ from .views import (
     DocumentDownloadView,
     DocumentFileView,
     DocumentListUploadView,
+    DocumentNudgeView,
+    DocumentRejectView,
     DocumentRemindAcknowledgementView,
+    DocumentVerifyView,
+    ExpiringDocumentsView,
     FolderDetailView,
     FolderDocumentsView,
     FolderListCreateView,
     MyDocumentsView,
     PendingAcknowledgementView,
+    PendingVerificationView,
 )
 
 # NOTE: the object routes use <uuid:pk> — Document's primary key is a UUID
@@ -25,6 +30,12 @@ urlpatterns = [
     # Static path — must be declared before the <uuid:pk> routes. (The uuid
     # converter would not match this word anyway, but keep intent explicit.)
     path("documents/pending-acknowledgement", PendingAcknowledgementView.as_view(), name="document-pending-ack"),
+    # Verification workflow (Org > Employee Documents).
+    path("documents/pending-verification", PendingVerificationView.as_view(), name="document-pending-verification"),
+    path("documents/expiring", ExpiringDocumentsView.as_view(), name="document-expiring"),
+    path("documents/<uuid:pk>/verify", DocumentVerifyView.as_view(), name="document-verify"),
+    path("documents/<uuid:pk>/reject", DocumentRejectView.as_view(), name="document-reject"),
+    path("documents/<uuid:pk>/nudge", DocumentNudgeView.as_view(), name="document-nudge"),
     # Organization Documents folders (Org > Organization Documents folder rail).
     path("documents/folders", FolderListCreateView.as_view(), name="document-folders"),
     path("documents/folders/<int:pk>", FolderDetailView.as_view(), name="document-folder-detail"),

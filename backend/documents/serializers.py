@@ -19,12 +19,16 @@ class DocumentSerializer(serializers.ModelSerializer):
     file_size = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()
     uploaded_by = serializers.SerializerMethodField()
+    verified_by = serializers.SerializerMethodField()
+    verified_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
             'id', 'entity_type', 'entity_id', 'employee_id', 'original_filename',
             'content_type', 'size', 'audience', 'acknowledgement_required',
+            'verification_status', 'verified_by', 'verified_by_name',
+            'verified_at', 'rejection_reason',
             'url', 'view_url', 'download_url', 'uploaded_at', 'expiry_date', 'is_expired',
             'file_size', 'uploaded_by', 'uploaded_by_name',
         ]
@@ -66,3 +70,12 @@ class DocumentSerializer(serializers.ModelSerializer):
 
     def get_uploaded_by(self, obj):
         return obj.uploaded_by_id
+
+    def get_verified_by(self, obj):
+        return obj.verified_by_id
+
+    def get_verified_by_name(self, obj):
+        if not obj.verified_by:
+            return None
+        name = f'{obj.verified_by.first_name} {obj.verified_by.last_name}'.strip()
+        return name or obj.verified_by.email
