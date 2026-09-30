@@ -233,11 +233,22 @@ function SubNav({ items }: { items: NavChild[] }) {
   });
   const currentTab = searchParams.get('tab');
 
+  const matchesPath = (c: (typeof parsed)[number]) =>
+    pathname === c.path || pathname.startsWith(`${c.path}/`);
+  // Only the deepest matching path wins, so a parent tab (e.g. Dashboard at
+  // /org-module) doesn't stay underlined on a child route (/org-module/org-structure).
+  const bestPathLen = Math.max(0, ...parsed.filter(matchesPath).map((c) => c.path.length));
+
   const isActive = (c: (typeof parsed)[number]) => {
-    if (pathname !== c.path && !pathname.startsWith(`${c.path}/`)) return false;
-    if (c.tab == null) return true;
-    const tabsHere = parsed.filter((x) => x.path === c.path && x.tab != null);
-    return c.tab === (currentTab ?? tabsHere[0]?.tab);
+    if (c.path.length !== bestPathLen || !matchesPath(c)) return false;
+    const siblings = parsed.filter((x) => x.path === c.path);
+    const tabbed = siblings.filter((x) => x.tab != null);
+    // Default to the first tab only when every sibling is tabbed; when one
+    // sibling has no tab (the plain page), that one is the default view.
+    const hasNullSibling = siblings.some((x) => x.tab == null);
+    const effectiveTab = currentTab ?? (hasNullSibling ? null : tabbed[0]?.tab ?? null);
+    if (c.tab == null) return effectiveTab == null || !tabbed.some((x) => x.tab === effectiveTab);
+    return c.tab === effectiveTab;
   };
 
   return (

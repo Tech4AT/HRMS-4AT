@@ -96,3 +96,71 @@ export async function assignAsset(id: number, assignedTo: number | null): Promis
     body: JSON.stringify({ assignedTo }),
   });
 }
+
+/** Editable fields of an asset — the write shape for create/update. */
+export interface AssetInput {
+  assetTag: string;
+  category?: string;
+  brand?: string;
+  serial?: string;
+  processor?: string;
+  ram?: string;
+  dateOfAllotment?: string | null;
+  dateOfRecover?: string | null;
+  hasBag?: boolean;
+  previouslyUsed?: string;
+  assignedTo?: number | null;
+}
+
+/** Create a new asset. Requires assets.write. */
+export async function createAsset(input: AssetInput): Promise<Asset> {
+  return request<Asset>('/api/assets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Update an asset's fields. Requires assets.write. */
+export async function updateAsset(id: number, input: Partial<AssetInput>): Promise<Asset> {
+  return request<Asset>(`/api/assets/${id}/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Delete an asset. Requires assets.write. */
+export async function deleteAsset(id: number): Promise<void> {
+  const res = await fetch(`/api/assets/${id}/`, { method: 'DELETE', credentials: 'include' });
+  if (!res.ok && res.status !== 204) {
+    const json = (await res.json().catch(() => null)) as { detail?: string } | null;
+    throw new AssetsApiError(json?.detail || `Request failed (${res.status})`, res.status);
+  }
+}
+
+export interface AssetImportSummary {
+  created: number;
+  updated: number;
+  unassigned: number;
+  unmatched: number;
+  total: number;
+  assigned: number;
+}
+
+/** Bulk-upsert assets from a CSV/xlsx file. Sent base64 in JSON because the
+ *  API proxy forwards JSON, not multipart. Requires full assets.write. */
+export async function importAssets(file: File): Promise<AssetImportSummary> {
+  const contentBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new AssetsApiError('Could not read the file', 0));
+    // result is a data: URL — the backend strips the prefix.
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+  return request<AssetImportSummary>('/api/assets/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename: file.name, contentBase64 }),
+  });
+}

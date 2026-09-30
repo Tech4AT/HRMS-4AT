@@ -571,6 +571,7 @@ class DesignationAdminViewSet(_OrgUnitAdminViewSet):
     model = JobTitle
     serializer_class = DesignationAdminSerializer
     audit_entity_type = "JobTitle"
+    employee_fk = "designation"
 
     def get_queryset(self):
         return super().get_queryset().select_related("job_family", "level")

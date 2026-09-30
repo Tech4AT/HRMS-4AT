@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from accounts.factories import UserFactory
 from accounts.models import Role
 from employees.factories import EmployeeFactory
-from employees.models import Department, Team
+from employees.models import Department, JobTitle, Team
 
 pytestmark = pytest.mark.django_db
 
@@ -48,6 +48,19 @@ def test_hr_adds_employees_to_team_m2m():
     assert hr.post(f"/api/v1/org/teams/{t1.pk}/add-employees/", {"employeeIds": [emp.pk]}, format="json").status_code == 200
     assert hr.post(f"/api/v1/org/teams/{t2.pk}/add-employees/", {"employeeIds": [emp.pk]}, format="json").status_code == 200
     assert set(emp.teams.values_list("pk", flat=True)) == {t1.pk, t2.pk}
+
+
+def test_hr_adds_employees_to_job_title():
+    # Job title (designation) is a single-valued FK, reassigned like department.
+    hr = _hr()
+    jt = JobTitle.objects.create(name="Staff Engineer", code="JT-STAFF")
+    e1, e2 = EmployeeFactory(), EmployeeFactory()
+
+    res = hr.post(f"/api/v1/org/job-titles/{jt.pk}/add-employees/", {"employeeIds": [e1.pk, e2.pk]}, format="json")
+    assert res.status_code == 200, res.content
+    assert res.json()["data"]["assigned"] == 2
+    e1.refresh_from_db(); e2.refresh_from_db()
+    assert e1.designation_id == jt.pk and e2.designation_id == jt.pk
 
 
 def test_non_hr_cannot_add_employees():

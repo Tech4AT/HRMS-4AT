@@ -146,5 +146,34 @@ def test_write_gated_to_it_and_hr(csv_path):
     assert response.status_code == 403
 
 
+def test_upload_import_endpoint_upserts_and_is_gated():
+    import base64
+
+    it_user = UserFactory(role=_it_admin_role())
+    EmployeeFactory(user=it_user)
+    payload = {
+        "filename": "assets.csv",
+        "contentBase64": base64.b64encode(CSV.encode()).decode(),
+    }
+    res = _client_for(it_user).post(f"{URL}import/", payload, format="json")
+    assert res.status_code == 200, res.content[:200]
+    assert res.data["created"] == 3 and Asset.objects.count() == 3
+    # Re-upload is idempotent (upsert by tag), not duplicated.
+    res2 = _client_for(it_user).post(f"{URL}import/", payload, format="json")
+    assert res2.data["updated"] == 3 and Asset.objects.count() == 3
+
+    # A plain data: URL prefix is tolerated.
+    prefixed = {"filename": "a.csv", "contentBase64": "data:text/csv;base64," + payload["contentBase64"]}
+    assert _client_for(it_user).post(f"{URL}import/", prefixed, format="json").status_code == 200
+
+    # Garbage decodes to a 400, not a 500.
+    assert _client_for(it_user).post(f"{URL}import/", {"contentBase64": "!!!"}, format="json").status_code == 400
+
+    # Non-write user is blocked.
+    plain = UserFactory()
+    EmployeeFactory(user=plain)
+    assert _client_for(plain).post(f"{URL}import/", payload, format="json").status_code == 403
+
+
 def test_unauthenticated_is_blocked():
     assert APIClient().get(URL).status_code in (401, 403)

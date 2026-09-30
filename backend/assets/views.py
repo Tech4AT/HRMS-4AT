@@ -1,7 +1,13 @@
+import base64
+import binascii
+
 from django.shortcuts import get_object_or_404
-from rest_framework import filters
+from rest_framework import filters, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from audit.mixins import AuditedModelViewSet
+from assets.importer import import_asset_rows, rows_from_upload
 from assets.models import Asset
 from assets.serializers import AssetSerializer
 from core.enums import ScopeTier
@@ -32,6 +38,8 @@ class AssetViewSet(AuditedModelViewSet):
     permission_classes = [ScopedEmployeePermission]
     required_permission = "assets.read"
     write_permission = "assets.write"
+    # Custom actions must map their own code (strict mode won't fall back).
+    action_permissions = {"import_file": "assets.write"}
     pagination_class = ContractPageNumberPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["asset_tag", "brand", "serial", "processor"]
@@ -74,3 +82,38 @@ class AssetViewSet(AuditedModelViewSet):
             return obj
         self.check_object_permissions(self.request, obj)
         return obj
+
+    @action(detail=False, methods=["post"], url_path="import")
+    def import_file(self, request):
+        """Bulk-upsert assets from an uploaded CSV/xlsx (idempotent by asset
+        tag). Whole-fleet write, so ALL-tier assets.write only. The file is
+        sent base64-encoded in JSON (`{filename, contentBase64}`) because the
+        API proxy forwards JSON, not multipart."""
+        if not _is_all_scope(request.user, self.write_permission):
+            self.permission_denied(request, message="Importing assets needs full assets.write access.")
+
+        # The camel-case parser snake_cases JSON keys, so accept both spellings.
+        filename = (request.data.get("filename") or "upload.csv").strip()
+        encoded = (
+            request.data.get("contentBase64")
+            or request.data.get("content_base64")
+            or request.data.get("content_base_64")
+            or ""
+        )
+        if "," in encoded and encoded.strip().startswith("data:"):
+            encoded = encoded.split(",", 1)[1]  # strip a data: URL prefix
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            return Response({"detail": "Could not decode the uploaded file."}, status=status.HTTP_400_BAD_REQUEST)
+        if not raw:
+            return Response({"detail": "The uploaded file is empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            rows = rows_from_upload(filename, raw)
+            summary = import_asset_rows(rows)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"detail": "Could not read the file — check it is the asset tracker export."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(summary, status=status.HTTP_200_OK)
