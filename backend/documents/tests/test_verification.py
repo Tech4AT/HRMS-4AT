@@ -146,15 +146,16 @@ def test_expiring_days_filter_and_scope():
     hr, u1, u2, e1, e2 = _setup()
     today = timezone.localdate()
     soon = _emp_doc(e1, u1, expiry_date=today + timedelta(days=10))
-    later = _emp_doc(e2, u2, expiry_date=today + timedelta(days=60))
+    later_own = _emp_doc(e1, u1, expiry_date=today + timedelta(days=60))  # u1's own, for the days boundary
+    later = _emp_doc(e2, u2, expiry_date=today + timedelta(days=60))       # e2's, for the scope check below
     no_expiry = _emp_doc(e1, u1)
 
     c1 = APIClient(); c1.force_authenticate(u1)
     assert c1.get("/api/v1/documents/expiring?days=nope").status_code == 400
     default_ids = _ids(c1, "/api/v1/documents/expiring")  # days=30
     assert str(soon.id) in default_ids and str(no_expiry.id) not in default_ids
-    assert str(later.id) not in default_ids  # beyond 30 days
-    assert str(later.id) in _ids(c1, "/api/v1/documents/expiring?days=90")
+    assert str(later_own.id) not in default_ids  # beyond 30 days
+    assert str(later_own.id) in _ids(c1, "/api/v1/documents/expiring?days=90")  # widening the window includes it
 
     # Scope: e1 must not see e2's expiring doc even with a wide window.
     chr = APIClient(); chr.force_authenticate(hr)
