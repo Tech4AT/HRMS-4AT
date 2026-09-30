@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import LeaveBalance, LeaveRequest, LeaveRequestStatus, LeaveType
+from .models import LeaveBalance, LeaveRequest, LeaveRequestStatus, LeaveType, LeaveTypeStatus
 
 
 def _display_name(employee) -> str:
@@ -15,6 +15,15 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
     # org_calendar's serializers, missed here despite fixing it on every other
     # id in this same file (leave_type_id, employee_id, ...).
     id = serializers.SerializerMethodField()
+    # Active/inactive. Writable so an admin can retire a type that has history
+    # instead of deleting it; a new type always starts active.
+    status = serializers.ChoiceField(choices=LeaveTypeStatus.choices, required=False)
+    # How many balances/requests reference this type - what decides between
+    # "delete" and "deactivate" in the UI. Only sent to people who manage leave
+    # settings (`show_usage` in the serializer context): to everyone else it
+    # would leak how many colleagues hold a balance.
+    balance_count = serializers.SerializerMethodField()
+    request_count = serializers.SerializerMethodField()
 
     class Meta:
         model = LeaveType
@@ -29,11 +38,25 @@ class LeaveTypeSerializer(serializers.ModelSerializer):
             "is_paid",
             "description",
             "status",
+            "balance_count",
+            "request_count",
         ]
-        read_only_fields = ["id", "code", "status"]
+        read_only_fields = ["id", "code", "balance_count", "request_count"]
 
     def get_id(self, obj) -> str:
         return str(obj.pk)
+
+    def _usage(self, obj, annotation, related):
+        if not self.context.get("show_usage"):
+            return None
+        annotated = getattr(obj, annotation, None)
+        return annotated if annotated is not None else getattr(obj, related).count()
+
+    def get_balance_count(self, obj):
+        return self._usage(obj, "balance_count_annotation", "balances")
+
+    def get_request_count(self, obj):
+        return self._usage(obj, "request_count_annotation", "requests")
 
 
 class LeaveBalanceSerializer(serializers.ModelSerializer):

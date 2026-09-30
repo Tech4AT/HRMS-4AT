@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { leaveApi, LeaveApiError, type LeaveType, type LeaveTypeInput } from '@/lib/api/leave';
 import { LeaveBalancesPanel } from '@/components/attendance/LeaveBalancesPanel';
-import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { LeaveTypeDialog, usageOf, type LeaveTypeDialogKind } from '@/components/attendance/LeaveTypeDialogs';
 
 const CATEGORY_OPTIONS = ['Regular', 'Compensatory offs', 'Unpaid', 'Incident based'];
 
@@ -170,20 +170,30 @@ export function LeaveSettingsPanel() {
   const [editDraft, setEditDraft] = useState<LeaveTypeInput>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<{ kind: LeaveTypeDialogKind; typeId: string } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const refresh = () => {
-    setLoading(true);
-    setLoadError(null);
+  // `silent` reloads the list without flashing the loading state, for refreshing
+  // usage counts under an open dialog.
+  const refresh = (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setLoadError(null);
+    }
     leaveApi
       .getTypes()
       .then(setTypes)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load leave types'))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!silent) setLoadError(e instanceof Error ? e.message : 'Failed to load leave types');
+      })
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
-  useEffect(refresh, []);
+  useEffect(() => refresh(), []);
 
   const filtered = types.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()));
 
@@ -236,20 +246,36 @@ export function LeaveSettingsPanel() {
     }
   };
 
-  const deleteType = async (id: string) => {
-    setDeletingId(id);
+  // Delete what is unused; for a type with history explain why it can't be
+  // deleted and offer to deactivate it instead.
+  const openDelete = (t: LeaveType) => {
+    setNotice(null);
+    setActionError(null);
+    setDialog({ kind: usageOf(t).inUse ? 'blocked' : 'delete', typeId: t.id });
+  };
+
+  const openDeactivate = (t: LeaveType) => {
+    setNotice(null);
+    setActionError(null);
+    setDialog({ kind: 'deactivate', typeId: t.id });
+  };
+
+  const reactivate = async (t: LeaveType) => {
+    setNotice(null);
+    setActionError(null);
+    setBusyId(t.id);
     try {
-      await leaveApi.deleteType(id);
-      refresh();
-    } catch {
-      // Leave the row in place — the list stays accurate either way on refresh.
+      await leaveApi.setTypeStatus(t.id, 'active');
+      setNotice(`Reactivated “${t.name}”. It can be used for new leave requests again.`);
+      refresh(true);
+    } catch (e) {
+      setActionError(e instanceof LeaveApiError ? e.message : 'Could not reactivate this leave type');
     } finally {
-      setDeletingId(null);
-      setConfirmDeleteId(null);
+      setBusyId(null);
     }
   };
 
-  const confirmDeleteType = types.find((t) => t.id === confirmDeleteId);
+  const dialogType = dialog ? types.find((t) => t.id === dialog.typeId) : undefined;
 
   return (
     <div className="space-y-4">
@@ -273,7 +299,7 @@ export function LeaveSettingsPanel() {
       </div>
 
       {view === 'balances' ? (
-        <LeaveBalancesPanel types={types} />
+        <LeaveBalancesPanel types={types.filter((t) => t.status === 'active')} />
       ) : (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="flex flex-wrap items-start justify-between gap-3 p-5">
@@ -301,6 +327,17 @@ export function LeaveSettingsPanel() {
             />
           </div>
 
+          {notice ? (
+            <p role="status" className="mx-5 mb-4 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              {notice}
+            </p>
+          ) : null}
+          {actionError ? (
+            <p role="alert" className="mx-5 mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {actionError}
+            </p>
+          ) : null}
+
           {loading ? (
             <p className="px-5 pb-5 text-sm text-slate-500">Loading leave types…</p>
           ) : loadError ? (
@@ -310,7 +347,7 @@ export function LeaveSettingsPanel() {
               <table className="w-full">
                 <thead className="bg-slate-50 border-y border-slate-200">
                   <tr>
-                    {['Name', 'Type', 'Is Paid', 'Actions'].map((h) => (
+                    {['Name', 'Type', 'Is Paid', 'Status', 'In use', 'Actions'].map((h) => (
                       <th key={h} className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase whitespace-nowrap">
                         {h}
                       </th>
@@ -324,16 +361,45 @@ export function LeaveSettingsPanel() {
                       <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{t.category}</td>
                       <td className="px-5 py-4 text-sm text-slate-700 whitespace-nowrap">{t.is_paid ? 'Paid' : 'Unpaid'}</td>
                       <td className="px-5 py-4 text-sm whitespace-nowrap">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
+                            t.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                          }`}
+                        >
+                          {t.status === 'active' ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-xs text-slate-500 whitespace-nowrap">
+                        {usageOf(t).inUse
+                          ? `${usageOf(t).balances} balance${usageOf(t).balances === 1 ? '' : 's'} · ${usageOf(t).requests} request${usageOf(t).requests === 1 ? '' : 's'}`
+                          : 'Not used'}
+                      </td>
+                      <td className="px-5 py-4 text-sm whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           <button onClick={() => startEdit(t)} className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                             Edit
                           </button>
+                          {t.status === 'active' ? (
+                            <button
+                              onClick={() => openDeactivate(t)}
+                              className="text-xs font-semibold text-amber-600 hover:text-amber-700"
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => reactivate(t)}
+                              disabled={busyId === t.id}
+                              className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
+                            >
+                              {busyId === t.id ? 'Reactivating…' : 'Reactivate'}
+                            </button>
+                          )}
                           <button
-                            onClick={() => setConfirmDeleteId(t.id)}
-                            disabled={deletingId === t.id}
-                            className="text-xs font-semibold text-red-500 hover:text-red-600 disabled:opacity-50"
+                            onClick={() => openDelete(t)}
+                            className="text-xs font-semibold text-red-500 hover:text-red-600"
                           >
-                            {deletingId === t.id ? 'Deleting…' : 'Delete'}
+                            Delete
                           </button>
                         </div>
                       </td>
@@ -341,7 +407,7 @@ export function LeaveSettingsPanel() {
                   ))}
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-5 py-10 text-center text-sm text-slate-400">
+                      <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-400">
                         {types.length === 0 ? 'No leave types yet.' : 'No leave types match your search.'}
                       </td>
                     </tr>
@@ -375,13 +441,22 @@ export function LeaveSettingsPanel() {
             />
           ) : null}
 
-          {confirmDeleteType ? (
-            <ConfirmDialog
-              title="Delete leave type?"
-              message={`This will permanently delete "${confirmDeleteType.name}". Existing leave requests of this type keep their history.`}
-              confirming={deletingId === confirmDeleteType.id}
-              onConfirm={() => deleteType(confirmDeleteType.id)}
-              onCancel={() => setConfirmDeleteId(null)}
+          {dialog && dialogType ? (
+            <LeaveTypeDialog
+              key={`${dialog.kind}-${dialog.typeId}`}
+              kind={dialog.kind}
+              type={dialogType}
+              onSwitch={(kind) => {
+                // Usage may have changed since the list loaded; recount before explaining.
+                if (kind === 'blocked') refresh(true);
+                setDialog({ kind, typeId: dialog.typeId });
+              }}
+              onClose={() => setDialog(null)}
+              onDone={(message) => {
+                setDialog(null);
+                setNotice(message);
+                refresh(true);
+              }}
             />
           ) : null}
         </div>

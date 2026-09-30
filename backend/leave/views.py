@@ -30,6 +30,7 @@ their own UX is owned elsewhere, but this module's `/leave` prefix has to keep
 serving them from the same underlying data, not a second holiday list)."""
 
 from django.db import transaction
+from django.db.models import Count
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import mixins, viewsets
@@ -43,7 +44,7 @@ from audit.service import write_audit
 from core.api import FrontendEnvelopeMixin
 from core.exceptions import Conflict
 from core.permissions import HasPermissionCode, ScopedEmployeePermission
-from core.scope import resolve_employee_scope
+from core.scope import resolve_employee_scope, user_has_permission
 from org_calendar.models import CalendarEntry, CalendarEntryType
 
 from . import conflicts
@@ -116,6 +117,19 @@ class EnvelopeMixin(FrontendEnvelopeMixin):
 
 
 class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
+    """Leave types. The rule for history: delete unused configuration,
+    deactivate used configuration.
+
+    - DELETE removes a type only when nothing references it (no balances, no
+      requests); otherwise 409 with the counts, and the caller should
+      deactivate instead.
+    - Setting `status` to `inactive` retires a type: it can no longer be picked
+      for new requests, while its balances, requests and history stay intact.
+      Setting it back to `active` reactivates it.
+    - POST /leave/types/<id>/purge is the deliberate exception that erases the
+      type together with every balance and request that uses it. It needs the
+      type's exact name in the body, and is audited with the counts."""
+
     permission_classes = [HasPermissionCode]
     required_permission = "attendance.settings.manage"
     queryset = LeaveType.objects.all()
@@ -128,9 +142,56 @@ class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return super().get_permissions()
 
+    def _can_manage(self):
+        return user_has_permission(self.request.user, self.required_permission)
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.action in ("list", "retrieve") and self._can_manage():
+            # distinct: two joins would otherwise multiply each other's rows.
+            queryset = queryset.annotate(
+                balance_count_annotation=Count("balances", distinct=True),
+                request_count_annotation=Count("requests", distinct=True),
+            )
+        return queryset
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        user = self.request.user if self.request else None
+        context["show_usage"] = bool(user and user.is_authenticated and self._can_manage())
+        return context
+
     def update(self, request, *args, **kwargs):
         kwargs["partial"] = True
+        if request.data.get("status") == LeaveTypeStatus.INACTIVE:
+            self._refuse_if_policy_uses(self.get_object())
         return super().update(request, *args, **kwargs)
+
+    @staticmethod
+    def _policy_uses(instance) -> list[str]:
+        """Which attendance-policy settings still point at this type."""
+        from attendance.models import PolicySettings
+
+        policy = PolicySettings.objects.first()
+        if policy is None:
+            return []
+        uses = []
+        if policy.penalty_leave_type_id == instance.pk:
+            uses.append("the No Attendance penalty")
+        if policy.comp_off_leave_type_id == instance.pk:
+            uses.append("compensatory-off credits")
+        return uses
+
+    def _refuse_if_policy_uses(self, instance):
+        uses = self._policy_uses(instance)
+        if uses:
+            # A deactivated type drops out of everyone's balance list, so days
+            # the policy keeps crediting or debiting there would vanish from view.
+            raise Conflict(
+                f"'{instance.name}' can't be deactivated while it is used for "
+                f"{' and '.join(uses)} in the attendance policy. Choose a different "
+                "leave type there first."
+            )
 
     def perform_destroy(self, instance):
         # Same pattern as employees/views.py's reference-table deletes: check
@@ -144,6 +205,42 @@ class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
                 "type instead of deleting it."
             )
         super().perform_destroy(instance)
+
+    @action(detail=True, methods=["post"], url_path="purge")
+    def purge(self, request, pk=None):
+        """Permanently erase a leave type AND every balance and request that
+        uses it. Irreversible, so the exact type name must be sent back."""
+        instance = self.get_object()
+        if (request.data.get("confirm_name") or "") != instance.name:
+            raise ValidationError(
+                {"confirm_name": f"Type the leave type's exact name, '{instance.name}', to confirm."}
+            )
+        with transaction.atomic():
+            type_pk, name = instance.pk, instance.name
+            requests_qs = instance.requests.all()
+            # Approval rows raised for these leaves would otherwise linger in
+            # approvers' queues pointing at leave that no longer exists.
+            approval_ids = list(
+                requests_qs.exclude(approval_request__isnull=True).values_list(
+                    "approval_request_id", flat=True
+                )
+            )
+            counts = {
+                "balances": instance.balances.count(),
+                "requests": requests_qs.count(),
+                "approvals": len(approval_ids),
+            }
+            requests_qs.delete()
+            instance.balances.all().delete()
+            if approval_ids:
+                from approvals.models import Request as ApprovalRequest
+
+                ApprovalRequest.objects.filter(pk__in=approval_ids).delete()
+            # PolicySettings and penalisation records only SET_NULL back to the
+            # type/balance, so they survive with the link cleared.
+            instance.delete()
+            self._write_audit("purged", type_pk, {"name": name, **counts})
+        return Response({"success": True, "data": {"id": str(type_pk), **counts}})
 
 
 class LeaveBalanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
