@@ -130,3 +130,27 @@ same data.
 
 **Do-not-break:** preserve the 146-employee DB; all migrations additive; commit author
 Nandini Velamuri <krishnanandiniv@gmail.com>, no AI mentions.
+
+---
+
+## F. Employee 360 (built)
+
+One profile component (`components/employee360/Employee360.tsx`) serves `/profile`
+(the signed-in user, `employeeId="me"`) and `/org/[id]` (anyone else). Both routes are
+thin wrappers; what is visible/editable comes from the `access` flags the backend returns.
+
+Backend: `/api/v1/employees/<id|me>/profile/` (+ `name/`, `personal/`, `address/`,
+`emergency-contacts/[<id>/]`). Access is decided in one place, `employees/profile_access.py`:
+
+| Section | Read | Edit |
+|---|---|---|
+| Job info | self, or `employees.read` in scope | not here (HR uses the directory drawer, `employees.write`) |
+| Personal fields, address, emergency contacts | self (`ess.profile.read`) or `employees.personal.read` in scope | self (`ess.profile.write`) or `employees.personal.write` in scope |
+| Legal name | with job info | self (`ess.profile.write`) or `employees.write` in scope; updates `User` and the `Employee` mirror together (`employees/services.py`) |
+
+Managers see a report's job info only, no personal data. Audit entries list changed field
+names, never personal values (a name change records before/after).
+
+Not built yet: bank, identity and education. They are submitted and verified through the
+onboarding documents flow; the profile shows a placeholder until that is connected.
+Display name and profile photo were dropped from scope.
