@@ -169,6 +169,7 @@ def test_response_shape_matches_frontend_contract(starter_roles, logged_in_clien
         "grade_id",
         "employment_type",
         "work_mode",
+        "team_ids",
         "date_of_joining",
         "date_of_exit",
     }
