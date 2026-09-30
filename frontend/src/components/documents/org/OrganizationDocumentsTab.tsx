@@ -11,6 +11,8 @@ import {
   orgDocTitle,
   validateDocumentFile,
   type AcknowledgementStatus,
+  type DocumentFolder,
+  type FolderVisibility,
   type OrgDocAudience,
   type OrgDocument,
 } from '@/lib/api/documents';
@@ -61,6 +63,15 @@ export function OrganizationDocumentsTab() {
   const [remindNote, setRemindNote] = useState<string | null>(null);
   const [reminding, setReminding] = useState(false);
 
+  // Folder rail: null selection = "All documents" (orgList); otherwise the
+  // selected folder's documents. Folders load once; docs reload on selection.
+  const [folders, setFolders] = useState<DocumentFolder[] | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | number | null>(null);
+  const [folderForm, setFolderForm] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderVis, setNewFolderVis] = useState<FolderVisibility>('public');
+  const [folderBusy, setFolderBusy] = useState(false);
+
   const [panel, setPanel] = useState(false);
   const [name, setName] = useState('');
   const [descOpen, setDescOpen] = useState(false);
@@ -76,12 +87,38 @@ export function OrganizationDocumentsTab() {
   const loadDocs = useCallback(async () => {
     try {
       setLoadError(null);
-      setDocs(await documentsApi.orgList());
+      setDocs(
+        selectedFolderId === null
+          ? await documentsApi.orgList()
+          : await documentsApi.folderDocuments(selectedFolderId),
+      );
     } catch (e) {
       setDocs([]);
       setLoadError(e instanceof DocumentsApiError ? e.message : 'Failed to load documents');
     }
+  }, [selectedFolderId]);
+
+  const loadFolders = useCallback(async () => {
+    try {
+      setFolders(await documentsApi.folders());
+    } catch {
+      setFolders([]);
+    }
   }, []);
+
+  const createFolder = async () => {
+    if (!newFolderName.trim()) return;
+    setFolderBusy(true);
+    try {
+      await documentsApi.folderCreate({ name: newFolderName.trim(), visibility: newFolderVis });
+      setNewFolderName('');
+      setNewFolderVis('public');
+      setFolderForm(false);
+      await loadFolders();
+    } finally {
+      setFolderBusy(false);
+    }
+  };
 
   const loadStatuses = useCallback(async (list: OrgDocument[]) => {
     const targets = list.filter(orgDocAckRequired);
@@ -102,6 +139,10 @@ export function OrganizationDocumentsTab() {
   }, []);
 
   useEffect(() => {
+    void loadFolders();
+  }, [loadFolders]);
+
+  useEffect(() => {
     void loadDocs();
   }, [loadDocs]);
 
@@ -109,16 +150,30 @@ export function OrganizationDocumentsTab() {
     if (docs) void loadStatuses(docs);
   }, [docs, loadStatuses]);
 
-  /** "Remind pending acknowledgements" refreshes every ack-required
-   * document's scope-based status from the status endpoint. */
+  /** "Remind pending acknowledgements" notifies every in-scope employee still
+   * pending on each ack-required document in the current view, then refreshes
+   * the status counts. */
   const remind = async () => {
     if (!docs) return;
     setReminding(true);
     setRemindNote(null);
     try {
+      const targets = docs.filter(orgDocAckRequired);
+      let notified = 0;
+      for (const d of targets) {
+        try {
+          const r = await documentsApi.remindAcknowledgement(d.id);
+          notified += r.notified;
+        } catch {
+          /* skip a doc that can't be reminded (e.g. no longer ack-required) */
+        }
+      }
       await loadStatuses(docs);
-      const pending = Object.values(statuses).reduce((n, s) => n + s.pending, 0);
-      setRemindNote(`Status refreshed${pending > 0 ? ` — ${pending} acknowledgement${pending === 1 ? '' : 's'} still pending` : ' — nothing pending'}.`);
+      setRemindNote(
+        targets.length === 0
+          ? 'No acknowledgement-required documents here.'
+          : `Reminder sent to ${notified} employee${notified === 1 ? '' : 's'}.`,
+      );
     } finally {
       setReminding(false);
     }
@@ -161,9 +216,10 @@ export function OrganizationDocumentsTab() {
         audience,
         acknowledgementRequired: ack,
         expiryDate: expiryOn && expiry ? expiry : null,
+        folderId: selectedFolderId ?? undefined,
       });
       resetPanel();
-      await loadDocs();
+      await Promise.all([loadDocs(), loadFolders()]);
     } catch (e) {
       setFormError(e instanceof DocumentsApiError ? e.message : 'Failed to add document');
     } finally {
@@ -173,13 +229,16 @@ export function OrganizationDocumentsTab() {
 
   const openStatus = openStatusId !== null ? docs?.find((d) => String(d.id) === String(openStatusId)) ?? null : null;
   const openStatusData = openStatusId !== null ? statuses[String(openStatusId)] : undefined;
+  const selectedFolder = folders?.find((f) => String(f.id) === String(selectedFolderId)) ?? null;
+  const publicFolders = (folders ?? []).filter((f) => f.visibility === 'public');
+  const privateFolders = (folders ?? []).filter((f) => f.visibility === 'private');
 
   return (
     <div className="space-y-4">
       <SectionHeader
         title="Organization documents"
         subtitle="Documents in these folders can be uploaded/filled by admin. All these documents are available for viewing by all employees."
-        actions={isHr ? <button type="button" disabled className={BTN_PRIMARY}>+ Add document folder</button> : undefined}
+        actions={isHr ? <button type="button" onClick={() => setFolderForm((v) => !v)} className={BTN_PRIMARY}>+ Add document folder</button> : undefined}
       />
 
       {/* Employee-side acknowledgement inbox (all roles). */}
@@ -187,11 +246,58 @@ export function OrganizationDocumentsTab() {
 
       <div className="flex gap-4 items-start">
         <aside className="w-64 shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-3 space-y-3">
-          <input className={`${SELECT} w-full`} placeholder="Search folders" aria-label="Search folders" />
-          {['Public folders', 'Private folders'].map((h) => (
+          {isHr && folderForm && (
+            <div className="rounded-lg border border-gray-200 p-2 space-y-2">
+              <input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                className={`${SELECT} w-full`}
+                placeholder="Folder name"
+                aria-label="New folder name"
+              />
+              <select value={newFolderVis} onChange={(e) => setNewFolderVis(e.target.value as FolderVisibility)} className={`${SELECT} w-full`} aria-label="Folder visibility">
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+              </select>
+              <div className="flex gap-2">
+                <button type="button" onClick={createFolder} disabled={folderBusy || !newFolderName.trim()} className={`${BTN_PRIMARY} flex-1`}>
+                  {folderBusy ? 'Adding…' : 'Add folder'}
+                </button>
+                <button type="button" onClick={() => setFolderForm(false)} className={BTN_OUTLINE}>Cancel</button>
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelectedFolderId(null)}
+            className={`w-full text-left px-2 py-1.5 rounded-lg text-sm ${selectedFolderId === null ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-slate-700 hover:bg-gray-50'}`}
+          >
+            All documents
+          </button>
+          {[
+            { h: 'Public folders', list: publicFolders },
+            { h: 'Private folders', list: privateFolders },
+          ].map(({ h, list }) => (
             <div key={h}>
               <p className="px-1 text-[11px] font-semibold text-gray-400 uppercase">{h}</p>
-              <p className="px-1 py-2 text-xs text-gray-400">No folders</p>
+              {folders === null ? (
+                <p className="px-1 py-2 text-xs text-gray-400">Loading…</p>
+              ) : list.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-gray-400">No folders</p>
+              ) : (
+                list.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setSelectedFolderId(f.id)}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${String(selectedFolderId) === String(f.id) ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-slate-700 hover:bg-gray-50'}`}
+                  >
+                    <FolderIcon className="w-4 h-4 shrink-0 text-gray-400" />
+                    <span className="truncate mr-auto">{f.name}</span>
+                    <span className="text-[11px] text-gray-400">{f.documentCount ?? 0}</span>
+                  </button>
+                ))
+              )}
             </div>
           ))}
         </aside>
@@ -200,7 +306,7 @@ export function OrganizationDocumentsTab() {
             <span className="w-9 h-9 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
               <FolderIcon className="w-4 h-4" />
             </span>
-            <h3 className="text-base font-bold text-slate-900 mr-auto">No folder selected</h3>
+            <h3 className="text-base font-bold text-slate-900 mr-auto">{selectedFolder ? selectedFolder.name : 'All documents'}</h3>
             {isHr && (
               <>
                 <button type="button" onClick={remind} disabled={reminding || !docs} className={BTN_OUTLINE}>

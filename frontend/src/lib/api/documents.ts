@@ -195,6 +195,8 @@ export const documentsApi = {
     form.append('audience', input.audience);
     form.append('acknowledgementRequired', String(input.acknowledgementRequired));
     if (input.expiryDate) form.append('expiryDate', input.expiryDate);
+    if (input.folderId !== undefined && input.folderId !== null && input.folderId !== '')
+      form.append('folderId', String(input.folderId));
     const result = await request<OrgDocument>('', { method: 'POST', body: form });
     return result as OrgDocument;
   },
@@ -213,7 +215,41 @@ export const documentsApi = {
   /** Docs the current employee must still acknowledge. */
   pendingAcknowledgement: () =>
     request<PendingAckDoc[]>('/pending-acknowledgement').then((v) => v ?? []),
+
+  /* ---------------- B: organization-document folders ---------------- */
+
+  /** Folders visible to the caller (public to all; private to HR). */
+  folders: () => request<DocumentFolder[]>('/folders').then((v) => v ?? []),
+
+  /** HR creates a folder. */
+  folderCreate: (input: { name: string; visibility: FolderVisibility; description?: string }) =>
+    request<DocumentFolder>('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+
+  /** HR renames / re-scopes / re-describes a folder. */
+  folderUpdate: (id: string | number, input: Partial<{ name: string; visibility: FolderVisibility; description: string }>) =>
+    request<DocumentFolder>(`/folders/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+
+  /** HR deletes a folder (its documents are detached, not deleted). */
+  folderDelete: (id: string | number) => request<void>(`/folders/${id}`, { method: 'DELETE' }),
+
+  /** Organization documents in a folder (audience-filtered by the backend). */
+  folderDocuments: (id: string | number) =>
+    request<OrgDocument[]>(`/folders/${id}/documents`).then((v) => v ?? []),
+
+  /** HR sends a reminder to every in-scope employee still pending on a doc. */
+  remindAcknowledgement: (id: string | number) =>
+    request<{ notified: number }>(`/${id}/remind-acknowledgement`, { method: 'POST' }).then((v) => v ?? { notified: 0 }),
 };
+
+export type FolderVisibility = 'public' | 'private';
+
+export interface DocumentFolder {
+  id: string | number;
+  name: string;
+  visibility: FolderVisibility;
+  description?: string | null;
+  documentCount?: number;
+}
 
 /** Per-document audience/visibility (Parcel A). Further restricts — never
  * widens past the scope engine. HR Admin always sees all. */
@@ -291,4 +327,6 @@ export interface OrgDocCreate {
   expiryDate?: string | null;
   /** Backend entity bucket; defaults to 'org'. */
   entityId?: string;
+  /** Organization-documents folder to file this document under. */
+  folderId?: string | number | null;
 }
