@@ -494,9 +494,11 @@ class PendingAcknowledgementView(APIView):
 
 
 def _can_manage_folders(user) -> bool:
-    """Who may create/edit/delete folders and see PRIVATE folders: HR Admin, or
-    a holder of documents.write (the same bar that gates uploading org docs)."""
-    return is_hr_admin(user) or user_has_permission(user, 'documents.write')
+    """Who may create/edit/delete folders and see PRIVATE folders. Folders are
+    org-wide admin objects, so this is HR Admin only — NOT documents.write,
+    which every employee holds at SELF scope (user_has_permission ignores tier)
+    and would wrongly let any employee administer folders."""
+    return is_hr_admin(user)
 
 
 def _org_doc_dict(d):
