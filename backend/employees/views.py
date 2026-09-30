@@ -451,28 +451,21 @@ class PositionViewSet(_EmployeeReadOnlyReferenceViewSet):
 # ---- managing the organisation structure (org.manage) ----
 
 
-class _OrgUnitAdminViewSet(AuditedModelViewSet):
-    """Create, rename, deactivate and delete one kind of organisation unit.
-    Every change is audited. A unit that people still belong to cannot be
-    deleted (a clear 409 that suggests deactivating instead); a deactivated unit
-    disappears from the pickers but keeps its history. ?search= filters by name
-    (or code)."""
+class _AddEmployeesMixin:
+    """Adds a POST <unit>/<id>/add-employees/ action that assigns existing
+    employees to a unit. A unit declares how it holds members:
+    - employee_fk: name of a single-valued Employee FK (e.g. "department") —
+      reassigns each employee (they leave their old unit of this kind).
+    - employee_m2m: name of an Employee M2M (e.g. "teams") — adds membership
+      without removing others.
+    Neither set => the unit has no membership relation (405)."""
 
-    permission_classes = [HasPermissionCode]
-    required_permission = "org.manage"
-    model = None
-    search_on_code = True
-    # Name of the Employee FK that assigns a person to THIS kind of unit (e.g.
-    # "department"). None => this unit has no employee-membership relation, so
-    # the add-employees action is unavailable (405).
     employee_fk = None
+    employee_m2m = None
 
     @action(detail=True, methods=["post"], url_path="add-employees")
     def add_employees(self, request, pk=None):
-        """Assign existing employees to this unit (Org Structure > unit >
-        Employees > Add employees). Body: {"employeeIds": [id, ...]}. Sets each
-        employee's unit FK to this unit; audited. HR only (org.manage)."""
-        if not self.employee_fk:
+        if not (self.employee_fk or self.employee_m2m):
             return Response(
                 {"success": False, "error": {"code": "NOT_SUPPORTED", "message": "This unit does not have employee members."}},
                 status=405,
@@ -486,17 +479,34 @@ class _OrgUnitAdminViewSet(AuditedModelViewSet):
             )
         employees = list(Employee.objects.filter(pk__in=raw))
         with transaction.atomic():
-            for emp in employees:
-                setattr(emp, self.employee_fk, unit)
-                emp.save(update_fields=[self.employee_fk])
+            if self.employee_fk:
+                for emp in employees:
+                    setattr(emp, self.employee_fk, unit)
+                    emp.save(update_fields=[self.employee_fk])
+            else:
+                for emp in employees:
+                    getattr(emp, self.employee_m2m).add(unit)
         write_audit(
             request.user,
             "Employee.reassigned",
             getattr(self, "audit_entity_type", None) or self.model.__name__,
             unit.pk,
-            {"field": self.employee_fk, "employeeIds": [e.pk for e in employees]},
+            {"field": self.employee_fk or self.employee_m2m, "employeeIds": [e.pk for e in employees]},
         )
         return Response({"success": True, "data": {"assigned": len(employees)}})
+
+
+class _OrgUnitAdminViewSet(_AddEmployeesMixin, AuditedModelViewSet):
+    """Create, rename, deactivate and delete one kind of organisation unit.
+    Every change is audited. A unit that people still belong to cannot be
+    deleted (a clear 409 that suggests deactivating instead); a deactivated unit
+    disappears from the pickers but keeps its history. ?search= filters by name
+    (or code)."""
+
+    permission_classes = [HasPermissionCode]
+    required_permission = "org.manage"
+    model = None
+    search_on_code = True
 
     def get_queryset(self):
         queryset = self.model.objects.annotate(employee_count=Count("employees", distinct=True))
@@ -630,14 +640,17 @@ class CostCenterAdminViewSet(_OrgUnitAdminViewSet):
         return super().get_queryset().select_related("owner__user", "legal_entity")
 
 
-class TeamAdminViewSet(AuditedModelViewSet):
+class TeamAdminViewSet(_AddEmployeesMixin, AuditedModelViewSet):
     """Teams are referenced by nothing, so there is nothing to block on —
-    every change is still audited. ?search= filters by team name."""
+    every change is still audited. ?search= filters by team name. Employees
+    join a team via the Employee.teams M2M (add-employees action)."""
 
     permission_classes = [HasPermissionCode]
     required_permission = "org.manage"
     serializer_class = TeamAdminSerializer
     audit_entity_type = "Team"
+    employee_m2m = "teams"
+    model = Team
 
     def get_queryset(self):
         queryset = Team.objects.select_related("department", "lead__user")

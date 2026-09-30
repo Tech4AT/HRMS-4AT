@@ -22,6 +22,8 @@ export interface OrgEmployee {
   legal_entity_id: string | null;
   business_unit_id: string | null;
   cost_center_id: string | null;
+  /** Team membership (M2M) — the ids of the teams this employee belongs to. */
+  team_ids?: string[];
   status: string;
   employment_type: string;
   date_of_joining: string | null;

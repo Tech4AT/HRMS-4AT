@@ -37,14 +37,17 @@ def test_hr_adds_employees_to_department():
     assert hr.post(f"/api/v1/org/departments/{dept.pk}/add-employees/", {"employeeIds": []}, format="json").status_code == 400
 
 
-def test_teams_have_no_add_employees():
-    # Teams have no employee-membership relation, so no add-employees endpoint
-    # exists on TeamAdminViewSet (404). The UI hides the button for teams too.
+def test_hr_adds_employees_to_team_m2m():
+    # Team membership is M2M: an employee can be on several teams, and adding
+    # is additive (existing memberships are kept).
     hr = _hr()
     dept = Department.objects.create(name="D", code="D1")
-    team = Team.objects.create(name="Squad", department=dept)
-    res = hr.post(f"/api/v1/org/teams/{team.pk}/add-employees/", {"employeeIds": [EmployeeFactory().pk]}, format="json")
-    assert res.status_code in (404, 405)
+    t1, t2 = Team.objects.create(name="Squad", department=dept), Team.objects.create(name="Guild", department=dept)
+    emp = EmployeeFactory()
+
+    assert hr.post(f"/api/v1/org/teams/{t1.pk}/add-employees/", {"employeeIds": [emp.pk]}, format="json").status_code == 200
+    assert hr.post(f"/api/v1/org/teams/{t2.pk}/add-employees/", {"employeeIds": [emp.pk]}, format="json").status_code == 200
+    assert set(emp.teams.values_list("pk", flat=True)) == {t1.pk, t2.pk}
 
 
 def test_non_hr_cannot_add_employees():

@@ -91,7 +91,9 @@ export type EmployeeKey =
   | 'cost_center_id'
   | 'level_id'
   | 'grade_id'
-  | 'designation_id';
+  | 'designation_id'
+  // Multi-valued: matched against Employee.team_ids (M2M), not a single FK.
+  | 'team_ids';
 
 export interface TypeConfig {
   kind: UnitKind;
@@ -274,9 +276,9 @@ export const TYPE_CONFIGS: TypeConfig[] = [
     singular: 'Team',
     plural: 'Teams',
     adminResource: 'teams',
-    employeeKey: null,
+    employeeKey: 'team_ids',
     hasParent: false,
-    hasEmployees: false,
+    hasEmployees: true,
     extraFields: [
       { key: 'department', label: 'Department', type: 'fk', fk: 'department' },
       EMPLOYEE_FK('lead', 'Team lead'),
@@ -613,6 +615,10 @@ export function membersOf(
   allUnits?: UnitItem[],
 ): OrgEmployee[] {
   if (!key) return [];
+  if (key === 'team_ids') {
+    // Multi-valued M2M: an employee is a member if their team_ids include id.
+    return employees.filter((e) => (e.team_ids ?? []).map(String).includes(id));
+  }
   if (key === 'department_id' && allUnits) {
     // Departments nest (roster "Sub Department" rows carry the parent FK, so
     // a parent department holds zero DIRECT employees). Roll up ALL

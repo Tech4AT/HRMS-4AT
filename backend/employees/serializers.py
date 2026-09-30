@@ -204,6 +204,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     position_id = serializers.SerializerMethodField()
     level_id = serializers.SerializerMethodField()
     grade_id = serializers.SerializerMethodField()
+    team_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -223,6 +224,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "position_id",
             "level_id",
             "grade_id",
+            "team_ids",
             "status",
             "employment_type",
             "date_of_joining",
@@ -231,6 +233,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     def get_id(self, obj):
         return str(obj.pk)
+
+    def get_team_ids(self, obj):
+        # Team membership is M2M (Employee.teams); the org chart/structure use
+        # this to show which teams a person belongs to.
+        return [str(t) for t in obj.teams.values_list("pk", flat=True)]
 
     def get_department_id(self, obj):
         return str(obj.department_id) if obj.department_id else None

@@ -511,6 +511,10 @@ class Employee(models.Model):
     grade = models.ForeignKey(
         Grade, null=True, blank=True, on_delete=models.SET_NULL, related_name="employees"
     )
+    # Team membership is many-to-many: an employee can belong to several teams
+    # (unlike department, which is a single FK). Org Structure > Team >
+    # Employees > Add employees writes here. related_name="members".
+    teams = models.ManyToManyField("Team", related_name="members", blank=True)
     status = models.CharField(
         max_length=20, choices=EmployeeStatus.choices, default=EmployeeStatus.ACTIVE
     )
