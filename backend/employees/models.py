@@ -87,6 +87,13 @@ class JobTitle(SoftDeleteNamedModel):
     is_people_manager = models.BooleanField(default=False)
 
 
+# Back-compat alias: JobTitle was renamed from Designation. The docstring above
+# promises existing clients keep working, but the Python symbol was never
+# aliased — so imports like `from employees.models import Designation`
+# (timeline.py, tests) broke. Same model, same table.
+Designation = JobTitle
+
+
 class Location(SoftDeleteNamedModel):
     """A place of work. Address fields are informational (payroll owns
     statutory addresses later); `type` marks HQ vs branch vs remote."""

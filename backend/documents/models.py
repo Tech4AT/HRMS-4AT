@@ -14,10 +14,66 @@ def _upload_to(instance, filename):
     return f"documents/{instance.entity_type}/{uuid.uuid4()}/{filename}"
 
 
+class DocumentFolder(models.Model):
+    """A folder in Org > Organization Documents (the Keka folder rail). PUBLIC
+    folders are visible to every employee; PRIVATE folders are HR-only. Deleting
+    a folder detaches its documents (Document.folder -> SET_NULL), it does not
+    delete them."""
+
+    VISIBILITY_PUBLIC = "public"
+    VISIBILITY_PRIVATE = "private"
+    VISIBILITY_CHOICES = [(VISIBILITY_PUBLIC, "Public"), (VISIBILITY_PRIVATE, "Private")]
+
+    name = models.CharField(max_length=200)
+    visibility = models.CharField(max_length=16, choices=VISIBILITY_CHOICES, default=VISIBILITY_PUBLIC)
+    description = models.TextField(blank=True, default="")
+    ordering = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["ordering", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.visibility})"
+
+
 class Document(models.Model):
-    # bigint primary key - matches the actual column (and the FKs to it) in this
-    # database. See migration 0007.
-    id = models.BigAutoField(primary_key=True)
+    # UUID primary key (matches the real column and migration state 0004; the
+    # Python-side default is what makes creates work — without an explicit
+    # field Django assumes a DB-generated AutoField and inserts NULL).
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Audience/visibility: who may see this document, enforced in access.py
+    # alongside the entity_type rules. It only ever RESTRICTS — never widens
+    # past what the entity_type + scope engine already allow. HR Admin always
+    # sees everything. Default all_employees preserves existing behavior.
+    AUDIENCE_HR_ONLY = "hr_only"
+    AUDIENCE_HR_AND_MANAGER = "hr_and_manager"
+    AUDIENCE_EMPLOYEE = "employee"
+    AUDIENCE_ALL_EMPLOYEES = "all_employees"
+    AUDIENCE_CHOICES = [
+        (AUDIENCE_HR_ONLY, "HR only"),
+        (AUDIENCE_HR_AND_MANAGER, "HR + Manager"),
+        (AUDIENCE_EMPLOYEE, "Employee (owner only)"),
+        (AUDIENCE_ALL_EMPLOYEES, "All employees"),
+    ]
+    audience = models.CharField(max_length=32, choices=AUDIENCE_CHOICES, default=AUDIENCE_ALL_EMPLOYEES)
+    # Whether employees must explicitly acknowledge this document (tracked in
+    # DocumentAcknowledgement below).
+    acknowledgement_required = models.BooleanField(default=False)
+    # Organization-documents subsystem: the folder this document lives in (Org
+    # > Organization Documents folder rail). Null for employee-attached files.
+    # SET_NULL so deleting a folder detaches, never deletes, its documents.
+    folder = models.ForeignKey(
+        "DocumentFolder", null=True, blank=True, on_delete=models.SET_NULL, related_name="documents"
+    )
+    # Human-entered display name + description for organization documents (the
+    # Add-document panel). Employee-attached files leave these blank and fall
+    # back to original_filename for display.
+    title = models.CharField(max_length=255, blank=True, default="")
+    description = models.TextField(blank=True, default="")
     # What this file is attached to, e.g. ("payslip", <employee id>).
     entity_type = models.CharField(max_length=64)
     entity_id = models.CharField(max_length=64)
@@ -45,6 +101,29 @@ class Document(models.Model):
     )
     uploaded_at = models.DateTimeField(auto_now_add=True)
     expiry_date = models.DateField(null=True, blank=True)
+    # Verification workflow (Org > Employee Documents): HR/manager review of
+    # employee-submitted documents. Mirrors the employees.IdentityDocument /
+    # EducationRecord verification vocabulary (pending/verified/rejected).
+    VERIFICATION_PENDING = "pending"
+    VERIFICATION_VERIFIED = "verified"
+    VERIFICATION_REJECTED = "rejected"
+    VERIFICATION_STATUS_CHOICES = [
+        (VERIFICATION_PENDING, "Pending verification"),
+        (VERIFICATION_VERIFIED, "Verified"),
+        (VERIFICATION_REJECTED, "Rejected"),
+    ]
+    verification_status = models.CharField(
+        max_length=20, choices=VERIFICATION_STATUS_CHOICES, default=VERIFICATION_PENDING
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default="")
 
     class Meta:
         ordering = ["-uploaded_at"]
@@ -91,3 +170,51 @@ class DocumentAccessLog(models.Model):
 
     def __str__(self):
         return f"{self.document_id} {self.action} by {self.performed_by_id}"
+
+
+class DocumentAcknowledgement(models.Model):
+    """One row per (document, employee) pair recording that the employee
+    acknowledged the document. Created/updated by POST
+    /documents/<id>/acknowledge; read scope-filtered by GET
+    /documents/<id>/acknowledgements."""
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="acknowledgements")
+    employee = models.ForeignKey(
+        "employees.Employee",
+        on_delete=models.CASCADE,
+        related_name="document_acknowledgements",
+    )
+    acknowledged_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-acknowledged_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["document", "employee"], name="unique_document_acknowledgement")
+        ]
+        indexes = [models.Index(fields=["document", "employee"])]
+
+    def __str__(self):
+        return f"{self.document_id} acknowledged by {self.employee_id}"
+
+
+class DocumentAudienceRole(models.Model):
+    """Role-based audience for a document (Org > Organization Documents): which
+    RBAC roles may see a document, and per-role whether they must acknowledge
+    it or only view it. When any rows exist for a document they REPLACE the
+    coarse `Document.audience` enum in access.py — a doc is then visible to a
+    user holding any listed role (HR Admin still sees everything). Empty => the
+    legacy enum still governs, so existing docs are unchanged."""
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="audience_roles")
+    role = models.ForeignKey("accounts.Role", on_delete=models.CASCADE, related_name="+")
+    # False => this role may only VIEW the document; True => must acknowledge.
+    acknowledge_required = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["document", "role"], name="unique_document_audience_role")
+        ]
+        indexes = [models.Index(fields=["document", "role"])]
+
+    def __str__(self):
+        return f"{self.document_id} -> role {self.role_id} (ack={self.acknowledge_required})"

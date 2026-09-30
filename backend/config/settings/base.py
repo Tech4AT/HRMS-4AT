@@ -35,8 +35,21 @@ INSTALLED_APPS = [
     "attendance",
     "leave",
     "help",
-    # approvals, notifications, documents, and further plugin apps land here
-    # as Phase 0/2/3+ scaffolding proceeds (docs/TASKS.md P0-E1-03/04).
+    # Core primitives 3, 5 & 6 (approvals / notifications / documents) — docs/ARCHITECTURE.md.
+    # Restored: a merge dropped these from INSTALLED_APPS while their code + URLs
+    # stayed in the tree, so the backend failed to boot (notifications.Notification
+    # had no app_label). All present on disk and URL-wired.
+    "approvals",
+    "notifications",
+    "documents",
+    "onboarding",
+    # Asset inventory (laptops) — RBAC + scope enforced like leave/documents.
+    "assets",
+    # Document templates engine (own app + migrations — never touch documents).
+    "document_templates",
+    # ORG module Wave 1: effective-dated org changes (promotions, transfers).
+    "orgchanges",
+    "policies",
 ]
 
 MIDDLEWARE = [
