@@ -239,10 +239,49 @@ export const documentsApi = {
   /** HR sends a reminder to every in-scope employee still pending on a doc. */
   remindAcknowledgement: (id: string | number) =>
     request<{ notified: number }>(`/${id}/remind-acknowledgement`, { method: 'POST' }).then((v) => v ?? { notified: 0 }),
+
+  /* ---------------- W1: verification workflow ---------------- */
+
+  /** Employee-submitted docs awaiting verification in the caller's scope
+   * (HR/manager: their scope; plain employee: their own). */
+  pendingVerification: () =>
+    request<VerifiableDocument[]>('/pending-verification').then((v) => v ?? []),
+
+  /** HR/manager marks a document verified. */
+  verify: (id: string | number) =>
+    request<VerifiableDocument>(`/${id}/verify`, { method: 'POST' }),
+
+  /** HR/manager marks a document rejected (reason required; owner notified). */
+  reject: (id: string | number, reason: string) =>
+    request<VerifiableDocument>(`/${id}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    }),
+
+  /** HR/manager nudges the document's owner to act. */
+  nudge: (id: string | number) =>
+    request<{ notified: number }>(`/${id}/nudge`, { method: 'POST' }).then((v) => v ?? { notified: 0 }),
+
+  /** Docs expiring within N days (default 30), scope-filtered. */
+  expiring: (days = 30) =>
+    request<VerifiableDocument[]>(`/expiring?days=${days}`).then((v) => v ?? []),
 };
 
 export type FolderVisibility = 'public' | 'private';
 
+/** Verification workflow states (backend documents.Document). The DRF
+ * camel-case renderer converts the snake_case serializer fields. */
+export type VerificationStatus = 'pending' | 'verified' | 'rejected';
+
+/** An employee-submitted document with its verification state. */
+export interface VerifiableDocument extends UploadedDocument {
+  verificationStatus?: VerificationStatus | string;
+  verifiedBy?: number | null;
+  verifiedByName?: string | null;
+  verifiedAt?: string | null;
+  rejectionReason?: string | null;
+}
 export interface DocumentFolder {
   id: string | number;
   name: string;
