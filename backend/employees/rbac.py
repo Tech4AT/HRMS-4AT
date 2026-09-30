@@ -23,7 +23,10 @@ register_module(
                 group="Employee data",
                 default_grants={
                     "Employee": ScopeTier.SELF,
-                    "Manager": ScopeTier.MANAGER,
+                    # TEAM (whole subtree), not MANAGER (direct reports only), so a
+                    # manager can see their indirect reports in the editable
+                    # directory to reassign reporting lines within their team.
+                    "Manager": ScopeTier.TEAM,
                     "HR Admin": ScopeTier.ALL,
                     "Finance": ScopeTier.ALL,
                 },
@@ -33,7 +36,10 @@ register_module(
                 "Create and change employee directory records within the holder's scope",
                 label="Create and edit employee records",
                 group="Employee data",
-                default_grants={"HR Admin": ScopeTier.ALL},
+                # HR Admin edits everyone; a Manager edits their own subtree
+                # (TEAM) — the write path enforces both the target and the chosen
+                # manager fall inside this scope, so cross-team moves 403.
+                default_grants={"HR Admin": ScopeTier.ALL, "Manager": ScopeTier.TEAM},
             ),
             PermissionSpec(
                 "employees.personal.read",
