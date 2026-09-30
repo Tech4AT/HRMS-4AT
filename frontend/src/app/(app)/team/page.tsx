@@ -1,84 +1,140 @@
 'use client';
 
-import { useState } from 'react';
-import { ChevronLeftIcon, ChevronDownIcon } from '@/components/icons';
+import { useEffect, useMemo, useState } from 'react';
+import { MemberCard } from '@/components/team/MemberCard';
+import { MemberDetails } from '@/components/team/MemberDetails';
+import { FILTER_LABEL, TeamStatus, type StatusFilter } from '@/components/team/TeamStatus';
+import { TeamCalendar } from '@/components/team/TeamCalendar';
+import { myTeamApi, type MyTeamData } from '@/lib/api/myTeam';
+import type { TeamGroup, TeamSummaryMember } from '@/lib/api/teamAttendance';
+import { statusFor, type DailyStatus, type EmployeeDayStatus } from '@/lib/attendance/dashboard';
+import { useAuth } from '@/lib/auth/useAuth';
+import type { DirectoryPerson } from '@/lib/team/groups';
+import { monthKeyOf, useTeamSummary } from '@/lib/team/useTeamSummary';
+import {
+  badgeFor,
+  coverageNote,
+  matchesSearch,
+  notInYet,
+  SEARCH_THRESHOLD,
+  SORT_LABEL,
+  sortPeople,
+  type Labels,
+  type SortKey,
+} from '@/lib/team/view';
 
-const teamMembers = [
-  { id: 1, name: 'Anurag Kumar Tiwari', initials: 'AT', role: 'Senior I', location: 'Hyderabad', department: 'Technology', avatarColor: 'from-amber-500 to-orange-600' },
-  { id: 2, name: 'Kiran Vasvani', initials: 'KV', role: 'Assistant Manager', location: 'Hyderabad', department: 'Audit & Assurance > InfoSec Audit', avatarColor: 'from-slate-700 to-slate-900' },
-  { id: 3, name: 'Nikhil Kommineni', initials: 'NK', role: 'Trainee', location: 'Hyderabad', department: 'Technology', avatarColor: 'from-emerald-500 to-teal-600' },
-  { id: 4, name: 'Marcus Kinsley', initials: 'MK', role: 'VP of Engineering', location: 'Hyderabad', department: 'Engineering', avatarColor: 'from-blue-600 to-indigo-600' },
-  { id: 5, name: 'Sarah Jenkins', initials: 'SJ', role: 'Senior Product Designer', location: 'Hyderabad', department: 'Design & UX', avatarColor: 'from-rose-600 to-pink-600' },
-  { id: 6, name: 'David Chen', initials: 'DC', role: 'Financial Analyst', location: 'Hyderabad', department: 'Finance', avatarColor: 'from-purple-600 to-indigo-600' },
+const TABS: { id: TeamGroup; label: string }[] = [
+  { id: 'direct', label: 'Direct Reports' },
+  { id: 'indirect', label: 'Indirect Reports' },
+  { id: 'peers', label: 'Peers' },
 ];
 
-const notInYetToday = [{ name: 'Tejas Vora', initials: 'TV', avatarColor: 'from-amber-500 to-orange-600' }];
-
-type DayStatus = 'weekoff' | 'holiday' | 'paid' | 'unpaid' | 'noattendance' | null;
-
-function buildMonthDays(year: number, month: number, specials: Record<number, DayStatus>) {
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const days: { day: number; date: Date; status: DayStatus }[] = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d);
-    const dow = date.getDay();
-    const status: DayStatus = specials[d] ?? (dow === 0 || dow === 6 ? 'weekoff' : null);
-    days.push({ day: d, date, status });
-  }
-  return days;
-}
-
-const dayColor: Record<Exclude<DayStatus, null>, string> = {
-  weekoff: 'bg-amber-400 text-white',
-  holiday: 'bg-emerald-500 text-white',
-  paid: 'bg-sky-100 text-sky-700',
-  unpaid: 'bg-stone-200 text-stone-600',
-  noattendance: 'bg-red-400 text-white',
+// The stat-card filters match on today's full status; "not in" is decided by `notInYet`.
+const FILTER_STATUS: Record<Exclude<StatusFilter, 'not_in'>, DailyStatus> = {
+  on_time: 'present',
+  late: 'late',
+  wfh: 'wfh',
 };
 
-const legend: { label: string; color: string; shape?: 'dot' }[] = [
-  { label: 'Work from home', color: 'bg-violet-500', shape: 'dot' },
-  { label: 'On duty', color: 'bg-pink-500', shape: 'dot' },
-  { label: 'Paid Leave', color: 'bg-sky-400', shape: 'dot' },
-  { label: 'Unpaid Leave', color: 'bg-stone-400', shape: 'dot' },
-  { label: 'Leave due to No Attendance', color: 'bg-red-400', shape: 'dot' },
-  { label: 'Weekly off', color: 'bg-amber-400' },
-  { label: 'Holiday', color: 'bg-emerald-500' },
-  { label: 'Someone on Leave', color: 'bg-blue-500', shape: 'dot' },
-  { label: 'Multiple Leave on a day', color: 'bg-rose-500', shape: 'dot' },
-  { label: 'Someone on WFH/OD', color: 'bg-slate-400', shape: 'dot' },
-];
+function emptyText(group: TeamGroup, hasManager: boolean): string {
+  if (group === 'direct') return 'No one reports to you.';
+  if (group === 'indirect') return "You don't have any indirect reports.";
+  return hasManager
+    ? 'No one else reports to your manager.'
+    : "You don't have a reporting manager yet, so there are no peers to show.";
+}
 
+/** My Team > Summary: the people who report to you (directly or further down),
+ *  your peers, and how today and the month look for them.
+ *
+ *  Everything on the page for one group comes from a single backend response:
+ *  who is in the group, what may be shown about each person, and how many people
+ *  that covers. The backend reuses the access-control rules, so managers see full
+ *  detail for the people they manage and everyone else sees only who is in. */
 export default function TeamPage() {
-  const [month, setMonth] = useState(new Date(2026, 7, 1)); // Aug 2026
+  const [data, setData] = useState<MyTeamData | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [tab, setTab] = useState<TeamGroup>('direct');
+  const [filter, setFilter] = useState<StatusFilter | null>(null);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortKey>('name');
+  const [selected, setSelected] = useState<DirectoryPerson | null>(null);
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+  const { hasOrgScope } = useAuth();
 
-  const monthDays = buildMonthDays(month.getFullYear(), month.getMonth(), {
-    7: 'noattendance',
-    8: 'unpaid',
-    9: 'unpaid',
-    10: 'paid',
-    11: 'paid',
-    12: 'paid',
-    13: 'paid',
-    14: 'paid',
-    15: 'unpaid',
-    28: 'holiday',
-  });
+  useEffect(() => {
+    let cancelled = false;
+    myTeamApi
+      .load()
+      .then((d) => !cancelled && setData(d))
+      .catch((e) => !cancelled && setLoadError(e instanceof Error ? e.message : 'Could not load your team'));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const shiftMonth = (delta: number) => {
-    setMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1));
+  const { summary, monthRows, error: summaryError } = useTeamSummary(tab, monthKeyOf(month));
+
+  const peopleById = useMemo(() => new Map((data?.people ?? []).map((p) => [p.id, p])), [data]);
+  const byId = useMemo(
+    () => new Map<string, TeamSummaryMember>((summary?.members ?? []).map((m) => [m.employee_id, m])),
+    [summary],
+  );
+
+  // Today's full status, only for the people the backend let us read in full.
+  const statusById = useMemo(() => {
+    const map = new Map<string, EmployeeDayStatus>();
+    for (const row of summary?.rows ?? []) {
+      if (row.attendance_date === summary?.date) map.set(row.employee_id, statusFor(row));
+    }
+    return map;
+  }, [summary]);
+
+  const labels: Labels | null = useMemo(
+    () =>
+      data && {
+        designation: (p) => (p.designation_id ? (data.designations[p.designation_id] ?? '') : ''),
+        department: (p) => (p.department_id ? (data.departments[p.department_id] ?? '') : ''),
+      },
+    [data],
+  );
+
+  // The group, exactly as the backend defined it.
+  const people = useMemo(
+    () => (summary?.members ?? []).map((m) => peopleById.get(m.employee_id)).filter((p): p is DirectoryPerson => Boolean(p)),
+    [summary, peopleById],
+  );
+  const detailPeople = useMemo(
+    () => people.filter((p) => byId.get(p.id)?.level === 'detail'),
+    [people, byId],
+  );
+
+  const shown = useMemo(() => {
+    if (!labels) return [];
+    const notInIds = new Set(notInYet(people, byId, statusById).map((p) => p.id));
+    const matchesFilter = (p: DirectoryPerson) => {
+      if (!filter) return true;
+      if (filter === 'not_in') return notInIds.has(p.id);
+      return statusById.get(p.id)?.status === FILTER_STATUS[filter];
+    };
+    const visible = people.filter(matchesFilter).filter((p) => matchesSearch(p, search, labels));
+    return sortPeople(visible, sort, labels, byId);
+  }, [people, filter, statusById, search, sort, labels, byId]);
+
+  const switchTab = (next: TeamGroup) => {
+    setTab(next);
+    setFilter(null);
+    setSearch('');
   };
 
-  const stats = [
-    { label: 'Employees On Time today', value: 3, color: 'border-teal-400' },
-    { label: 'Late Arrivals today', value: 2, color: 'border-violet-400' },
-    { label: 'Work from Home / On Duty today', value: 0, color: 'border-emerald-400' },
-    { label: 'Remote Clock-ins today', value: 0, color: 'border-amber-400' },
-  ];
+  if (loadError) return <div className="p-6 text-sm text-red-600">{loadError}</div>;
+  if (!data || !labels) return <div className="p-6 text-sm text-slate-500">Loading your team…</div>;
+
+  const note = summary ? coverageNote(summary.coverage) : null;
+  const searchable = people.length > SEARCH_THRESHOLD;
 
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter']">
-      {/* Sub-nav */}
       <div className="bg-white border-b border-gray-200 px-4 sm:px-8">
         <div className="flex gap-5">
           <span className="relative py-4 text-xs font-semibold tracking-wide text-blue-600 uppercase">
@@ -89,168 +145,129 @@ export default function TeamPage() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-5">
-        {/* Who is on leave / Not in yet */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-slate-900 mb-3">Who is on leave today</h2>
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-              No employee is on leave today.
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-            <h2 className="text-base font-bold text-slate-900 mb-3">Not in yet today</h2>
-            {notInYetToday.length === 0 ? (
-              <p className="text-sm text-gray-500">Everyone has checked in.</p>
-            ) : (
-              <div className="flex gap-4">
-                {notInYetToday.map((p) => (
-                  <div key={p.name} className="flex flex-col items-center text-center w-16">
-                    <div
-                      className={`w-10 h-10 rounded-full bg-gradient-to-br ${p.avatarColor} flex items-center justify-center text-white text-xs font-bold`}
-                    >
-                      {p.initials}
-                    </div>
-                    <span className="text-xs text-gray-600 mt-1.5 truncate w-full">{p.name.split(' ')[0]}...</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Stats row */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {stats.map((s) => (
-            <div key={s.label} className={`bg-white rounded-2xl border border-gray-200 border-l-4 ${s.color} p-4 shadow-sm`}>
-              <p className="text-sm text-slate-700 mb-2">{s.label}</p>
-              <div className="flex items-end justify-between">
-                <span className="text-2xl font-bold text-slate-900">{s.value}</span>
-                <button className="text-xs font-medium text-blue-600 hover:text-blue-700">View Employees</button>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Team calendar */}
-        <div>
-          <h2 className="text-base font-bold text-slate-900 mb-3">Team calendar</h2>
-          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-            <div className="flex items-center gap-3 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden bg-white" role="tablist">
+            {TABS.map((t, i) => (
               <button
-                onClick={() => shiftMonth(-1)}
-                className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-700"
+                key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
+                onClick={() => switchTab(t.id)}
+                className={`px-5 py-2.5 text-sm font-medium transition-colors ${i > 0 ? 'border-l border-slate-200' : ''} ${
+                  tab === t.id ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'
+                }`}
               >
-                <ChevronLeftIcon className="w-4 h-4" />
+                {t.label}
               </button>
-              <span className="text-sm font-semibold text-slate-900 w-20 text-center">
-                {month.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-              </span>
-              <button
-                onClick={() => shiftMonth(1)}
-                className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center hover:bg-indigo-700"
-              >
-                <ChevronDownIcon className="w-4 h-4 -rotate-90" />
-              </button>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="border-collapse">
-                <thead>
-                  <tr>
-                    <th className="sticky left-0 bg-white text-left text-xs font-semibold text-gray-500 pr-4 pb-2 w-40">Team member</th>
-                    {monthDays.map((d) => (
-                      <th key={d.day} className="text-[10px] font-semibold text-gray-400 pb-2 px-1 w-8">
-                        {d.date.toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {teamMembers.slice(0, 3).map((member) => (
-                    <tr key={member.id}>
-                      <td className="sticky left-0 bg-white pr-4 py-1.5">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className={`w-7 h-7 rounded-full bg-gradient-to-br ${member.avatarColor} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}
-                          >
-                            {member.initials}
-                          </div>
-                          <span className="text-sm text-slate-700 whitespace-nowrap">{member.name}</span>
-                        </div>
-                      </td>
-                      {monthDays.map((d) => (
-                        <td key={d.day} className="px-1 py-1.5 text-center">
-                          {d.status ? (
-                            <span
-                              className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-semibold ${dayColor[d.status]}`}
-                            >
-                              {d.day}
-                            </span>
-                          ) : (
-                            <span className="text-[11px] text-gray-400">{d.day}</span>
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap gap-x-5 gap-y-2 mt-5 pt-4 border-t border-gray-100">
-              {legend.map((l) => (
-                <span key={l.label} className="flex items-center gap-1.5 text-xs text-gray-500">
-                  {l.shape === 'dot' ? (
-                    <span className={`w-2 h-2 rounded-full ${l.color}`} />
-                  ) : (
-                    <span className={`w-3 h-3 rounded ${l.color}`} />
-                  )}
-                  {l.label}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Peers */}
-        <div>
-          <h2 className="text-base font-bold text-slate-900 mb-3">Peers ({teamMembers.length})</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {teamMembers.map((member) => (
-              <div key={member.id} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow">
-                <div className="flex items-start gap-3">
-                  <div className="relative shrink-0">
-                    <div
-                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${member.avatarColor} flex items-center justify-center text-white text-sm font-bold`}
-                    >
-                      {member.initials}
-                    </div>
-                    <span className="absolute -bottom-1 -right-1 text-[9px] font-bold bg-emerald-100 text-emerald-700 rounded px-1 py-0.5 border border-white">
-                      IN
-                    </span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-slate-900 truncate">{member.name}</h3>
-                      <button className="text-gray-400 hover:text-gray-600 shrink-0" title="More">
-                        &#8942;
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5">{member.role}</p>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Location: <span className="text-gray-700">{member.location}</span>
-                    </p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Department: <span className="text-gray-700">{member.department}</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
             ))}
           </div>
         </div>
+
+        {summaryError && !summary ? <p className="text-sm text-red-600">{summaryError}</p> : null}
+        {!summary && !summaryError ? <p className="text-sm text-slate-500">Loading…</p> : null}
+
+        {summary ? (
+          <>
+            {people.length > 0 ? (
+              <>
+                <TeamStatus
+                  people={people}
+                  byId={byId}
+                  statusById={statusById}
+                  coverage={summary.coverage}
+                  active={filter}
+                  onFilter={setFilter}
+                />
+                {summary.coverage.detail > 0 ? (
+                  <TeamCalendar
+                    month={month}
+                    onShift={(delta) => setMonth((m) => new Date(m.getFullYear(), m.getMonth() + delta, 1))}
+                    members={detailPeople}
+                    rows={monthRows}
+                    today={summary.date}
+                    note={note}
+                  />
+                ) : null}
+              </>
+            ) : null}
+
+            <div>
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <h2 className="text-base font-bold text-slate-900">
+                  {TABS.find((t) => t.id === tab)?.label} ({people.length})
+                </h2>
+                {filter ? (
+                  <span className="flex items-center gap-2 text-xs font-medium text-indigo-700 bg-indigo-50 rounded-full px-3 py-1">
+                    {FILTER_LABEL[filter]}: {shown.length}
+                    <button onClick={() => setFilter(null)} className="text-indigo-500 hover:text-indigo-800" aria-label="Clear filter">
+                      ×
+                    </button>
+                  </span>
+                ) : null}
+                {searchable ? (
+                  <div className="ml-auto flex flex-wrap items-center gap-2">
+                    <input
+                      type="search"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search name, title or department"
+                      aria-label="Search this group"
+                      className="w-60 text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                    />
+                    <select
+                      value={sort}
+                      onChange={(e) => setSort(e.target.value as SortKey)}
+                      aria-label="Sort this group"
+                      className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
+                    >
+                      {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+                        <option key={k} value={k}>
+                          {SORT_LABEL[k]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+
+              {people.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-sm text-slate-500">
+                  {emptyText(tab, summary.has_manager)}
+                </div>
+              ) : shown.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center text-sm text-slate-500">
+                  {filter && !search.trim() ? `No one in this group: ${FILTER_LABEL[filter].toLowerCase()}.` : 'No one matches.'}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {shown.map((p) => (
+                    <MemberCard
+                      key={p.id}
+                      person={p}
+                      designation={labels.designation(p)}
+                      department={labels.department(p)}
+                      location={p.location_id ? data.locations[p.location_id] : undefined}
+                      badge={badgeFor(byId.get(p.id), statusById.get(p.id))}
+                      onOpen={() => setSelected(p)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
+
+      {selected ? (
+        <MemberDetails
+          person={selected}
+          data={data}
+          badge={badgeFor(byId.get(selected.id), statusById.get(selected.id))}
+          // A manager may open a direct report's profile, HR anyone's; the page itself enforces access.
+          canOpenProfile={hasOrgScope() || tab === 'direct'}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
     </div>
   );
 }

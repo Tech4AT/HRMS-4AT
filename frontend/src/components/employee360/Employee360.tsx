@@ -11,6 +11,7 @@ import {
   MapPinIcon,
   PhoneIcon,
 } from '@/components/icons';
+import { avatarGradient, initialsOf } from '@/lib/avatar';
 import { useAuth } from '@/lib/auth/useAuth';
 import { employee360Api, type Employee360 as Employee360Data } from '@/lib/api/employee360';
 import { AboutTab } from './AboutTab';
@@ -40,23 +41,6 @@ interface Props {
   reloadKey?: number;
   /** The tab to open first (`about`, `profile`, `job` or an extra tab's id). Default: Profile when readable, else Job. */
   defaultTab?: string;
-}
-
-const AVATAR_COLORS = [
-  'from-slate-600 to-slate-800',
-  'from-rose-600 to-pink-600',
-  'from-blue-600 to-indigo-600',
-  'from-fuchsia-600 to-purple-600',
-  'from-emerald-600 to-teal-600',
-  'from-amber-600 to-orange-600',
-  'from-cyan-600 to-blue-600',
-  'from-indigo-600 to-violet-600',
-];
-
-function colorFor(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
 function loadErrorText(e: unknown): string {
@@ -115,7 +99,7 @@ export function Employee360({ employeeId, extraTabs = [], headerActions, reloadK
 
   const { job, personal, address, emergency_contacts: contacts } = data;
   const fullName = `${data.first_name} ${data.last_name}`.trim() || data.work_email;
-  const initials = `${data.first_name?.[0] ?? ''}${data.last_name?.[0] ?? ''}`.toUpperCase() || '—';
+  const initials = initialsOf(data.first_name, data.last_name);
 
   const profileTab: ExtraTab[] =
     personal && address && contacts
@@ -181,7 +165,7 @@ export function Employee360({ employeeId, extraTabs = [], headerActions, reloadK
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
             <div className="flex flex-col sm:flex-row sm:items-end gap-4 min-w-0">
               <div
-                className={`w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-white shadow-md bg-gradient-to-br ${colorFor(data.id)} flex items-center justify-center text-white text-3xl font-bold shrink-0`}
+                className={`w-24 h-24 sm:w-28 sm:h-28 rounded-full border-4 border-white shadow-md bg-gradient-to-br ${avatarGradient(data.id)} flex items-center justify-center text-white text-3xl font-bold shrink-0`}
               >
                 {initials}
               </div>

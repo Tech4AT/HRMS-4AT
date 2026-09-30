@@ -41,8 +41,8 @@ export class TeamAttendanceApiError extends Error {
   }
 }
 
-async function request<T>(query: string): Promise<T> {
-  const res = await fetch(`/api/attendance/team/daily${query}`, { credentials: 'include' });
+async function request<T>(path: string): Promise<T> {
+  const res = await fetch(`/api/attendance/team/${path}`, { credentials: 'include' });
 
   let json: Envelope<T> | null = null;
   try {
@@ -68,5 +68,38 @@ export const teamAttendanceApi = {
    *  (inclusive), one row each. Empty array (not an error) if the caller's
    *  scope resolves to nobody. */
   getDaily: (from: string, to: string) =>
-    request<TeamAttendanceDayView[]>(`?from=${from}&to=${to}`),
+    request<TeamAttendanceDayView[]>(`daily?from=${from}&to=${to}`),
+
+  /** My Team: one group of the caller's own team, at the detail level the
+   *  backend allows for each person. */
+  getSummary: (group: TeamGroup, month?: string) =>
+    request<TeamSummary>(`summary?group=${group}${month ? `&month=${month}` : ''}`),
 };
+
+export type TeamGroup = 'direct' | 'indirect' | 'peers';
+
+/** `in` / `not_in` is all a person outside the caller's manageable scope reveals;
+ *  `day_off` is an organisation-wide fact (holiday or week off), not about them. */
+export type Presence = 'in' | 'not_in' | 'day_off';
+
+export interface TeamSummaryMember {
+  employee_id: string;
+  /** `detail`: the caller may read this person's full day (rows below).
+   *  `basic`: presence only. */
+  level: 'detail' | 'basic';
+  presence: Presence;
+}
+
+export interface TeamSummary {
+  group: TeamGroup;
+  /** Today, in the organisation's calendar. */
+  date: string;
+  month: string;
+  /** False when the caller has no reporting manager (so no peers). */
+  has_manager: boolean;
+  /** `total` people in the group; the caller may read `detail` of them in full. */
+  coverage: { total: number; detail: number };
+  members: TeamSummaryMember[];
+  /** Full day views for `detail` members: the requested month, plus today. */
+  rows: TeamAttendanceDayView[];
+}
