@@ -46,6 +46,16 @@ function docExpiry(d: OrgDocument): string | null {
   return d.expiryDate ?? d.expiry_date ?? null;
 }
 
+/** Small inline pencil glyph for the HR folder edit control (kept local so
+ * the shared rail module stays untouched). */
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+    </svg>
+  );
+}
+
 /** Keka "Organization documents": folder rail + folder table + Add-document
  * side panel, wired to Parcel A (audience + acknowledgement). The folder
  * rail stays empty until org-folders land; the table lists real documents
@@ -71,6 +81,11 @@ export function OrganizationDocumentsTab() {
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderVis, setNewFolderVis] = useState<FolderVisibility>('public');
   const [folderBusy, setFolderBusy] = useState(false);
+  // Inline folder edit (HR): rename + change public/private without a modal.
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
+  const [editFolderName, setEditFolderName] = useState('');
+  const [editFolderVis, setEditFolderVis] = useState<FolderVisibility>('public');
+  const [folderError, setFolderError] = useState<string | null>(null);
 
   const [panel, setPanel] = useState(false);
   const [name, setName] = useState('');
@@ -115,6 +130,32 @@ export function OrganizationDocumentsTab() {
       setNewFolderVis('public');
       setFolderForm(false);
       await loadFolders();
+    } finally {
+      setFolderBusy(false);
+    }
+  };
+
+  const startEditFolder = (f: DocumentFolder) => {
+    setFolderError(null);
+    setEditingFolderId(String(f.id));
+    setEditFolderName(f.name);
+    setEditFolderVis(f.visibility);
+  };
+
+  /** Save the inline rename / visibility change and refresh the rail. */
+  const saveFolder = async () => {
+    if (editingFolderId === null || !editFolderName.trim()) return;
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      await documentsApi.folderUpdate(editingFolderId, {
+        name: editFolderName.trim(),
+        visibility: editFolderVis,
+      });
+      setEditingFolderId(null);
+      await loadFolders();
+    } catch (e) {
+      setFolderError(e instanceof DocumentsApiError ? e.message : 'Failed to update folder');
     } finally {
       setFolderBusy(false);
     }
@@ -285,18 +326,69 @@ export function OrganizationDocumentsTab() {
               ) : list.length === 0 ? (
                 <p className="px-1 py-2 text-xs text-gray-400">No folders</p>
               ) : (
-                list.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setSelectedFolderId(f.id)}
-                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${String(selectedFolderId) === String(f.id) ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-slate-700 hover:bg-gray-50'}`}
-                  >
-                    <FolderIcon className="w-4 h-4 shrink-0 text-gray-400" />
-                    <span className="truncate mr-auto">{f.name}</span>
-                    <span className="text-[11px] text-gray-400">{f.documentCount ?? 0}</span>
-                  </button>
-                ))
+                list.map((f) => {
+                  if (editingFolderId === String(f.id)) {
+                    // Inline rename / visibility editor (HR only) — no modal.
+                    return (
+                      <div key={f.id} className="rounded-lg border border-purple-200 p-2 space-y-2">
+                        <input
+                          value={editFolderName}
+                          onChange={(e) => setEditFolderName(e.target.value)}
+                          className={`${SELECT} w-full`}
+                          placeholder="Folder name"
+                          aria-label={`Rename folder ${f.name}`}
+                        />
+                        <select
+                          value={editFolderVis}
+                          onChange={(e) => setEditFolderVis(e.target.value as FolderVisibility)}
+                          className={`${SELECT} w-full`}
+                          aria-label={`Visibility of folder ${f.name}`}
+                        >
+                          <option value="public">Public</option>
+                          <option value="private">Private</option>
+                        </select>
+                        {folderError && <p className="text-[11px] text-red-600">{folderError}</p>}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={saveFolder}
+                            disabled={folderBusy || !editFolderName.trim()}
+                            className={`${BTN_PRIMARY} flex-1`}
+                          >
+                            {folderBusy ? 'Saving…' : 'Save'}
+                          </button>
+                          <button type="button" onClick={() => setEditingFolderId(null)} className={BTN_OUTLINE}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={f.id} className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFolderId(f.id)}
+                        className={`min-w-0 flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm ${String(selectedFolderId) === String(f.id) ? 'bg-purple-50 text-purple-700 font-semibold' : 'text-slate-700 hover:bg-gray-50'}`}
+                      >
+                        <FolderIcon className="w-4 h-4 shrink-0 text-gray-400" />
+                        <span className="truncate mr-auto">{f.name}</span>
+                        <span className="text-[11px] text-gray-400">{f.documentCount ?? 0}</span>
+                      </button>
+                      {isHr && (
+                        <button
+                          type="button"
+                          onClick={() => startEditFolder(f)}
+                          aria-label={`Edit folder ${f.name}`}
+                          title="Rename or change visibility"
+                          className="p-1 rounded text-gray-400 hover:text-purple-600 hover:bg-purple-50 shrink-0"
+                        >
+                          <PencilIcon className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </div>
           ))}
