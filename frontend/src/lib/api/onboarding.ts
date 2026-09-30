@@ -418,6 +418,7 @@ export interface CreateNewHireInput {
   probationPeriodMonths?: number;
   noticePeriodDays?: number;
   offerLetterTemplateId?: number | null;
+  shiftId?: number | null;
 }
 
 export interface UpdateOfferLetterInput {
@@ -607,7 +608,8 @@ export const onboardingApi = {
    * audited action, not implied by loading the record). */
   getBankDetails: (recordId: number, reveal = false) =>
     request<BankDetails | null>(`/records/${recordId}/bank-details${reveal ? '?reveal=true' : ''}`),
-  getMyIdentityDocuments: () => request<IdentityDocument[]>('/me/identity-documents'),
+  getMyIdentityDocuments: (employeeId?: number) =>
+    request<IdentityDocument[]>(`/me/identity-documents${employeeId ? `?employeeId=${employeeId}` : ''}`),
   addMyIdentityDocument: (input: IdentityDocumentInput) =>
     request<IdentityDocument>('/me/identity-documents', { method: 'POST', body: JSON.stringify(input) }),
   removeMyIdentityDocument: (id: number) => request<void>(`/me/identity-documents/${id}`, { method: 'DELETE' }),
@@ -620,7 +622,8 @@ export const onboardingApi = {
   verifyIdentityDocument: (id: number, status: 'verified' | 'rejected', notes?: string) =>
     request<IdentityDocument>(`/identity-documents/${id}/verify`, { method: 'PATCH', body: JSON.stringify({ status, notes }) }),
   getMyDocumentsOverview: () => request<MyDocumentsOverview>('/me/documents-overview'),
-  getMyEducationRecords: () => request<EducationRecord[]>('/me/education-records'),
+  getMyEducationRecords: (employeeId?: number) =>
+    request<EducationRecord[]>(`/me/education-records${employeeId ? `?employeeId=${employeeId}` : ''}`),
   addMyEducationRecord: (input: EducationRecordInput) =>
     request<EducationRecord>('/me/education-records', { method: 'POST', body: JSON.stringify(input) }),
   removeMyEducationRecord: (id: number) => request<void>(`/me/education-records/${id}`, { method: 'DELETE' }),

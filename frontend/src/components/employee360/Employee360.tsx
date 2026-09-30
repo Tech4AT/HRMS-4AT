@@ -5,7 +5,6 @@ import { ApiError } from '@/lib/admin/api';
 import { Badge, Notice } from '@/components/admin/ui';
 import {
   BriefcaseIcon,
-  GraduationCapIcon,
   IdCardIcon,
   MailIcon,
   MapPinIcon,
@@ -16,7 +15,9 @@ import { employee360Api, type Employee360 as Employee360Data } from '@/lib/api/e
 import { AboutTab } from './AboutTab';
 import { AddressCard } from './AddressCard';
 import { ContactCard } from './ContactCard';
-import { DocumentsPendingCard } from './DocumentsPendingCard';
+import { EducationRecordCards } from '@/components/documents/EducationRecordCards';
+import { IdentityDocumentCards } from '@/components/documents/IdentityDocumentCards';
+import { MyDocumentsList } from '@/components/documents/MyDocumentsList';
 import { EmergencyContactsCard } from './EmergencyContactsCard';
 import { JobCard } from './JobCard';
 import { PersonalDetailsCard } from './PersonalDetailsCard';
@@ -128,18 +129,41 @@ export function Employee360({ employeeId, extraTabs = [], headerActions, reloadK
                 <div className="xl:col-span-2 space-y-5">
                   <PersonalDetailsCard profile={data} onChange={setData} onNameChanged={onNameChanged} />
                   <ContactCard profile={data} onChange={setData} />
-                  <DocumentsPendingCard title="Education" icon={<GraduationCapIcon className="w-4 h-4" />} />
                 </div>
                 <div className="space-y-5">
                   <AddressCard profile={data} address={address} onChange={setData} />
                   <EmergencyContactsCard profile={data} contacts={contacts} onChange={setData} />
-                  <DocumentsPendingCard title="Identity Information" icon={<IdCardIcon className="w-4 h-4" />} />
                 </div>
               </div>
             ),
           },
         ]
       : [];
+
+  const numericId = typeof data.id === 'string' ? parseInt(data.id, 10) : data.id;
+  const documentsTab: ExtraTab = {
+    id: 'documents',
+    label: 'Documents',
+    content: (
+      <div className="space-y-4">
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <h3 className="font-bold text-gray-900 mb-1">Identity Documents</h3>
+          <p className="text-xs text-gray-500 mb-4">Aadhaar, PAN and other government IDs. Visible only to the employee, HR, and Finance.</p>
+          <IdentityDocumentCards employeeId={numericId} readOnly={!data.access.is_self} />
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <h3 className="font-bold text-gray-900 mb-1">Degrees &amp; Certificates</h3>
+          <p className="text-xs text-gray-500 mb-4">Education details with a certificate for each. Visible only to the employee and HR.</p>
+          <EducationRecordCards employeeId={numericId} readOnly={!data.access.is_self} />
+        </div>
+        <div className="bg-white rounded-2xl border border-gray-200 p-5">
+          <h3 className="font-bold text-gray-900 mb-1">Documents</h3>
+          <p className="text-xs text-gray-500 mb-4">Everything submitted, plus the signed offer letter.</p>
+          <MyDocumentsList employeeId={numericId} readOnly={!data.access.is_self} />
+        </div>
+      </div>
+    ),
+  };
 
   const jobTab: ExtraTab = {
     id: 'job',
@@ -158,6 +182,7 @@ export function Employee360({ employeeId, extraTabs = [], headerActions, reloadK
     ...extraTabs.filter((t) => t.placement === 'start'),
     ...profileTab,
     jobTab,
+    documentsTab,
     ...extraTabs.filter((t) => t.placement !== 'start'),
   ];
   const activeId = tabs.some((t) => t.id === tab) ? tab : (profileTab[0]?.id ?? jobTab.id);

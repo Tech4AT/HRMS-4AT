@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { DashboardCard } from '@/components/dashboard/DashboardCard';
 import { Employee360, type ExtraTab } from '@/components/employee360/Employee360';
 import { PackageIcon } from '@/components/icons';
@@ -231,5 +232,6 @@ const SELF_TABS: ExtraTab[] = [
 /** The signed-in user's own profile: the shared Employee 360 (About, Profile, Job)
  *  plus the tabs that only make sense for yourself (Exit, Assets). */
 export default function ProfilePage() {
-  return <Employee360 employeeId="me" extraTabs={SELF_TABS} defaultTab="about" />;
+  const tab = useSearchParams().get('tab');
+  return <Employee360 employeeId="me" extraTabs={SELF_TABS} defaultTab={tab ?? 'about'} />;
 }

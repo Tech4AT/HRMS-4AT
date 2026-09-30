@@ -96,6 +96,11 @@ class MyDocumentsView(APIView):
         from onboarding.models import OFFER_ACCEPTED, OnboardingProfile, OnboardingTask
 
         employee = getattr(request.user, 'employee', None)
+        target_id = request.query_params.get('employeeId')
+        if target_id and (employee is None or str(employee.id) != str(target_id)):
+            # HR Admin viewing someone else's documents (Employee 360).
+            from employees.models import Employee
+            employee = Employee.objects.filter(pk=target_id).first() if is_hr_admin(request.user) else None
         if employee is None:
             return Response({'success': True, 'data': []})
 

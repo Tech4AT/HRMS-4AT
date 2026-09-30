@@ -85,7 +85,7 @@ export default function MePage() {
       title: 'My Documents',
       description: 'View and download your employment documents',
       icon: DocumentsIcon,
-      path: '/me/documents',
+      path: '/profile?tab=documents',
       color: 'from-teal-500 to-teal-600'
     },
     {

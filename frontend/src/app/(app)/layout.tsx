@@ -3,6 +3,8 @@
 import { Suspense, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth/useAuth';
+import { onboardingApi } from '@/lib/api/onboarding';
+import { EmployeeSearch } from '@/components/EmployeeSearch';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { ProfileDropdown } from '@/components/ProfileDropdown';
 import { NotificationsDropdown } from '@/components/NotificationsDropdown';
@@ -27,7 +29,6 @@ import {
   SearchIcon,
   IdCardIcon,
   ClipboardCheckIcon,
-  DocumentIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -128,7 +129,6 @@ function getActiveChild<T extends { href: string; matchPrefixes?: string[] }>(
 const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, href: '/', roles: ['admin', 'employee', 'superadmin'] },
   { id: 'my-onboarding', label: 'My Onboarding', icon: ClipboardCheckIcon, href: '/me/onboarding', roles: ['employee'] },
-  { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
   {
     // Approvals lives under Attendance, not as its own top-level item - it's
@@ -259,7 +259,6 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
-  '/me/documents': { title: 'My Documents', subtitle: 'View and download your employment documents' },
   '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
   '/me/exit': { title: 'My Exit', subtitle: 'Submit or manage your resignation' },
   '/exits': { title: 'Exits', subtitle: 'Review resignations and record employee exits' },
@@ -287,6 +286,8 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const searchParams = useSearchParams();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // My Onboarding only exists for a new hire with steps still open.
+  const [showOnboarding, setShowOnboarding] = useState(false);
   // Sidebar submenu accordion (test-v1): sections with visible children get
   // an expand/collapse chevron; the tab row under the header stays as the
   // merge's secondary navigation for the active section.
@@ -309,6 +310,24 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setIsMobileNavOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    onboardingApi
+      .getMine()
+      .then((mine) => {
+        if (cancelled) return;
+        const open = mine?.tasks?.some(
+          (t) => t.owner === 'new_hire' && t.status !== 'done' && t.status !== 'skipped',
+        );
+        setShowOnboarding(!!mine && mine.stage !== 'completed' && !!open);
+      })
+      .catch(() => !cancelled && setShowOnboarding(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, pathname]);
 
   // Restore the user's collapse preference, defaulting tablet widths to collapsed.
   useEffect(() => {
@@ -353,7 +372,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
     (!rules.requirePermission || hasPermission(rules.requirePermission)) &&
     (!rules.requireAnyPermission || rules.requireAnyPermission.some((code) => hasPermission(code)));
 
-  const filteredNavItems = navItems.filter(canAccess);
+  const filteredNavItems = navItems.filter(canAccess).filter((i) => i.id !== 'my-onboarding' || showOnboarding);
 
   const isActive = (item: NavItem) => {
     if (item.href === '/') return pathname === '/';
@@ -532,17 +551,21 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
           ) : null}
 
           <div className="flex-1 max-w-md">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search employees, docs, claims, leaves..."
-                className="w-full pl-4 pr-10 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300 focus:ring-2 focus:ring-indigo-500/10 transition-all"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hidden sm:flex items-center gap-1">
-                <SearchIcon className="w-4 h-4" />
-                <kbd className="text-[10px] font-semibold border border-slate-200 rounded px-1 py-0.5">⌘K</kbd>
-              </span>
-            </div>
+            {user?.role === 'admin' || user?.role === 'superadmin' ? (
+              <EmployeeSearch />
+            ) : (
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search employees, docs, claims, leaves..."
+                  className="w-full pl-4 pr-10 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-slate-300 focus:ring-2 focus:ring-indigo-500/10 transition-all"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hidden sm:flex items-center gap-1">
+                  <SearchIcon className="w-4 h-4" />
+                  <kbd className="text-[10px] font-semibold border border-slate-200 rounded px-1 py-0.5">⌘K</kbd>
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">

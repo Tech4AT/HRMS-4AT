@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   onboardingApi,
@@ -16,9 +17,6 @@ import {
 } from '@/lib/api/onboarding';
 import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
 import { CheckCircleIcon, FileTextIcon, XIcon } from '@/components/icons';
-import { IdentityDocumentCards } from '@/components/documents/IdentityDocumentCards';
-import { MyDocumentsList } from '@/components/documents/MyDocumentsList';
-import { EducationRecordCards } from '@/components/documents/EducationRecordCards';
 import { ConfirmDialog } from '@/components/documents/ConfirmDialog';
 
 // Matched against onboarding/management/commands/seed_onboarding_templates.py
@@ -34,13 +32,11 @@ export default function MyOnboardingPage() {
   const [data, setData] = useState<MyOnboarding | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loadCount, setLoadCount] = useState(0);
 
   const load = async () => {
     try {
       setError(null);
       setData(await onboardingApi.getMine());
-      setLoadCount((n) => n + 1);
     } catch (e) {
       setError(e instanceof OnboardingApiError ? e.message : 'Failed to load your onboarding checklist');
     }
@@ -113,15 +109,14 @@ export default function MyOnboardingPage() {
         </div>
       </div>
 
-      <div id="identity-documents" className="bg-white rounded-2xl border border-gray-200 p-5 mb-4 scroll-mt-4">
-        <h3 className="font-bold text-gray-900 mb-1">Identity Documents</h3>
-        <p className="text-xs text-gray-500 mb-4">Aadhaar, PAN and other government IDs. Visible only to you, HR, and Finance.</p>
-        <IdentityDocumentCards employeeId={data.employee.id} onChanged={load} />
-      </div>
-      <div id="education" className="bg-white rounded-2xl border border-gray-200 p-5 mb-4 scroll-mt-4">
-        <h3 className="font-bold text-gray-900 mb-1">Degrees &amp; Certificates</h3>
-        <p className="text-xs text-gray-500 mb-4">Your education details with a certificate for each. Visible only to you and HR.</p>
-        <EducationRecordCards employeeId={data.employee.id} onChanged={load} />
+      <div id="identity-documents" className="bg-white rounded-2xl border border-gray-200 p-5 mb-4 scroll-mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="font-bold text-gray-900 mb-1">Documents</h3>
+          <p className="text-xs text-gray-500">Identity documents, degrees &amp; certificates and your offer letter now live on your profile.</p>
+        </div>
+        <Link href="/profile?tab=documents" className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
+          Open Documents
+        </Link>
       </div>
       <BankDetailsCard onSaved={load} />
 
@@ -201,11 +196,6 @@ export default function MyOnboardingPage() {
         );
       })}
 
-      <div className="bg-white rounded-2xl border border-gray-200 p-5 mb-4">
-        <h3 className="font-bold text-gray-900 mb-1">My Documents</h3>
-        <p className="text-xs text-gray-500 mb-4">Everything you&apos;ve submitted, plus your signed offer letter.</p>
-        <MyDocumentsList employeeId={data.employee.id} refreshKey={loadCount} onChanged={load} />
-      </div>
     </div>
   );
 }

@@ -25,6 +25,8 @@ from employees.models import (
     next_employee_code,
 )
 
+from attendance.models import Shift
+
 from .models import (
     EMPLOYMENT_TYPE_CHOICES,
     OFFER_LETTER_PLACEHOLDERS,
@@ -653,6 +655,9 @@ class CreateNewHireSerializer(serializers.Serializer):
         source='offer_letter_template', queryset=OfferLetterTemplate.objects.filter(is_active=True),
         required=False, allow_null=True,
     )
+    shift_id = serializers.PrimaryKeyRelatedField(
+        source='shift', queryset=Shift.objects.all(), required=False, allow_null=True,
+    )
 
     def validate_work_email(self, value):
         value = value.lower()
@@ -697,6 +702,9 @@ class CreateNewHireSerializer(serializers.Serializer):
             status=Employee.STATUS_PRE_ONBOARDING,
             joining_date=data['joining_date'],
         )
+
+        if data.get('shift'):
+            data['shift'].employees.add(employee)
 
         profile = OnboardingProfile.objects.create(
             employee=employee,

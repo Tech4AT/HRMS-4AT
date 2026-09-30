@@ -25,7 +25,7 @@ function gradeLabel(grade: string): string {
   return n <= 10 ? `${grade} CGPA` : `${grade}%`;
 }
 
-export function EducationRecordCards({ employeeId, onChanged }: { employeeId: number; onChanged?: () => void }) {
+export function EducationRecordCards({ employeeId, onChanged, readOnly = false }: { employeeId: number; onChanged?: () => void; readOnly?: boolean }) {
   const [records, setRecords] = useState<EducationRecord[] | null>(null);
   const [editing, setEditing] = useState<{ record: EducationRecord | null } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<EducationRecord | null>(null);
@@ -34,7 +34,7 @@ export function EducationRecordCards({ employeeId, onChanged }: { employeeId: nu
 
   const load = async () => {
     try {
-      setRecords(await onboardingApi.getMyEducationRecords());
+      setRecords(await onboardingApi.getMyEducationRecords(readOnly ? employeeId : undefined));
     } catch {
       setRecords([]);
     }
@@ -71,18 +71,18 @@ export function EducationRecordCards({ employeeId, onChanged }: { employeeId: nu
   return (
     <div className="space-y-4">
       {sorted.length === 0 && (
-        <p className="text-sm text-gray-500">No qualifications added yet. Add each one — school, college, and any degrees — with its certificate.</p>
+        <p className="text-sm text-gray-500">{readOnly ? 'No qualifications added yet.' : 'No qualifications added yet. Add each one — school, college, and any degrees — with its certificate.'}</p>
       )}
       {sorted.map((record) => (
-        <EducationCard key={record.id} record={record} onEdit={() => setEditing({ record })} onRemove={() => setRemoveTarget(record)} />
+        <EducationCard key={record.id} record={record} readOnly={readOnly} onEdit={() => setEditing({ record })} onRemove={() => setRemoveTarget(record)} />
       ))}
-      <button
+      {!readOnly && <button
         onClick={() => setEditing({ record: null })}
         className="w-full rounded-2xl border-2 border-dashed border-gray-200 py-4 flex items-center justify-center gap-2 text-gray-500 hover:border-purple-300 hover:text-purple-600 transition-colors text-sm font-semibold"
       >
         <PlusIcon className="w-4 h-4" />
         Add qualification
-      </button>
+      </button>}
 
       {editing && (
         <EducationDialog
@@ -115,7 +115,7 @@ export function EducationRecordCards({ employeeId, onChanged }: { employeeId: nu
   );
 }
 
-function EducationCard({ record, onEdit, onRemove }: { record: EducationRecord; onEdit: () => void; onRemove: () => void }) {
+function EducationCard({ record, onEdit, onRemove, readOnly = false }: { record: EducationRecord; onEdit: () => void; onRemove: () => void; readOnly?: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const locked = record.verificationStatus === 'verified';
@@ -164,7 +164,7 @@ function EducationCard({ record, onEdit, onRemove }: { record: EducationRecord; 
           ) : (
             <span className="text-xs text-amber-600 font-semibold">Certificate not uploaded</span>
           )}
-          {locked ? (
+          {readOnly ? null : locked ? (
             <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold" title="Verified — contact HR to change">
               <CheckCircleIcon className="w-4 h-4" />
             </span>

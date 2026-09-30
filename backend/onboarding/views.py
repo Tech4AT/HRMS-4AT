@@ -431,6 +431,19 @@ IDENTITY_DOCS_TASK_TITLE = 'submit id proof'
 EDUCATION_TASK_TITLE = 'submit educational certificates'
 
 
+def _viewed_employee(request):
+    """The employee a `me/*` read is about: the caller's own, or — for HR
+    Admin only — the one named by `?employeeId=` (Employee 360 Documents tab).
+    Returns (employee, is_self)."""
+    own = getattr(request.user, 'employee', None)
+    target_id = request.query_params.get('employeeId')
+    if target_id and (own is None or str(own.id) != str(target_id)):
+        if not is_hr_admin(request.user):
+            return None, False
+        return Employee.objects.filter(pk=target_id).first(), False
+    return own, True
+
+
 class MyIdentityDocumentsView(APIView):
     """`GET/POST /onboarding/me/identity-documents` — the candidate's own
     identity documents (Aadhaar/PAN/Voter ID/...). Never masked here, it's
@@ -443,11 +456,12 @@ class MyIdentityDocumentsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        employee = getattr(request.user, 'employee', None)
+        employee, is_self = _viewed_employee(request)
         if employee is None:
             return _forbidden()
         docs = IdentityDocument.objects.filter(employee=employee)
-        return Response({'success': True, 'data': IdentityDocumentSerializer(docs, many=True, context={'request': request}).data})
+        ctx = {'request': request} if is_self else {'request': request, 'mask': True}
+        return Response({'success': True, 'data': IdentityDocumentSerializer(docs, many=True, context=ctx).data})
 
     def post(self, request):
         employee = getattr(request.user, 'employee', None)
@@ -542,7 +556,7 @@ class MyEducationRecordsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        employee = getattr(request.user, 'employee', None)
+        employee, _ = _viewed_employee(request)
         if employee is None:
             return _forbidden()
         records = EducationRecord.objects.filter(employee=employee)

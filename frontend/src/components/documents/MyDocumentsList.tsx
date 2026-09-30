@@ -11,7 +11,7 @@ const CATEGORY_ORDER: MyDocument['category'][] = ['Offer letter', 'Identity', 'E
 /** Every file on the signed-in employee's record — the signed offer letter
  * included — with view/download, and replace/delete where the backend says
  * the employee may (their own uploads, not HR-issued or verified ones). */
-export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { employeeId: number; refreshKey?: number; onChanged?: () => void }) {
+export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged, readOnly = false }: { employeeId: number; refreshKey?: number; onChanged?: () => void; readOnly?: boolean }) {
   const [docs, setDocs] = useState<MyDocument[] | null>(null);
   const [busyId, setBusyId] = useState<string | number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +21,7 @@ export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { emp
 
   const load = async () => {
     try {
-      setDocs(await documentsApi.mine());
+      setDocs(await documentsApi.mine(readOnly ? employeeId : undefined));
     } catch {
       setDocs([]);
     }
@@ -68,7 +68,7 @@ export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { emp
   };
 
   if (docs === null) return <p className="text-xs text-gray-400">Loading…</p>;
-  if (docs.length === 0) return <p className="text-sm text-gray-500">No documents yet. Files you upload and your signed offer letter will appear here.</p>;
+  if (docs.length === 0) return <p className="text-sm text-gray-500">{readOnly ? 'No documents on file.' : 'No documents yet. Files you upload and your signed offer letter will appear here.'}</p>;
 
   return (
     <div className="space-y-5">
@@ -94,7 +94,7 @@ export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { emp
                   <div className="flex items-center gap-3 shrink-0">
                     <a href={doc.viewUrl} target="_blank" rel="noreferrer" className="text-xs font-semibold text-purple-600 hover:underline">View</a>
                     <a href={doc.downloadUrl} className="text-xs font-semibold text-gray-600 hover:underline">Download</a>
-                    {doc.canReplace && (
+                    {!readOnly && doc.canReplace && (
                       <label className="text-xs font-semibold text-gray-600 hover:underline cursor-pointer">
                         {busyId === doc.id ? 'Replacing…' : 'Replace'}
                         <input
@@ -110,7 +110,7 @@ export function MyDocumentsList({ employeeId, refreshKey = 0, onChanged }: { emp
                         />
                       </label>
                     )}
-                    {doc.canDelete && (
+                    {!readOnly && doc.canDelete && (
                       <button onClick={() => setRemoveTarget(doc)} className="text-xs font-semibold text-red-500 hover:underline">
                         Delete
                       </button>

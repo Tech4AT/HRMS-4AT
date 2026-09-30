@@ -34,6 +34,13 @@ interface NamedEntity {
   name: string;
 }
 
+interface ShiftOption {
+  id: string | number;
+  name: string;
+  startTime?: string;
+  endTime?: string;
+}
+
 interface EmployeeLookupItem {
   id: number;
   name: string;
@@ -391,6 +398,7 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [costCenters, setCostCenters] = useState<NamedEntity[]>([]);
   const [employees, setEmployees] = useState<EmployeeLookupItem[]>([]);
   const [offerTemplates, setOfferTemplates] = useState<OfferLetterTemplate[]>([]);
+  const [shifts, setShifts] = useState<ShiftOption[]>([]);
 
   const [form, setForm] = useState<CreateNewHireInput>({
     firstName: '',
@@ -410,18 +418,27 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
     noticePeriodDays: 90,
     offerLetterTemplateId: null,
     temporaryPassword: '',
+    shiftId: null,
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCreateDepartment, setShowCreateDepartment] = useState(false);
+  const [showCreateDesignation, setShowCreateDesignation] = useState(false);
+
+  const reloadDepartments = () => fetchJson<NamedEntity[]>('/api/departments').then(setDepartments).catch(() => {});
+  const reloadDesignations = () => fetchJson<NamedEntity[]>('/api/designations').then(setDesignations).catch(() => {});
 
   useEffect(() => {
-    fetchJson<NamedEntity[]>('/api/departments').then(setDepartments).catch(() => {});
-    fetchJson<NamedEntity[]>('/api/designations').then(setDesignations).catch(() => {});
+    reloadDepartments();
+    reloadDesignations();
     fetchJson<NamedEntity[]>('/api/locations').then(setLocations).catch(() => {});
     fetchJson<NamedEntity[]>('/api/legal-entities').then(setLegalEntities).catch(() => {});
     fetchJson<NamedEntity[]>('/api/business-units').then(setBusinessUnits).catch(() => {});
     fetchJson<NamedEntity[]>('/api/cost-centers').then(setCostCenters).catch(() => {});
     fetchJson<EmployeeLookupItem[]>('/api/employees/lookup').then(setEmployees).catch(() => {});
+    fetchJson<ShiftOption[]>('/api/attendance/shifts')
+      .then(setShifts)
+      .catch(() => {});
     onboardingApi
       .getOfferLetterTemplates()
       .then((templates) => {
@@ -568,14 +585,26 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
                   />
                 </Field>
                 <Field label="Job Title">
-                  <select
-                    className="wizard-input"
+                  <SelectWithCreate
                     value={form.designationId ?? ''}
-                    onChange={(e) => update({ designationId: e.target.value ? Number(e.target.value) : null })}
-                  >
-                    <option value="">Select job title</option>
-                    {designations.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
+                    onChange={(v) => update({ designationId: v ? Number(v) : null })}
+                    options={designations}
+                    placeholder="Select job title"
+                    createLabel="+ Create designation"
+                    onCreateClick={() => setShowCreateDesignation(true)}
+                  />
+                  {showCreateDesignation && (
+                    <CreateEntityModal
+                      title="New Designation"
+                      endpoint="/api/designations"
+                      onClose={() => setShowCreateDesignation(false)}
+                      onCreated={(entity) => {
+                        reloadDesignations();
+                        update({ designationId: entity.id });
+                        setShowCreateDesignation(false);
+                      }}
+                    />
+                  )}
                 </Field>
               </div>
 
@@ -613,14 +642,26 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
                     </select>
                   </Field>
                   <Field label="Department *">
-                    <select
-                      className="wizard-input"
+                    <SelectWithCreate
                       value={form.departmentId ?? ''}
-                      onChange={(e) => update({ departmentId: e.target.value ? Number(e.target.value) : null })}
-                    >
-                      <option value="">Select department</option>
-                      {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                    </select>
+                      onChange={(v) => update({ departmentId: v ? Number(v) : null })}
+                      options={departments}
+                      placeholder="Select department"
+                      createLabel="+ Create department"
+                      onCreateClick={() => setShowCreateDepartment(true)}
+                    />
+                    {showCreateDepartment && (
+                      <CreateEntityModal
+                        title="New Department"
+                        endpoint="/api/departments"
+                        onClose={() => setShowCreateDepartment(false)}
+                        onCreated={(entity) => {
+                          reloadDepartments();
+                          update({ departmentId: entity.id });
+                          setShowCreateDepartment(false);
+                        }}
+                      />
+                    )}
                   </Field>
                   <Field label="Location *">
                     <select
@@ -669,6 +710,20 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
                     >
                       <option value="">Cost Center</option>
                       {costCenters.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Shift">
+                    <select
+                      className="wizard-input"
+                      value={form.shiftId ?? ''}
+                      onChange={(e) => update({ shiftId: e.target.value ? Number(e.target.value) : null })}
+                    >
+                      <option value="">No shift assigned</option>
+                      {shifts.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}{s.startTime && s.endTime ? ` (${s.startTime}–${s.endTime})` : ''}
+                        </option>
+                      ))}
                     </select>
                   </Field>
                 </div>
@@ -919,6 +974,107 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="block text-xs font-semibold text-gray-600 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function SelectWithCreate({
+  value,
+  onChange,
+  options,
+  placeholder,
+  createLabel,
+  onCreateClick,
+}: {
+  value: string | number;
+  onChange: (v: string) => void;
+  options: NamedEntity[];
+  placeholder: string;
+  createLabel: string;
+  onCreateClick: () => void;
+}) {
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (e.target.value === '__create__') {
+      onCreateClick();
+    } else {
+      onChange(e.target.value);
+    }
+  };
+
+  return (
+    <select
+      className="wizard-input"
+      value={value}
+      onChange={handleChange}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      <option value="__create__">{createLabel}</option>
+    </select>
+  );
+}
+
+function CreateEntityModal({
+  title,
+  endpoint,
+  onClose,
+  onCreated,
+}: {
+  title: string;
+  endpoint: string;
+  onClose: () => void;
+  onCreated: (entity: NamedEntity) => void;
+}) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!name.trim()) { setErr('Name is required.'); return; }
+    setSaving(true);
+    setErr(null);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body?.success) throw new Error(body?.error?.message || 'Failed to create');
+      onCreated(body.data as NamedEntity);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to create');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-gray-900 mb-4">{title}</h3>
+        <label className="block mb-3">
+          <span className="block text-xs font-semibold text-gray-600 mb-1">Name *</span>
+          <input
+            className="wizard-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Enter name"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleSave(); }}
+          />
+        </label>
+        {err && <p className="text-red-600 text-sm mb-3">{err}</p>}
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold text-sm hover:bg-gray-50">
+            Cancel
+          </button>
+          <button type="button" disabled={saving} onClick={() => void handleSave()} className="flex-1 px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold text-sm hover:bg-purple-700 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

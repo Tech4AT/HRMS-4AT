@@ -53,7 +53,7 @@ function fieldValue(doc: IdentityDocument, field: IdentityField): string {
   return doc[field] || '';
 }
 
-export function IdentityDocumentCards({ employeeId, onChanged }: { employeeId: number; onChanged?: () => void }) {
+export function IdentityDocumentCards({ employeeId, onChanged, readOnly = false }: { employeeId: number; onChanged?: () => void; readOnly?: boolean }) {
   const [docs, setDocs] = useState<IdentityDocument[] | null>(null);
   const [editing, setEditing] = useState<{ type: IdentityDocumentType; doc: IdentityDocument | null } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<IdentityDocument | null>(null);
@@ -62,7 +62,7 @@ export function IdentityDocumentCards({ employeeId, onChanged }: { employeeId: n
 
   const load = async () => {
     try {
-      setDocs(await onboardingApi.getMyIdentityDocuments());
+      setDocs(await onboardingApi.getMyIdentityDocuments(readOnly ? employeeId : undefined));
     } catch {
       setDocs([]);
     }
@@ -108,6 +108,7 @@ export function IdentityDocumentCards({ employeeId, onChanged }: { employeeId: n
             onAdd={() => setEditing({ type, doc: null })}
             onEdit={(doc) => setEditing({ type, doc })}
             onRemove={setRemoveTarget}
+            readOnly={readOnly}
           />
         ))}
         {others.map((doc) => (
@@ -118,16 +119,17 @@ export function IdentityDocumentCards({ employeeId, onChanged }: { employeeId: n
             onAdd={() => undefined}
             onEdit={(d) => setEditing({ type: 'other', doc: d })}
             onRemove={setRemoveTarget}
+            readOnly={readOnly}
           />
         ))}
-        <button
+        {!readOnly && <button
           onClick={() => setEditing({ type: 'other', doc: null })}
           className="rounded-2xl border-2 border-dashed border-gray-200 p-5 flex flex-col items-center justify-center gap-2 text-gray-500 hover:border-purple-300 hover:text-purple-600 transition-colors min-h-[180px]"
         >
           <PlusIcon className="w-6 h-6" />
           <span className="text-sm font-semibold">Add another ID</span>
           <span className="text-xs text-gray-400">Any other government ID</span>
-        </button>
+        </button>}
       </div>
 
       {editing && (
@@ -168,7 +170,9 @@ function IdentityCard({
   onAdd,
   onEdit,
   onRemove,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   type: IdentityDocumentType;
   doc: IdentityDocument | null;
   onAdd: () => void;
@@ -186,13 +190,13 @@ function IdentityCard({
         </div>
         <div className="p-4 flex flex-col items-start gap-3">
           <p className="text-xs text-gray-500">Not added yet</p>
-          <button
+          {!readOnly && <button
             onClick={onAdd}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-purple-600 text-purple-600 text-xs font-semibold hover:bg-purple-50"
           >
             <PlusIcon className="w-3.5 h-3.5" />
             Add {IDENTITY_DOCUMENT_TYPE_LABEL[type]}
-          </button>
+          </button>}
         </div>
       </div>
     );
@@ -259,7 +263,7 @@ function IdentityCard({
           ) : (
             <span className="text-xs text-gray-400">No scan uploaded</span>
           )}
-          {locked ? (
+          {readOnly ? null : locked ? (
             <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold">
               <CheckCircleIcon className="w-3.5 h-3.5" />
               Verified — contact HR to change

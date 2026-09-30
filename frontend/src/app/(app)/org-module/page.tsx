@@ -423,7 +423,7 @@ export default function OrgDashboardPage() {
       value: myDocCount,
       note:
         myDocCount === null ? 'Could not load documents' : 'Files on my own record',
-      href: '/me/documents',
+      href: '/profile?tab=documents',
     },
     {
       label: 'Onboarding Tasks',
