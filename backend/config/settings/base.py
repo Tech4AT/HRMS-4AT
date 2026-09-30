@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     "onboarding",
     # Asset inventory (laptops) — RBAC + scope enforced like leave/documents.
     "assets",
+    # Document templates engine (own app + migrations — never touch documents).
+    "document_templates",
     # ORG module Wave 1: effective-dated org changes (promotions, transfers).
     "orgchanges",
     "policies",
