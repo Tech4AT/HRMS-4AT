@@ -6,7 +6,10 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -184,6 +187,125 @@ function HeadcountBreakdownCard({ seed }: { seed: HeadcountBucket[] | null }) {
   );
 }
 
+/** Per-location breakdown (Keka "Locations" card): employees and distinct
+ * departments at each location, derived from the directory. No thumbnails or
+ * country data in our model — name + counts only. */
+function LocationsCard({
+  employees,
+  locations,
+}: {
+  employees: OrgEmployee[];
+  locations: NamedEntity[];
+}) {
+  const rows = useMemo(() => {
+    const byLoc = new Map<string, { emps: number; depts: Set<string> }>();
+    for (const e of employees) {
+      const loc = e.location_id;
+      if (!loc) continue;
+      const rec = byLoc.get(loc) ?? { emps: 0, depts: new Set<string>() };
+      rec.emps += 1;
+      if (e.department_id) rec.depts.add(e.department_id);
+      byLoc.set(loc, rec);
+    }
+    return locations
+      .map((l) => ({
+        id: l.id,
+        name: l.name,
+        emps: byLoc.get(l.id)?.emps ?? 0,
+        depts: byLoc.get(l.id)?.depts.size ?? 0,
+      }))
+      .sort((a, b) => b.emps - a.emps);
+  }, [employees, locations]);
+
+  return (
+    <Card
+      title="Locations"
+      action={
+        <Link href="/org-module/locations" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+          View All →
+        </Link>
+      }
+    >
+      {rows.length === 0 ? (
+        <EmptyNote>No locations yet.</EmptyNote>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {rows.slice(0, 6).map((r) => (
+            <li key={r.id} className="flex items-center gap-3 py-2.5">
+              <span className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" /></svg>
+              </span>
+              <span className="min-w-0 flex-1 text-sm font-semibold text-slate-800 truncate">{r.name}</span>
+              <span className="text-center shrink-0 w-16">
+                <span className="block text-sm font-bold text-slate-900">{r.emps}</span>
+                <span className="block text-[10px] uppercase tracking-wide text-slate-400">Employees</span>
+              </span>
+              <span className="text-center shrink-0 w-20">
+                <span className="block text-sm font-bold text-slate-900">{r.depts}</span>
+                <span className="block text-[10px] uppercase tracking-wide text-slate-400">Departments</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+const POSITION_STATUS_META: { key: string; label: string; color: string }[] = [
+  { key: 'filled', label: 'Filled', color: '#2563eb' },
+  { key: 'vacant', label: 'Vacant', color: '#ec4899' },
+  { key: 'hiring', label: 'Hiring', color: '#8b5cf6' },
+  { key: 'on_hold', label: 'On Hold', color: '#f59e0b' },
+];
+
+/** Position Overview donut (Keka): positions grouped by status, total in the
+ * centre. Built from the live positions list. */
+function PositionOverviewCard({ positions }: { positions: OrgPosition[] }) {
+  const { data, total } = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of positions) counts.set(p.status, (counts.get(p.status) ?? 0) + 1);
+    const data = POSITION_STATUS_META.map((m) => ({ ...m, value: counts.get(m.key) ?? 0 }));
+    return { data, total: positions.length };
+  }, [positions]);
+
+  return (
+    <Card title="Position Overview">
+      {total === 0 ? (
+        <EmptyNote>No positions yet.</EmptyNote>
+      ) : (
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="relative w-40 h-40 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={data} dataKey="value" nameKey="label" innerRadius={52} outerRadius={72} paddingAngle={2} stroke="none">
+                  {data.map((d) => (
+                    <Cell key={d.key} fill={d.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span className="text-2xl font-bold text-slate-900">{total}</span>
+              <span className="text-[11px] text-slate-400">Positions</span>
+            </div>
+          </div>
+          <ul className="flex-1 min-w-[8rem] space-y-2">
+            {data.map((d) => (
+              <li key={d.key} className="flex items-center gap-2 text-sm">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                <span className="flex-1 text-slate-600">{d.label}</span>
+                <span className="font-bold text-slate-900">{d.value}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export default function OrgDashboardPage() {
   const [tab, setTab] = useState<TabId>('summary');
 
@@ -251,6 +373,10 @@ export default function OrgDashboardPage() {
     () => positions?.filter((p) => p.status === 'vacant').length ?? 0,
     [positions],
   );
+  const filledPositions = useMemo(
+    () => positions?.filter((p) => p.status === 'filled').length ?? 0,
+    [positions],
+  );
 
   const kpis = [
     {
@@ -260,7 +386,11 @@ export default function OrgDashboardPage() {
     },
     { label: 'Departments', value: live ? departments.length : 0, note: 'Live from directory' },
     { label: 'Locations', value: live ? locations.length : 0, note: 'Live from directory' },
-    { label: 'Total Positions', value: totalPositions, note: 'Live from positions' },
+    {
+      label: 'Total Positions',
+      value: totalPositions,
+      note: totalPositions ? `${filledPositions} Filled · ${vacantPositions} Vacant` : 'Live from positions',
+    },
     { label: 'Vacant Positions', value: vacantPositions, note: 'Live from positions' },
   ];
 
@@ -440,6 +570,14 @@ export default function OrgDashboardPage() {
               </EmptyNote>
             </Card>
           </div>
+
+          {/* Locations + Position Overview (Keka dashboard parity) */}
+          {!loading && (
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <LocationsCard employees={employees ?? []} locations={locations ?? []} />
+              <PositionOverviewCard positions={positions ?? []} />
+            </div>
+          )}
 
           {/* Pending actions + Quicklinks */}
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
