@@ -19,7 +19,6 @@ import {
   GridIcon,
   SettingsIcon,
   HelpIcon,
-  ChevronLeftIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
@@ -511,17 +510,6 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
           {currentPageTitle ? (
             <div className="min-w-0 shrink-0 flex items-center gap-1.5">
-              {pathname !== '/' ? (
-                <button
-                  type="button"
-                  onClick={() => router.back()}
-                  aria-label="Go back"
-                  title="Go back"
-                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
-                >
-                  <ChevronLeftIcon className="w-5 h-5" />
-                </button>
-              ) : null}
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
                 {currentPageTitle.subtitle ? (
