@@ -46,6 +46,20 @@ function docExpiry(d: OrgDocument): string | null {
   return d.expiryDate ?? d.expiry_date ?? null;
 }
 
+/** Pure client formatting: true when the document expires within the next
+ * 30 days (expiry date itself included; past dates are left as-is). */
+function isExpiringSoon(d: OrgDocument): boolean {
+  const v = docExpiry(d);
+  if (!v) return false;
+  const target = new Date(v);
+  if (Number.isNaN(target.getTime())) return false;
+  target.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((target.getTime() - today.getTime()) / 86_400_000);
+  return days >= 0 && days <= 30;
+}
+
 /** Small inline pencil glyph for the HR folder edit control (kept local so
  * the shared rail module stays untouched). */
 function PencilIcon({ className }: { className?: string }) {
@@ -528,7 +542,14 @@ export function OrganizationDocumentsTab() {
                           <span className="text-gray-400">—</span>
                         )}
                       </td>
-                      <td className="px-5 py-3 text-sm text-gray-500">{fmtDate(docExpiry(d))}</td>
+                      <td className="px-5 py-3 text-sm text-gray-500">
+                        {fmtDate(docExpiry(d))}
+                        {isExpiringSoon(d) && (
+                          <span className="ml-2 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide text-amber-700 bg-amber-100 border border-amber-200 rounded-full px-2 py-0.5 align-middle">
+                            Expiring soon
+                          </span>
+                        )}
+                      </td>
                       <td className="px-5 py-3 text-sm text-gray-500">{fmtSize(docSize(d))}</td>
                       <td className="px-5 py-3 text-sm text-gray-500">{fmtDate(docUpdated(d))}</td>
                       <td className="px-5 py-3 text-sm text-gray-500">—</td>
