@@ -258,3 +258,77 @@ def test_putting_someone_on_leave_does_not_touch_their_login():
 
     employee.user.refresh_from_db()
     assert employee.user.is_active is True
+
+
+# --- reporting lines: two-tier gating (admin vs manager) --------------------
+# Proves the objective end-to-end through the real seeded roles, not synthetic
+# ones: an HR Admin (employees.write ALL) may repoint anyone; a Manager
+# (employees.write TEAM, seeded by migration 0015) may repoint only within
+# their own subtree, and the change shows up on the directory read.
+
+
+def _manager_client():
+    """A user holding the real 'Manager' role, with their own employee record."""
+    user = UserFactory(role=Role.objects.get(name="Manager"))
+    boss = EmployeeFactory(user=user)
+    return _client_for(user), boss
+
+
+def test_admin_can_set_any_managers_reporting_line():
+    a = EmployeeFactory()
+    b = EmployeeFactory()
+
+    response = _hr().patch(f"{URL}{a.pk}/", {"manager_id": b.pk}, format="json")
+
+    assert response.status_code == 200
+    a.refresh_from_db()
+    assert a.manager_id == b.pk
+
+
+def test_manager_repoints_a_report_within_their_own_subtree():
+    client, boss = _manager_client()
+    lead = EmployeeFactory(manager=boss)  # direct report
+    junior = EmployeeFactory(manager=lead)  # indirect report (subtree)
+
+    # Move the indirect report to report straight to the boss — both ends are
+    # inside the manager's TEAM scope.
+    response = client.patch(f"{URL}{junior.pk}/", {"manager_id": boss.pk}, format="json")
+
+    assert response.status_code == 200
+    junior.refresh_from_db()
+    assert junior.manager_id == boss.pk
+
+
+def test_manager_cannot_touch_a_report_outside_their_subtree():
+    client, _boss = _manager_client()
+    stranger = EmployeeFactory()  # not under this manager
+    other = EmployeeFactory()
+
+    response = client.patch(f"{URL}{stranger.pk}/", {"manager_id": other.pk}, format="json")
+
+    assert response.status_code == 403
+    stranger.refresh_from_db()
+    assert stranger.manager_id != other.pk
+
+
+def test_manager_cannot_point_a_report_at_a_manager_outside_their_subtree():
+    client, boss = _manager_client()
+    report = EmployeeFactory(manager=boss)
+    outsider = EmployeeFactory()  # outside the subtree
+
+    response = client.patch(f"{URL}{report.pk}/", {"manager_id": outsider.pk}, format="json")
+
+    assert response.status_code == 403
+    report.refresh_from_db()
+    assert report.manager_id == boss.pk
+
+
+def test_a_reporting_line_change_is_visible_on_the_directory_read():
+    a = EmployeeFactory()
+    b = EmployeeFactory()
+
+    _hr().patch(f"{URL}{a.pk}/", {"manager_id": b.pk}, format="json")
+
+    detail = _hr().get(f"{URL}{a.pk}/")
+    assert detail.status_code == 200
+    assert detail.json()["data"]["manager_id"] == str(b.pk)
