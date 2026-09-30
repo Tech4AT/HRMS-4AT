@@ -34,7 +34,7 @@ def test_folders_list_with_counts(clients):
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data[0]["name"] == "Offer Letters"
-        assert data[0]["template_count"] == 1
+        assert data[0]["templateCount"] == 1
 
 
 def test_create_update_delete_is_hr_only(clients):

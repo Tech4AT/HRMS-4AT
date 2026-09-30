@@ -50,12 +50,5 @@ class DocumentTemplateSerializer(serializers.ModelSerializer):
         name = user.get_full_name().strip()
         return name or user.email
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        # camelCase aliases alongside snake_case (house envelope is camelCase).
-        data["folderName"] = data.get("folder_name")
-        data["actionType"] = data.get("action_type")
-        data["workflowEnabled"] = data.get("workflow_enabled")
-        data["lastUsedAt"] = data.get("last_used_at")
-        data["createdByName"] = data.get("created_by_name")
-        return data
+    # NOTE: no manual camelCase aliases — the global CamelCaseJSONRenderer
+    # (base.py DRF settings) converts every snake_case key automatically.
