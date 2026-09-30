@@ -135,6 +135,16 @@ class Command(BaseCommand):
                 last = g(r, "Last Name")
                 email = f"{empno.lower()}@consult-4at.com"
                 exited = g(r, "Exit Status").lower() not in ("", "none", "no")
+                # Worker Type "Contingent" = contractor; Time Type "Part Time"
+                # overrides to part-time. Everything else is full-time.
+                worker_type = g(r, "Worker Type").strip().lower()
+                time_type = g(r, "Time Type").strip().lower()
+                if "conting" in worker_type or "contract" in worker_type:
+                    emp_type = "contract"
+                elif "part" in time_type:
+                    emp_type = "part_time"
+                else:
+                    emp_type = "full_time"
                 u = User(email=email, username=email, first_name=first, last_name=last)
                 u.set_unusable_password()
                 u.save()
@@ -144,6 +154,7 @@ class Command(BaseCommand):
                     designation=simple(des, JobTitle, g(r, "Job Title")),
                     location=simple(loc, Location, g(r, "Location")),
                     status="exited" if exited else "active",
+                    employment_type=emp_type,
                 )
                 rm = g(r, "Reporting Manager")
                 if rm:

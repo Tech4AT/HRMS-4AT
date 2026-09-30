@@ -10,7 +10,7 @@ historical Employee records may still reference a since-retired one.
 from django.conf import settings
 from django.db import models
 
-from core.enums import EmployeeStatus, EmploymentType
+from core.enums import EmployeeStatus, EmploymentType, WorkMode
 
 
 class SoftDeleteNamedModel(models.Model):
@@ -520,6 +520,11 @@ class Employee(models.Model):
     )
     employment_type = models.CharField(
         max_length=20, choices=EmploymentType.choices, default=EmploymentType.FULL_TIME
+    )
+    # Work arrangement (office/remote/hybrid). Not in the roster export, so it
+    # defaults to OFFICE and HR sets remote/hybrid people from the employee form.
+    work_mode = models.CharField(
+        max_length=20, choices=WorkMode.choices, default=WorkMode.OFFICE
     )
     employee_code = models.CharField(max_length=50, unique=True)
 

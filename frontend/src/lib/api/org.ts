@@ -26,6 +26,8 @@ export interface OrgEmployee {
   team_ids?: string[];
   status: string;
   employment_type: string;
+  /** Work arrangement: office | remote | hybrid. */
+  work_mode?: string;
   date_of_joining: string | null;
   date_of_exit: string | null;
 }

@@ -213,3 +213,30 @@ def test_org_directory_hides_former_staff_unless_requested():
     assert str(active.pk) in ids2 and str(exited.pk) in ids2
     exited_row = next(r for r in withformer.json()["data"] if r["id"] == str(exited.pk))
     assert exited_row["status"] == "exited"
+
+
+def test_work_mode_is_writable_and_a_headcount_dimension():
+    """Work Mode (office/remote/hybrid) can be set via the admin write API and
+    breaks down headcount, alongside employment_type (contractors)."""
+    hr = _client("HR Admin")
+
+    # Create with a work mode + contract type.
+    created = hr.post(
+        "/api/v1/employees/",
+        {"first_name": "Rem", "last_name": "Ote", "work_email": "rem@x.io",
+         "employee_code": "WM-1", "work_mode": "remote", "employment_type": "contract"},
+        format="json",
+    )
+    assert created.status_code == 201, created.content
+    assert created.json()["work_mode"] == "remote"
+
+    # Edit it back to office.
+    emp_id = created.json()["id"]
+    edited = hr.patch(f"/api/v1/employees/{emp_id}/", {"work_mode": "office"}, format="json")
+    assert edited.status_code == 200 and edited.json()["work_mode"] == "office"
+
+    # work_mode is an accepted analytics dimension.
+    res = hr.get("/api/v1/org/analytics/headcount/?by=work_mode")
+    assert res.status_code == 200, res.content
+    names = {b["name"] for b in res.json()["buckets"]}
+    assert names  # at least one bucket (Office/Remote/Hybrid)

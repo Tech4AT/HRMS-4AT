@@ -66,14 +66,16 @@ function Card({
   subtitle,
   action,
   children,
+  className = '',
 }: {
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="bg-white border border-slate-200 rounded-xl p-5">
+    <section className={`bg-white border border-slate-200 rounded-xl p-5 h-full ${className}`}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h3 className="text-sm font-bold text-slate-900">{title}</h3>
         {action}
@@ -452,14 +454,6 @@ export default function OrgDashboardPage() {
     { label: 'Organisation Chart', href: '/org?tab=chart' },
   ];
 
-  const bulkOps: { label: string; disabledNote: string }[] = [
-    { label: 'Add employees', disabledNote: 'Coming soon' },
-    { label: 'Update employees', disabledNote: 'Coming soon' },
-    { label: 'Bulk invite employees', disabledNote: 'Coming soon' },
-    { label: 'Import job details', disabledNote: 'Coming soon' },
-    { label: 'Import custom fields', disabledNote: 'Coming soon' },
-    { label: 'Bulk import documents', disabledNote: 'Coming soon' },
-  ];
 
   /* --------------------------- exits / onboarding --------------------------- */
   const deptNames = useMemo(() => new Map((departments ?? []).map((d) => [d.id, d.name])), [departments]);
@@ -555,33 +549,32 @@ export default function OrgDashboardPage() {
             </div>
           )}
 
-          {/* Charts first, right after the KPIs */}
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {loading ? (
-              <Card title="Headcount breakdown">
-                <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
-              </Card>
-            ) : (
-              <HeadcountBreakdownCard seed={summary?.by_department ?? headcountByDepartment.map((d) => ({ id: null, name: d.department, headcount: d.headcount }))} />
-            )}
-            <Card title="Employee Login Summary">
-              <EmptyNote>
-                Login analytics not available yet — no login-events backend.
-              </EmptyNote>
-            </Card>
-          </div>
-
-          {/* Locations + Position Overview (Keka dashboard parity) */}
-          {!loading && (
-            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <LocationsCard employees={employees ?? []} locations={locations ?? []} />
-              <PositionOverviewCard positions={positions ?? []} />
+          {/* Bento grid: proportioned tiles in one cohesive 6-column grid.
+             Each child sets its own col-span; Card is h-full so a row's cards
+             align. Bulk operations moved to Settings (org-configuration). */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 auto-rows-auto gap-4">
+            {/* Headcount breakdown — vertical bar chart, dominant tile */}
+            <div className="md:col-span-2 lg:col-span-4">
+              {loading ? (
+                <Card title="Headcount breakdown">
+                  <div className="h-64 bg-slate-50 rounded-xl animate-pulse" />
+                </Card>
+              ) : (
+                <HeadcountBreakdownCard seed={summary?.by_department ?? headcountByDepartment.map((d) => ({ id: null, name: d.department, headcount: d.headcount }))} />
+              )}
             </div>
-          )}
 
-          {/* Pending actions + Quicklinks */}
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="lg:col-span-2">
+            {/* Position overview donut */}
+            <div className="md:col-span-2 lg:col-span-2">
+              {loading ? (
+                <Card title="Position overview"><div className="h-64 bg-slate-50 rounded-xl animate-pulse" /></Card>
+              ) : (
+                <PositionOverviewCard positions={positions ?? []} />
+              )}
+            </div>
+
+            {/* Pending actions — wide */}
+            <div className="md:col-span-2 lg:col-span-4">
               <Card
                 title="Pending Actions"
                 action={
@@ -630,52 +623,55 @@ export default function OrgDashboardPage() {
                 )}
               </Card>
             </div>
-            <Card title="Quicklinks">
-              <div className="flex flex-col gap-2">
-                {quicklinks.map((q) =>
-                  q.href ? (
-                    <Link
-                      key={q.label}
-                      href={q.href}
-                      className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors text-center"
-                    >
-                      {q.label}
-                    </Link>
-                  ) : (
-                    <span
-                      key={q.label}
-                      title={q.disabledNote}
-                      aria-disabled="true"
-                      className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
-                    >
-                      {q.label}
-                    </span>
-                  ),
-                )}
-              </div>
-            </Card>
-          </div>
 
-          {/* Bulk operations */}
-          <div className="mt-4">
-            <Card title="Bulk operations">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {bulkOps.map((b) => (
-                  <span
-                    key={b.label}
-                    title={b.disabledNote}
-                    aria-disabled="true"
-                    className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
-                  >
-                    {b.label}
-                  </span>
-                ))}
-              </div>
-            </Card>
-          </div>
+            {/* Quicklinks — narrow */}
+            <div className="md:col-span-2 lg:col-span-2">
+              <Card title="Quicklinks">
+                <div className="flex flex-col gap-2">
+                  {quicklinks.map((q) =>
+                    q.href ? (
+                      <Link
+                        key={q.label}
+                        href={q.href}
+                        className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors text-center"
+                      >
+                        {q.label}
+                      </Link>
+                    ) : (
+                      <span
+                        key={q.label}
+                        title={q.disabledNote}
+                        aria-disabled="true"
+                        className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
+                      >
+                        {q.label}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </Card>
+            </div>
 
-          {/* Exits + Onboarding lists */}
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Locations — half */}
+            <div className="md:col-span-1 lg:col-span-3">
+              {loading ? (
+                <Card title="Locations"><div className="h-40 bg-slate-50 rounded-xl animate-pulse" /></Card>
+              ) : (
+                <LocationsCard employees={employees ?? []} locations={locations ?? []} />
+              )}
+            </div>
+
+            {/* Login summary — half */}
+            <div className="md:col-span-1 lg:col-span-3">
+              <Card title="Employee Login Summary">
+                <EmptyNote>
+                  Login analytics not available yet — no login-events backend.
+                </EmptyNote>
+              </Card>
+            </div>
+
+            {/* Exits — half */}
+            <div className="md:col-span-1 lg:col-span-3">
               <Card
                 title={`Exits (${resignations === null ? '–' : activeExits.length})`}
                 action={
@@ -707,6 +703,10 @@ export default function OrgDashboardPage() {
                   </ul>
                 )}
               </Card>
+            </div>
+
+            {/* Onboarding — half */}
+            <div className="md:col-span-1 lg:col-span-3">
               <Card
                 title={`Onboarding (${onboarding === null ? '–' : activeOnboarding.length})`}
                 action={
@@ -738,6 +738,7 @@ export default function OrgDashboardPage() {
                   </ul>
                 )}
               </Card>
+            </div>
           </div>
         </div>
       )}

@@ -8,6 +8,7 @@ import {
   EMPLOYMENT_TYPES,
   GENDERS,
   STATUS_LABELS,
+  WORK_MODES,
   fmtDate,
   fullName,
   orgApi,
@@ -15,6 +16,7 @@ import {
   type EmployeeRow,
   type EmploymentType,
   type PersonalDetails,
+  type WorkMode,
 } from '@/lib/admin/orgApi';
 import { Badge, Button, ConfirmModal, Drawer, Modal, Notice, SectionTitle, Select, errorText } from '../ui';
 import type { Lookups, Named } from './useOrgData';
@@ -32,6 +34,7 @@ interface Form {
   cost_center_id: string;
   manager_id: string;
   employment_type: EmploymentType;
+  work_mode: WorkMode;
   date_of_joining: string;
 }
 
@@ -48,6 +51,7 @@ const EMPTY: Form = {
   cost_center_id: '',
   manager_id: '',
   employment_type: 'full_time',
+  work_mode: 'office',
   date_of_joining: '',
 };
 
@@ -68,6 +72,7 @@ function toForm(e: EmployeeRow | null): Form {
     cost_center_id: e.cost_center_id ?? '',
     manager_id: e.manager_id ?? '',
     employment_type: e.employment_type,
+    work_mode: e.work_mode ?? 'office',
     date_of_joining: e.date_of_joining ?? '',
   };
 }
@@ -274,6 +279,15 @@ export function EmployeeDrawer({
           </Field>
           <Field label="Date of joining" error={fieldError(error, 'date_of_joining')}>
             <input className={inputClass} type="date" value={form.date_of_joining} onChange={(e) => set('date_of_joining', e.target.value)} disabled={readOnly} />
+          </Field>
+          <Field label="Work mode" error={fieldError(error, 'work_mode')}>
+            <Select aria-label="Work mode" value={form.work_mode} onChange={(e) => set('work_mode', e.target.value as WorkMode)} disabled={readOnly}>
+              {WORK_MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
       </section>

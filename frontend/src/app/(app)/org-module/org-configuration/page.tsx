@@ -328,6 +328,32 @@ export default function OrgConfigurationPage() {
           ))}
         </div>
       )}
+
+      {/* Bulk operations — moved here from the Org dashboard. */}
+      <section className="mt-8">
+        <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-2">Bulk operations</h3>
+        <div className="bg-white border border-slate-200 rounded-xl p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {[
+              'Add employees',
+              'Update employees',
+              'Bulk invite employees',
+              'Import job details',
+              'Import custom fields',
+              'Bulk import documents',
+            ].map((label) => (
+              <span
+                key={label}
+                title="Coming soon"
+                aria-disabled="true"
+                className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-slate-50 border border-slate-200 text-slate-400 text-center cursor-not-allowed"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

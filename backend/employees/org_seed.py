@@ -278,6 +278,12 @@ REAL_LEGAL_ENTITY = {
 }
 
 REAL_LOCATION_NAME = "Hyderabad"
+
+# Offices that exist beyond the roster (which is 100% Hyderabad). (name, country)
+EXTRA_LOCATIONS = (
+    ("New York", "United States"),
+    ("Portugal", "Portugal"),
+)
 REAL_LOCATION = {
     "address_line1": "3rd Floor, D Block, iLabs Centre, Plot No.18, Silpa Gram Craft Village",
     "address_line2": "Madhapur",
@@ -400,6 +406,15 @@ def seed_keka_org_details():
                 setattr(location, field, value)
             location.save(update_fields=[*loc_fills, "updated_at"])
             created["location_backfilled"] += 1
+
+    # Additional office locations that aren't in the roster (all roster rows are
+    # Hyderabad). Seeded here so they survive the loader's Location wipe.
+    for loc_name, loc_country in EXTRA_LOCATIONS:
+        _, was_created = Location.objects.get_or_create(
+            name=loc_name,
+            defaults={"type": Location.TYPE_BRANCH, "country": loc_country},
+        )
+        created["extra_location"] = created.get("extra_location", 0) + int(was_created)
 
     # ROSTER IS SOURCE OF TRUTH — drop the empty Keka duplicates, never
     # recreate them. Deletion is empty-only (no employees; departments also

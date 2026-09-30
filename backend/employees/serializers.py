@@ -19,7 +19,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from accounts.models import Role
-from core.enums import EmployeeStatus, EmploymentType
+from core.enums import EmployeeStatus, EmploymentType, WorkMode
 from employees.models import (
     AuthorizedSignatory,
     BusinessUnit,
@@ -227,6 +227,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "team_ids",
             "status",
             "employment_type",
+            "work_mode",
             "date_of_joining",
             "date_of_exit",
         ]
@@ -300,6 +301,7 @@ class EmployeeWriteSerializer(serializers.Serializer):
     level_id = _reference(Level, "level")
     grade_id = _reference(Grade, "grade")
     employment_type = serializers.ChoiceField(choices=EmploymentType.choices, required=False)
+    work_mode = serializers.ChoiceField(choices=WorkMode.choices, required=False)
     date_of_joining = serializers.DateField(required=False, allow_null=True)
     date_of_exit = serializers.DateField(required=False, allow_null=True)
     exit_reason = serializers.CharField(max_length=200, required=False, allow_blank=True)
@@ -416,6 +418,7 @@ class EmployeeWriteSerializer(serializers.Serializer):
             employee_code=validated["employee_code"],
             status=status,
             employment_type=validated.get("employment_type", EmploymentType.FULL_TIME),
+            work_mode=validated.get("work_mode", WorkMode.OFFICE),
             department=validated.get("department"),
             designation=validated.get("designation"),
             location=validated.get("location"),
@@ -455,6 +458,7 @@ class EmployeeWriteSerializer(serializers.Serializer):
             "grade",
             "manager",
             "employment_type",
+            "work_mode",
             "date_of_joining",
             "date_of_exit",
             "exit_reason",

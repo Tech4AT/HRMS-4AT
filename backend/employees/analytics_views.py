@@ -62,6 +62,7 @@ DIMENSIONS = (
     "grade",
     "level",
     "employment_type",
+    "work_mode",
     "status",
 )
 
@@ -72,6 +73,7 @@ FILTER_FIELDS = (
     "cost_center",
     "legal_entity",
     "employment_type",
+    "work_mode",
     "status",
 )
 

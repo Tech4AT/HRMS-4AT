@@ -246,6 +246,7 @@ export type OrgHeadcountDimension =
   | 'grade'
   | 'level'
   | 'employment_type'
+  | 'work_mode'
   | 'status';
 
 export const HEADCOUNT_DIMENSIONS: { value: OrgHeadcountDimension; label: string }[] = [
@@ -253,6 +254,7 @@ export const HEADCOUNT_DIMENSIONS: { value: OrgHeadcountDimension; label: string
   { value: 'location', label: 'Location' },
   { value: 'business_unit', label: 'Business unit' },
   { value: 'employment_type', label: 'Employment type' },
+  { value: 'work_mode', label: 'Work mode' },
   { value: 'status', label: 'Status' },
 ];
 
