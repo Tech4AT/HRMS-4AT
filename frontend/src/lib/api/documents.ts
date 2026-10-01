@@ -172,6 +172,14 @@ export const documentsApi = {
 
   orgList: () => request<OrgDocument[]>('').then((v) => v ?? []),
 
+  /** Organization documents the signed-in caller may see. The backend
+   * filters `entityType=organization_document` by audience/role per caller
+   * (access.can_access), so a plain employee gets exactly the org docs
+   * pushed to them. Each row carries the per-user acknowledgement state
+   * (mustAcknowledge/acknowledged/acknowledgedAt) from DocumentSerializer. */
+  orgVisible: () =>
+    request<OrgDocument[]>('?entityType=organization_document').then((v) => v ?? []),
+
   /** HR creates an organization document. Sent as multipart (file required
    * by the documents app) with Parcel A fields alongside. */
   orgCreate: async (input: OrgDocCreate): Promise<OrgDocument> => {
@@ -323,6 +331,16 @@ export interface OrgDocument {
   uploadedAt?: string | null;
   uploaded_at?: string | null;
   audienceRoles?: AudienceRole[];
+  contentType?: string | null;
+  /** Protected file endpoints (DocumentSerializer): always the authenticated
+   * /api/documents/{id}/file proxy, never a raw storage URL. */
+  url?: string | null;
+  viewUrl?: string | null;
+  downloadUrl?: string | null;
+  /** Per-signed-in-user acknowledgement state (DocumentSerializer). */
+  mustAcknowledge?: boolean;
+  acknowledged?: boolean;
+  acknowledgedAt?: string | null;
 }
 
 /** A role that may see a document, and whether that role must acknowledge it
