@@ -147,17 +147,17 @@ export function Employee360({ employeeId, extraTabs = [], headerActions, reloadK
     content: (
       <div className="space-y-4">
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
-          <h3 className="font-bold text-gray-900 mb-1">Identity Documents</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Identity Documents</h3>
           <p className="text-xs text-gray-500 mb-4">Aadhaar, PAN and other government IDs. Visible only to the employee, HR, and Finance.</p>
           <IdentityDocumentCards employeeId={numericId} readOnly={!data.access.is_self} />
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
-          <h3 className="font-bold text-gray-900 mb-1">Degrees &amp; Certificates</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Degrees &amp; Certificates</h3>
           <p className="text-xs text-gray-500 mb-4">Education details with a certificate for each. Visible only to the employee and HR.</p>
           <EducationRecordCards employeeId={numericId} readOnly={!data.access.is_self} />
         </div>
         <div className="bg-white rounded-2xl border border-gray-200 p-5">
-          <h3 className="font-bold text-gray-900 mb-1">Documents</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Documents</h3>
           <p className="text-xs text-gray-500 mb-4">Everything submitted, plus the signed offer letter.</p>
           <MyDocumentsList employeeId={numericId} readOnly={!data.access.is_self} />
         </div>
