@@ -238,7 +238,17 @@ REST_FRAMEWORK = {
     # account being brute-forced from anywhere. Deliberately generous (not a
     # tight production value) since this also has to not lock out normal
     # local dev/test usage.
-    "DEFAULT_THROTTLE_RATES": {"login": "20/min"},
+    # The offer_public_* scopes below belong to the onboarding module's
+    # unauthenticated candidate-facing offer endpoints (token-guarded but
+    # still rate-limited); additive entries, the login scope is unchanged.
+    # A scope used by a view MUST have a rate here: DRF raises
+    # ImproperlyConfigured (HTTP 500) for a ScopedRateThrottle with no rate —
+    # core/tests/test_throttle_scopes.py guards that for every view.
+    "DEFAULT_THROTTLE_RATES": {
+        "login": "20/min",
+        "offer_public_read": "60/min",
+        "offer_public_write": "20/min",
+    },
 }
 
 # P1-E4-02: 5 failed attempts locks the account for this long. A window

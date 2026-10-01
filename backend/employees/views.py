@@ -4,9 +4,9 @@ from django.db import transaction
 from django.db.models import Count, Q
 from rest_framework import filters, mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, ParseError, PermissionDenied
 from rest_framework.parsers import JSONParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -117,6 +117,27 @@ class OrgDirectoryViewSet(FrontendEnvelopeMixin, viewsets.ReadOnlyModelViewSet):
         return queryset
 
 
+# The only field a reporting-line change may touch.
+REPORTING_LINE_FIELDS = frozenset({"manager_id"})
+
+
+class ReportingLineOrWritePermission(BasePermission):
+    """For a PATCH that only changes `manager_id`: the caller needs either
+    employees.write or employees.reporting_line.write, and the person being moved
+    must be inside the (combined) scope the view resolves in `_write_scope`."""
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+        return user_has_permission(user, view.write_permission) or user_has_permission(
+            user, view.reporting_line_permission
+        )
+
+    def has_object_permission(self, request, view, obj):
+        return view._write_scope().filter(pk=obj.pk).exists()
+
+
 class EmployeeViewSet(
     FrontendEnvelopeMixin,
     mixins.CreateModelMixin,
@@ -136,6 +157,10 @@ class EmployeeViewSet(
     also ends their access and records the exit date. A write may never move a
     person, or point a manager, outside the caller's own write scope.
 
+    Reporting lines are the one narrower write: a PATCH that sets only
+    `manager_id` is also allowed to a holder of `employees.reporting_line.write`
+    (a Manager, for their own team), who has no other edit rights at all.
+
     Personal details (personal email, phone, date of birth, gender, exit
     reason) are kept out of the ordinary directory and live at
     /employees/{id}/personal/, behind employees.personal.read / .write."""
@@ -144,6 +169,9 @@ class EmployeeViewSet(
     permission_classes = [ScopedEmployeePermission]
     required_permission = "employees.read"
     write_permission = "employees.write"
+    # Held instead of employees.write by someone who may only reassign who people
+    # report to (a Manager, within their team). See ReportingLineOrWritePermission.
+    reporting_line_permission = "employees.reporting_line.write"
     action_permissions = {"personal": "employees.personal.read", "lookup": None}
     http_method_names = ["get", "post", "patch", "head", "options"]
     filter_backends = [filters.SearchFilter]
@@ -186,8 +214,34 @@ class EmployeeViewSet(
 
     # -- writes -------------------------------------------------------------
 
+    def get_permissions(self):
+        if self.action == "partial_update" and self._is_reporting_line_change():
+            return [ReportingLineOrWritePermission()]
+        return super().get_permissions()
+
+    def _is_reporting_line_change(self) -> bool:
+        """A PATCH that changes the reporting line and nothing else. Anything more
+        (department, status, legal name, ...) is an ordinary employee edit and needs
+        employees.write; this is deliberately strict, so a request that merely
+        mentions another field is not treated as a reporting-line change."""
+        try:
+            data = self.request.data
+        except ParseError:
+            return False  # let the ordinary permission check and parser report it
+        keys = set(data.keys()) if hasattr(data, "keys") else set()
+        return bool(keys) and keys <= REPORTING_LINE_FIELDS
+
     def _write_scope(self):
-        return resolve_employee_scope(self.request.user, self.write_permission)
+        """Who the caller may edit in this request: their employees.write scope and,
+        for a reporting-line-only change, also their employees.reporting_line.write
+        scope. The same scope bounds the person being moved and the chosen manager."""
+        scope = resolve_employee_scope(self.request.user, self.write_permission)
+        if self.action == "partial_update" and self._is_reporting_line_change():
+            line = resolve_employee_scope(self.request.user, self.reporting_line_permission)
+            scope = Employee.objects.filter(
+                Q(pk__in=scope.values("pk")) | Q(pk__in=line.values("pk"))
+            )
+        return scope
 
     def _require_in_write_scope(self, employee, message):
         if not self._write_scope().filter(pk=employee.pk).exists():

@@ -20,8 +20,7 @@ import {
   GlobeIcon,
   GridIcon,
   SettingsIcon,
-  HelpIcon,
-  ChevronLeftIcon,
+  SupportTicketIcon,
   MenuIcon,
   XIcon,
   PanelLeftCloseIcon,
@@ -29,6 +28,7 @@ import {
   SearchIcon,
   IdCardIcon,
   ClipboardCheckIcon,
+  DocumentIcon,
   PackageIcon,
   ReceiptIcon,
   GraduationCapIcon,
@@ -132,6 +132,7 @@ function getActiveChild<T extends { href: string; matchPrefixes?: string[] }>(
 const navItems: NavItem[] = [
   { id: 'home', label: 'Home', icon: HomeIcon, href: '/', roles: ['admin', 'employee', 'superadmin'] },
   { id: 'my-onboarding', label: 'My Onboarding', icon: ClipboardCheckIcon, href: '/me/onboarding', roles: ['employee'] },
+  { id: 'my-documents', label: 'My Documents', icon: DocumentIcon, href: '/me/documents', roles: ['employee'] },
   { id: 'inbox', label: 'Inbox', icon: InboxIcon, href: '/inbox', badge: 5, roles: ['admin', 'employee', 'superadmin'] },
   {
     // Approvals lives under Attendance, not as its own top-level item - it's
@@ -214,7 +215,7 @@ const navItems: NavItem[] = [
         label: 'Manage Structure',
         href: '/manage-org',
         roles: ['admin', 'superadmin'],
-        requireAnyPermission: ['employees.write', 'org.manage'],
+        requireAnyPermission: ['employees.write', 'employees.reporting_line.write', 'org.manage'],
       },
       { label: 'Onboarding', href: '/onboarding', roles: ['admin', 'superadmin'] },
       { label: 'Org Changes', href: '/org-module/promotions', roles: ['admin', 'superadmin'] },
@@ -266,6 +267,7 @@ const COLLAPSE_STORAGE_KEY = 'hrms-sidebar-collapsed';
 
 const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/': { title: 'Home', subtitle: 'Overview of your workday and organization updates' },
+  '/me/documents': { title: 'My Documents', subtitle: 'View and download your employment documents' },
   '/inbox': { title: 'Inbox', subtitle: 'Review messages, requests, and notifications that need your attention' },
   '/approvals': { title: 'Approvals', subtitle: 'Review WFH, regularisation, leave, and penalisation requests routed to you' },
   '/me/attendance': { title: 'Attendance', subtitle: 'Track your attendance, timings, and attendance requests' },
@@ -281,7 +283,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
   '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
-  '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
+  '/help': { title: 'Help & Support', subtitle: 'Raise a ticket, track its progress and find answers' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payroll': { title: 'Payroll', subtitle: 'Configure, process, approve and release payroll' },
   '/attendance': { title: 'Attendance', subtitle: 'Attendance, leave and shift overview' },
@@ -560,17 +562,6 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
           {currentPageTitle ? (
             <div className="min-w-0 shrink-0 flex items-center gap-1.5">
-              {pathname !== '/' ? (
-                <button
-                  type="button"
-                  onClick={() => router.back()}
-                  aria-label="Go back"
-                  title="Go back"
-                  className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors shrink-0"
-                >
-                  <ChevronLeftIcon className="w-5 h-5" />
-                </button>
-              ) : null}
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
                 {currentPageTitle.subtitle ? (
@@ -604,7 +595,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
               className="p-2.5 text-slate-600 hover:bg-slate-100 rounded-xl transition-colors"
               title="Help"
             >
-              <HelpIcon className="w-5 h-5" />
+              <SupportTicketIcon className="w-5 h-5" />
             </button>
             <NotificationsDropdown />
             <div className="pl-2 sm:pl-3 border-l border-slate-200">

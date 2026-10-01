@@ -36,9 +36,23 @@ register_module(
                 "Create and change employee directory records within the holder's scope",
                 label="Create and edit employee records",
                 group="Employee data",
-                # HR Admin edits everyone; a Manager edits their own subtree
-                # (TEAM) — the write path enforces both the target and the chosen
-                # manager fall inside this scope, so cross-team moves 403.
+                # HR Admin only. A Manager does NOT get this: it would let them
+                # change any field of their reports (department, status, which
+                # ends someone's access, legal name, ...). What a Manager may do
+                # is change reporting lines, via employees.reporting_line.write.
+                default_grants={"HR Admin": ScopeTier.ALL},
+            ),
+            PermissionSpec(
+                "employees.reporting_line.write",
+                "Change who an employee reports to (and nothing else about them) "
+                "within the holder's scope",
+                label="Change reporting lines",
+                group="Employee data",
+                # HR Admin anywhere; a Manager within their own team (TEAM, the whole
+                # subtree). The write path requires both the person being moved and
+                # the chosen manager to fall inside this scope, so cross-team moves
+                # 403, and a request that changes any other field needs
+                # employees.write instead.
                 default_grants={"HR Admin": ScopeTier.ALL, "Manager": ScopeTier.TEAM},
             ),
             PermissionSpec(

@@ -193,7 +193,7 @@ class Command(VerificationCommand):
         maya = v.login("maya", self.email("maya"), PASSWORD)
         self._expect_sees(
             v,
-            "Manager (scope: reporting manager) sees self and direct reports",
+            "Manager (scope: team) sees self and everyone below them",
             maya,
             {"maya", "eli", "eve"},
         )
@@ -204,15 +204,42 @@ class Command(VerificationCommand):
         )
 
         dana = v.login("dana", self.email("dana"), PASSWORD)
+        # Managers see their whole team (direct AND indirect reports), because the
+        # reporting-line screen has to list everyone whose manager they may change
+        # (Organization requirement). They still never see another team.
         self._expect_sees(
             v,
-            "Director as Manager sees direct reports only, not skip-level",
+            "Director as Manager sees direct and skip-level reports (the whole team)",
             dana,
-            {"dana", "maya"},
+            {"dana", "maya", "eli", "eve"},
         )
         v.expect_status(
-            "skip-level record is refused at the Manager tier",
+            "skip-level record is readable by the Manager",
             dana.get(f"{API}/employees/{self.people['eli'].pk}/"),
+            200,
+        )
+        v.expect_status(
+            "Director cannot open someone in another team",
+            dana.get(f"{API}/employees/{self.people['sam'].pk}/"),
+            403,
+        )
+        # What a Manager may change is the reporting line, and nothing else. Reading
+        # a record is not editing it: no field edit, no exit, no rename.
+        for label, body in (
+            ("another field of a report (employment type)", {"employment_type": "contract"}),
+            ("a report's status (exiting someone ends their access)", {"status": "exited"}),
+        ):
+            v.expect_status(
+                f"Manager cannot change {label}",
+                dana.patch(f"{API}/employees/{self.people['eli'].pk}/", body),
+                403,
+            )
+        v.expect_status(
+            "Manager cannot rename a report through the profile",
+            dana.patch(
+                f"{API}/employees/{self.people['eli'].pk}/profile/name/",
+                {"first_name": "Eli", "last_name": "Renamed"},
+            ),
             403,
         )
 
@@ -265,7 +292,7 @@ class Command(VerificationCommand):
             )
         dana = v.login("dana", self.email("dana"), PASSWORD)
         v.expect_status(
-            "team tier reaches the skip-level record that the Manager tier refused",
+            "team tier reaches the skip-level record",
             dana.get(f"{API}/employees/{self.people['eli'].pk}/"),
             200,
         )

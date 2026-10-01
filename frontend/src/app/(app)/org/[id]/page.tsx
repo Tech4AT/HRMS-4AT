@@ -40,6 +40,8 @@ export default function EmployeeProfilePage() {
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
   const { hasPermission } = useAuth();
   const canWrite = hasPermission('employees.write');
+  // A Manager may change who someone in their team reports to, and nothing else.
+  const canEditReportingLine = hasPermission('employees.reporting_line.write');
 
   const [editData, setEditData] = useState<EditData | null>(null);
   const [loadingEdit, setLoadingEdit] = useState(false);
@@ -76,14 +78,14 @@ export default function EmployeeProfilePage() {
     }
   };
 
-  const headerActions = canWrite ? (
+  const headerActions = canWrite || canEditReportingLine ? (
     <button
       onClick={openEditor}
       disabled={loadingEdit}
       className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors shadow-sm shrink-0"
     >
       <EditIcon className="w-4 h-4" />
-      {loadingEdit ? 'Opening…' : 'Edit employee'}
+      {loadingEdit ? 'Opening…' : canWrite ? 'Edit employee' : 'Change reporting line'}
     </button>
   ) : null;
 
@@ -116,6 +118,7 @@ export default function EmployeeProfilePage() {
           employees={editData.employees}
           lookups={editData.lookups}
           canWrite={canWrite}
+          canEditReportingLine={canEditReportingLine}
           onClose={() => setEditData(null)}
           onSaved={(saved, message) => {
             setEditData((d) => (d ? { ...d, employee: saved } : d));

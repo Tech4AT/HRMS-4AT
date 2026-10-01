@@ -152,13 +152,19 @@ export function EmployeeDrawer({
   employees,
   lookups,
   canWrite,
+  canEditReportingLine = false,
   onClose,
   onSaved,
 }: {
   employee: EmployeeRow | null; // null = adding a new person
   employees: EmployeeRow[];
   lookups: Lookups;
+  /** May edit every field (employees.write). */
   canWrite: boolean;
+  /** May change who this person reports to and nothing else
+   *  (employees.reporting_line.write: a Manager, for their own team). Only
+   *  matters when `canWrite` is false. */
+  canEditReportingLine?: boolean;
   onClose: () => void;
   onSaved: (saved: EmployeeRow, message: string) => void;
 }) {
@@ -184,6 +190,9 @@ export function EmployeeDrawer({
   const original = useMemo(() => toForm(employee), [employee]);
   const changedKeys = (Object.keys(form) as (keyof Form)[]).filter((k) => form[k] !== original[k]);
   const readOnly = !canWrite;
+  // A Manager may reassign reporting lines in their team but edit nothing else, so
+  // for them only the manager picker is live and only `manager_id` is sent.
+  const reportingLineOnly = !canWrite && canEditReportingLine && !isNew;
 
   const save = async () => {
     setSaving(true);
@@ -191,7 +200,11 @@ export function EmployeeDrawer({
     setMessage(null);
     try {
       const body: Record<string, unknown> = {};
-      const keys = isNew ? (Object.keys(form) as (keyof Form)[]) : changedKeys;
+      const keys = isNew
+        ? (Object.keys(form) as (keyof Form)[])
+        : reportingLineOnly
+          ? changedKeys.filter((k) => k === 'manager_id')
+          : changedKeys;
       for (const k of keys) {
         const v = form[k];
         const nullable = (REFERENCE_FIELDS as readonly string[]).includes(k) || k === 'date_of_joining';
@@ -232,7 +245,13 @@ export function EmployeeDrawer({
 
   return (
     <Drawer title={name} subtitle={employee ? employee.employee_code : 'Add someone to the directory'} onClose={onClose}>
-      {readOnly && <Notice tone="info">You can view this record but not change it.</Notice>}
+      {readOnly && (
+        <Notice tone="info">
+          {reportingLineOnly
+            ? 'You can change who this person reports to. Everything else on this record is view-only.'
+            : 'You can view this record but not change it.'}
+        </Notice>
+      )}
       {!!error && !(error instanceof ApiError && Object.keys(error.fields).length > 0 && error.status === 400) && <Notice tone="error">{errorText(error)}</Notice>}
 
       <section className="space-y-3">
@@ -266,7 +285,7 @@ export function EmployeeDrawer({
             <UnitSelect label="Location" blank="Not set" value={form.location_id} items={lookups.locations} onChange={(v) => set('location_id', v)} disabled={readOnly} />
           </Field>
         </div>
-        <ManagerPicker value={form.manager_id} employees={employees} excludeId={employee?.id ?? null} onChange={(v) => set('manager_id', v)} disabled={readOnly} error={fieldError(error, 'manager_id')} />
+        <ManagerPicker value={form.manager_id} employees={employees} excludeId={employee?.id ?? null} onChange={(v) => set('manager_id', v)} disabled={readOnly && !reportingLineOnly} error={fieldError(error, 'manager_id')} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Employment type" error={fieldError(error, 'employment_type')}>
             <Select aria-label="Employment type" value={form.employment_type} onChange={(e) => set('employment_type', e.target.value as EmploymentType)} disabled={readOnly}>
@@ -307,9 +326,9 @@ export function EmployeeDrawer({
         </div>
       </section>
 
-      {!readOnly && (
+      {(!readOnly || reportingLineOnly) && (
         <div className="flex items-center gap-3">
-          <Button variant="primary" onClick={save} disabled={saving || (!isNew && changedKeys.length === 0) || (isNew && (!form.first_name.trim() || !form.work_email.trim() || !form.employee_code.trim()))}>
+          <Button variant="primary" onClick={save} disabled={saving || (!isNew && (reportingLineOnly ? !changedKeys.includes('manager_id') : changedKeys.length === 0)) || (isNew && (!form.first_name.trim() || !form.work_email.trim() || !form.employee_code.trim()))}>
             {saving ? 'Saving…' : isNew ? 'Add employee' : 'Save changes'}
           </Button>
           {message && <Notice tone="success">{message}</Notice>}

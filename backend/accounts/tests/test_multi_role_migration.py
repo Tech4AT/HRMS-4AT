@@ -18,11 +18,29 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def _targets(back=False):
-    executor = MigrationExecutor(connection)
-    leaves = dict(executor.loader.graph.leaf_nodes())
-    if back:
-        leaves["accounts"] = "0013_permission_label_group"
-    return [(app, name) for app, name in leaves.items()]
+    """Migration targets: every app at its latest, or (back=True) accounts at PRE.
+
+    Going back, an app whose latest migration depends on an accounts migration
+    after PRE (documents does, from its 0010 on) must NOT be listed: Django rolls
+    it back itself as a dependent, and listing it as a target as well makes the plan
+    go both backwards and forwards, which the executor refuses
+    (InvalidMigrationPlan). Computed from the migration graph, so a future app that
+    depends on accounts is handled without editing this helper."""
+    graph = MigrationExecutor(connection).loader.graph
+    leaves = dict(graph.leaf_nodes())
+    if not back:
+        return list(leaves.items())
+
+    after_pre = {node for node in graph.nodes if node[0] == "accounts"} - set(
+        graph.forwards_plan(PRE)
+    )
+    targets = [PRE]
+    for app, name in leaves.items():
+        if app == PRE[0]:
+            continue
+        if not set(graph.forwards_plan((app, name))) & after_pre:
+            targets.append((app, name))
+    return targets
 
 
 def _migrate(back=False):

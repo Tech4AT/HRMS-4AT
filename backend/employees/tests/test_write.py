@@ -263,8 +263,10 @@ def test_putting_someone_on_leave_does_not_touch_their_login():
 # --- reporting lines: two-tier gating (admin vs manager) --------------------
 # Proves the objective end-to-end through the real seeded roles, not synthetic
 # ones: an HR Admin (employees.write ALL) may repoint anyone; a Manager
-# (employees.write TEAM, seeded by migration 0015) may repoint only within
-# their own subtree, and the change shows up on the directory read.
+# (employees.reporting_line.write TEAM; migration 0015 opened this and 0016
+# narrowed it from the broader employees.write) may repoint only within
+# their own subtree, and the change shows up on the directory read. What a
+# Manager may NOT do is covered in test_manager_reporting_line_scope.py.
 
 
 def _manager_client():
