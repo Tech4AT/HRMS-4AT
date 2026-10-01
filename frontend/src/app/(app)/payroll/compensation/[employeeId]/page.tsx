@@ -150,7 +150,7 @@ function Overview({ data, employeeId, onChanged }: { data: any; employeeId: stri
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 p-5">
             <div className="flex items-start gap-3">
               <Icons.file className="mt-1 h-5 w-5 text-blue-700" />
-              <div><h3 className="text-lg font-bold text-slate-900">Salary Revision</h3><p className="text-sm text-slate-500">Compare current and proposed compensation with detailed breakup.</p>
+              <div><h3 className="text-base font-bold text-slate-900">Salary Revision</h3><p className="text-sm text-slate-500">Compare current and proposed compensation with detailed breakup.</p>
                 {open && <div className="mt-1"><Badge status={open.status} label={open.status_label} /></div>}</div>
             </div>
             <div className="flex flex-wrap items-end gap-3">

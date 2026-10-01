@@ -81,7 +81,7 @@ export function StructureColumn({ title, range, breakup, badge }: { title: strin
   return (
     <div className="rounded-xl border border-slate-200 bg-white">
       <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-        <h3 className="font-bold text-slate-900">{title}</h3>
+        <h3 className="text-base font-bold text-slate-900">{title}</h3>
         <div className="flex items-center gap-2">
           {range && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">{range}</span>}
           {badge}

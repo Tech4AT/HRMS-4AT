@@ -223,7 +223,7 @@ export function CompletedStep(props: StepProps) {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-emerald-50 px-6 py-5">
         <div className="flex items-center gap-4">
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-white"><Icons.check className="h-7 w-7" /></span>
-          <div><h2 className="text-2xl font-bold text-slate-900">{monthLong(period.year, period.month)} Payroll {period.status === 'completed' ? 'Completed!' : 'Finalized'}</h2>
+          <div><h2 className="text-base font-bold text-slate-900">{monthLong(period.year, period.month)} Payroll {period.status === 'completed' ? 'Completed!' : 'Finalized'}</h2>
             <p className="text-sm text-emerald-800">Payroll was processed and locked on {fmtDateTime(r.finalized_at)} by {r.finalized_by?.name}.</p></div>
         </div>
         <div className="flex gap-2">

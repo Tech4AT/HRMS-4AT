@@ -20,7 +20,7 @@ export function StepHeader({ number, title, subtitle, actions }: { number: numbe
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 items-center justify-center rounded-lg border-2 border-blue-600 text-lg font-bold text-blue-700">{number}</span>
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">{title}</h2>
+          <h2 className="text-base font-bold text-slate-900">{title}</h2>
           <p className="text-sm text-slate-500">{subtitle}</p>
         </div>
       </div>

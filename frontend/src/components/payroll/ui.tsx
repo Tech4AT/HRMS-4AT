@@ -175,7 +175,7 @@ export function Card({ title, actions, children, className, padded = true }: {
     <section className={cx('rounded-xl border border-slate-200 bg-white shadow-sm', className)}>
       {(title || actions) && (
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          <h2 className="text-base font-bold text-slate-900">{title}</h2>
           {actions}
         </div>
       )}
@@ -409,7 +409,7 @@ export function Drawer({ open, onClose, title, subtitle, children, footer, width
       <aside className={cx('relative flex h-full w-full flex-col bg-white shadow-2xl', width)}>
         <header className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+            <h3 className="text-base font-bold text-slate-900">{title}</h3>
             {subtitle && <div className="mt-0.5 text-sm text-slate-500">{subtitle}</div>}
           </div>
           <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label="Close">
@@ -432,7 +432,7 @@ export function Modal({ open, onClose, title, children, footer, size = 'max-w-lg
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
       <div className={cx('relative w-full rounded-xl bg-white shadow-2xl', size)}>
         <header className="flex items-center justify-between border-b border-slate-200 px-5 py-3.5">
-          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <h3 className="text-base font-bold text-slate-900">{title}</h3>
           <button onClick={onClose} className="rounded p-1 text-slate-500 hover:bg-slate-100" aria-label="Close"><Icons.x /></button>
         </header>
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>

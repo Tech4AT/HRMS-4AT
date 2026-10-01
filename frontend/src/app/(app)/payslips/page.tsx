@@ -414,7 +414,7 @@ export default function PayslipsPage() {
           <div className="space-y-5">
             <div className="bg-white rounded-2xl border border-slate-200/80 shadow-[0_2px_8px_rgba(15,23,42,0.04)] px-5 py-5">
               <div className="flex flex-col lg:flex-row lg:items-center gap-6 lg:gap-10">
-                <h2 className="text-lg font-bold text-slate-900 shrink-0">Payroll summary</h2>
+                <h2 className="text-base font-bold text-slate-900 shrink-0">Payroll summary</h2>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 flex-1">
                   <Field label="Last Processed Cycle" value={payrollSummary.lastProcessedCycle} />
                   <Field label="Working Days" value={payrollSummary.workingDays} />
@@ -968,7 +968,7 @@ export default function PayslipsPage() {
                     {expenseSummary.map((exp, idx) => (
                       <div key={idx}>
                         <div className="flex justify-between items-center mb-1.5">
-                          <h3 className="text-sm font-medium text-gray-900">{exp.type}</h3>
+                          <h3 className="text-sm font-bold text-slate-900">{exp.type}</h3>
                           <span className="text-sm font-semibold text-indigo-600">₹{exp.amount.toLocaleString()}</span>
                         </div>
                         <div className="w-full bg-gray-200 rounded-full h-1.5">
@@ -1042,7 +1042,7 @@ export default function PayslipsPage() {
                   <div key={travel.id} className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between mb-3">
                       <div>
-                        <h3 className="text-sm font-semibold text-gray-900">{travel.destination}</h3>
+                        <h3 className="text-sm font-bold text-slate-900">{travel.destination}</h3>
                         <p className="text-xs text-gray-500 mt-0.5">Purpose: {travel.purpose}</p>
                       </div>
                       <div className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(travel.status)}`}>
