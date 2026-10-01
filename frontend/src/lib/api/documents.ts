@@ -225,6 +225,11 @@ export const documentsApi = {
   pendingAcknowledgement: () =>
     request<PendingAckDoc[]>('/pending-acknowledgement').then((v) => v ?? []),
 
+  /** Active roles for the org-document audience picker ([{id, name}]).
+   * Gated by org-document management, not roles.manage. */
+  audienceRoles: () =>
+    request<{ id: number; name: string }[]>('/audience-roles').then((v) => v ?? []),
+
   /* ---------------- B: organization-document folders ---------------- */
 
   /** Folders visible to the caller (public to all; private to HR). */

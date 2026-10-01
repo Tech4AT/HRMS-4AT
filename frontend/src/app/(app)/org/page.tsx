@@ -8,6 +8,7 @@ import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/doc
 import { DocumentUploadModal, formatBytes } from '@/components/documents/DocumentUploadModal';
 import { OrgDocumentsSection } from '@/components/documents/org/OrgDocumentsSection';
 import { MyOrgDocuments } from '@/components/documents/org/MyOrgDocuments';
+import { PendingAcknowledgements } from '@/components/documents/org/PendingAcknowledgements';
 import { DocumentViewerModal } from '@/components/documents/DocumentViewerModal';
 
 /* ------------------------------ data ------------------------------ */
@@ -188,11 +189,16 @@ export default function OrgPage() {
           the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          canManageDocs ? (
-            <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
-          ) : (
-            <MyOrgDocuments />
-          )
+          <div className="space-y-4">
+            {/* Shown to every role above the document area: the docs this user
+                must still acknowledge, each with an Acknowledge button. */}
+            <PendingAcknowledgements />
+            {canManageDocs ? (
+              <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
+            ) : (
+              <MyOrgDocuments />
+            )}
+          </div>
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (

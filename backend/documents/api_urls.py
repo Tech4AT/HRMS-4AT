@@ -1,6 +1,7 @@
 from django.urls import path, re_path
 
 from .views import (
+    AudienceRolesView,
     DocumentAcknowledgementStatusView,
     DocumentAcknowledgeView,
     DocumentDetailView,
@@ -30,6 +31,7 @@ urlpatterns = [
     # Static path — must be declared before the <uuid:pk> routes. (The uuid
     # converter would not match this word anyway, but keep intent explicit.)
     path("documents/pending-acknowledgement", PendingAcknowledgementView.as_view(), name="document-pending-ack"),
+    path("documents/audience-roles", AudienceRolesView.as_view(), name="document-audience-roles"),
     # Verification workflow (Org > Employee Documents).
     path("documents/pending-verification", PendingVerificationView.as_view(), name="document-pending-verification"),
     path("documents/expiring", ExpiringDocumentsView.as_view(), name="document-expiring"),
