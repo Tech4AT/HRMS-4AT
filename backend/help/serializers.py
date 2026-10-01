@@ -101,11 +101,16 @@ class TicketSerializer(serializers.ModelSerializer):
         return _display_name(obj.assigned_to) if obj.assigned_to_id else None
 
 
+class CategoryOwnerSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+
+
 class CategoryAssignmentSerializer(serializers.Serializer):
     """Plain (non-ModelSerializer) shape: the view builds one row per
-    TicketCategory value, including categories with no CategoryAssignment
-    row yet (assignee_id null) - not a 1:1 reflection of the model."""
+    TicketCategory value, including categories with no owners yet (an empty
+    `assignees` list) - not a 1:1 reflection of the model, which has one row
+    per owner."""
 
     category = serializers.ChoiceField(choices=TicketCategory.choices)
-    assignee_id = serializers.CharField(allow_null=True)
-    assignee_name = serializers.CharField(allow_null=True)
+    assignees = CategoryOwnerSerializer(many=True)

@@ -16,6 +16,8 @@ export interface AttendanceRow {
   arrival?: 'On Time' | 'Late';
   departure?: 'On Time' | 'Early';
   overtimeMinutes?: number;
+  /** Each break taken, as local "HH:MM"; `end` is undefined while one is in progress. */
+  breaks?: { start: string; end?: string; minutes: number }[];
   note?: string;
   noteDescription?: string | null;
   isWfhDay?: boolean;
@@ -91,6 +93,11 @@ export function toAttendanceRow(v: AttendanceDayView): AttendanceRow {
     wfhDescription: v.wfh_description,
     events: v.events,
     overtimeMinutes: v.overtime_minutes ?? undefined,
+    breaks: (v.breaks ?? []).map((b) => ({
+      start: isoToHM(b.start),
+      end: b.end ? isoToHM(b.end) : undefined,
+      minutes: b.minutes,
+    })),
     shiftStart: v.shift_start_time ?? undefined,
     shiftEnd: v.shift_end_time ?? undefined,
     shiftScheduledMinutes: v.shift_scheduled_minutes ?? undefined,

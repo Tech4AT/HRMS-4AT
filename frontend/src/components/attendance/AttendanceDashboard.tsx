@@ -8,6 +8,9 @@ import { attendanceApi } from '@/lib/api/attendance';
 import { penalisationApi } from '@/lib/api/penalisation';
 import { teamAttendanceApi, type TeamAttendanceDayView } from '@/lib/api/teamAttendance';
 import { AttendanceLeaderboard } from '@/components/attendance/AttendanceLeaderboard';
+import { MemberAttendanceDetail } from '@/components/attendance/MemberAttendanceDetail';
+import { STATUS_BADGE, STATUS_LABEL } from '@/lib/attendance/statusStyles';
+import { fmtHM, isoToHM } from '@/lib/attendance/view';
 import {
   aggregateForDay,
   avgHoursForPeriod,
@@ -17,26 +20,6 @@ import {
   type DailyStatus,
   type DayAttendanceAggregate,
 } from '@/lib/attendance/dashboard';
-
-const STATUS_LABEL: Record<DailyStatus, string> = {
-  present: 'Present',
-  late: 'Late',
-  on_leave: 'On Leave',
-  wfh: 'WFH',
-  absent: 'Absent',
-  day_off: 'Day Off',
-  not_marked: 'Not Marked',
-};
-
-const STATUS_BADGE: Record<DailyStatus, string> = {
-  present: 'bg-emerald-100 text-emerald-700',
-  late: 'bg-amber-100 text-amber-700',
-  on_leave: 'bg-violet-100 text-violet-700',
-  wfh: 'bg-blue-100 text-blue-700',
-  absent: 'bg-red-100 text-red-700',
-  day_off: 'bg-slate-100 text-slate-500',
-  not_marked: 'bg-slate-100 text-slate-400',
-};
 
 const STATUS_BAR: Record<DailyStatus, string> = {
   present: 'bg-emerald-500',
@@ -154,6 +137,8 @@ export function AttendanceDashboard() {
   const [teamRows, setTeamRows] = useState<TeamAttendanceDayView[]>([]);
   const [teamLoading, setTeamLoading] = useState(true);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState(() => toLocalISODate(new Date()));
+  const [detailFor, setDetailFor] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -232,9 +217,14 @@ export function AttendanceDashboard() {
     () => avgHoursForPeriod(teamRows, 'overtime', employeeCount, week.length),
     [teamRows, employeeCount, week.length],
   );
-  const todayStatuses = useMemo(
-    () => teamRows.filter((r) => r.attendance_date === today).map(statusFor),
-    [teamRows, today],
+  // The day shown in the status table (today unless a manager picks an earlier
+  // day from the week already loaded), with the full row so times and breaks show.
+  const dayRows = useMemo(
+    () =>
+      teamRows
+        .filter((r) => r.attendance_date === selectedDay)
+        .sort((a, b) => a.employee_name.localeCompare(b.employee_name)),
+    [teamRows, selectedDay],
   );
   const attendanceRate = todayAgg.total
     ? Math.round(((todayAgg.present + todayAgg.late) / todayAgg.total) * 100)
@@ -342,8 +332,26 @@ export function AttendanceDashboard() {
           <AttendanceLeaderboard />
 
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-5 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-900">Today&apos;s Status</h3>
+            <div className="p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold text-slate-900">
+                  {selectedDay === today ? 'Today’s Status' : 'Status'}
+                </h3>
+                <select
+                  value={selectedDay}
+                  onChange={(e) => setSelectedDay(e.target.value)}
+                  aria-label="Day"
+                  className="text-xs border border-slate-200 rounded-lg px-2 py-1 text-slate-700 bg-white"
+                >
+                  {[...week].reverse().map((d) => (
+                    <option key={d} value={d}>
+                      {d === today
+                        ? 'Today'
+                        : new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <Link href="/approvals" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">
                 Review approvals →
               </Link>
@@ -352,7 +360,7 @@ export function AttendanceDashboard() {
               <table className="w-full">
                 <thead className="bg-slate-50 border-y border-slate-200">
                   <tr>
-                    {['Employee', 'Department', 'Status', 'Check-in'].map((h) => (
+                    {['Employee', 'Department', 'Status', 'Check-in', 'Check-out', 'Hours', 'Late', 'Breaks'].map((h) => (
                       <th key={h} className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase whitespace-nowrap">
                         {h}
                       </th>
@@ -362,24 +370,59 @@ export function AttendanceDashboard() {
                 <tbody className="divide-y divide-slate-100">
                   {teamLoading ? (
                     <tr>
-                      <td colSpan={4} className="px-5 py-10 text-center text-sm text-slate-400">
+                      <td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-400">
                         Loading…
                       </td>
                     </tr>
                   ) : (
-                    todayStatuses.map((s) => (
-                      <tr key={s.employeeId} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-5 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{s.employeeName}</td>
-                        <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">{s.department ?? '—'}</td>
-                        <td className="px-5 py-3 text-sm whitespace-nowrap">
-                          <span className={`inline-flex text-[11px] font-semibold rounded-full px-2.5 py-1 ${STATUS_BADGE[s.status]}`}>
-                            {STATUS_LABEL[s.status]}
-                            {s.status === 'on_leave' && s.leaveType ? ` · ${s.leaveType}` : ''}
-                          </span>
-                        </td>
-                        <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">{s.checkIn ?? '—'}</td>
-                      </tr>
-                    ))
+                    dayRows.map((row) => {
+                      const s = statusFor(row);
+                      return (
+                        <tr key={s.employeeId} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-5 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">
+                            <button
+                              onClick={() => setDetailFor({ id: s.employeeId, name: s.employeeName })}
+                              className="hover:text-indigo-700 hover:underline text-left"
+                            >
+                              {s.employeeName}
+                            </button>
+                          </td>
+                          <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">{s.department ?? '—'}</td>
+                          <td className="px-5 py-3 text-sm whitespace-nowrap">
+                            <span className={`inline-flex text-[11px] font-semibold rounded-full px-2.5 py-1 ${STATUS_BADGE[s.status]}`}>
+                              {STATUS_LABEL[s.status]}
+                              {s.status === 'on_leave' && s.leaveType ? ` · ${s.leaveType}` : ''}
+                            </span>
+                            {row.on_break ? (
+                              <span className="ml-1.5 inline-flex text-[10px] font-semibold rounded px-1.5 py-0.5 bg-violet-100 text-violet-700">
+                                On break
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
+                            {row.check_in ? isoToHM(row.check_in) : '—'}
+                          </td>
+                          <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
+                            {row.check_out ? isoToHM(row.check_out) : '—'}
+                          </td>
+                          <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
+                            {row.working_minutes != null ? fmtHM(row.working_minutes) : '—'}
+                          </td>
+                          <td className="px-5 py-3 text-sm whitespace-nowrap">
+                            {(row.late_minutes ?? 0) > 0 ? (
+                              <span className="text-amber-700">{row.late_minutes}m</span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-5 py-3 text-sm text-slate-500 whitespace-nowrap">
+                            {(row.breaks ?? []).length > 0
+                              ? `${row.breaks?.length} · ${fmtHM(row.break_minutes ?? 0)}`
+                              : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -387,6 +430,28 @@ export function AttendanceDashboard() {
           </div>
         </>
       )}
+
+      {detailFor ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-20 bg-black/30 overflow-y-auto" onClick={() => setDetailFor(null)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Attendance for ${detailFor.name}`}
+            className="bg-white rounded-lg shadow-xl w-full max-w-3xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 bg-slate-100 border-b border-slate-200 rounded-t-lg">
+              <h2 className="text-base font-semibold text-slate-900 truncate">{detailFor.name} · Attendance</h2>
+              <button onClick={() => setDetailFor(null)} aria-label="Close" className="text-slate-500 hover:text-slate-900 text-2xl leading-none px-1">
+                &times;
+              </button>
+            </div>
+            <div className="p-5">
+              <MemberAttendanceDetail employeeId={detailFor.id} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

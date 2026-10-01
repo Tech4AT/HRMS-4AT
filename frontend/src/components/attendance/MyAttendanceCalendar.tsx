@@ -298,6 +298,23 @@ function DayDetailPanel({
               <dt className="text-slate-500">Overtime</dt>
               <dd className="font-medium text-slate-800">{fmtHM(row?.overtimeMinutes)}</dd>
             </div>
+            {row?.breaks?.length ? (
+              <div className="pt-1.5">
+                <dt className="text-slate-500 mb-1">Breaks</dt>
+                <dd>
+                  <ul className="space-y-1">
+                    {row.breaks.map((b, i) => (
+                      <li key={i} className="flex justify-between font-medium text-slate-800">
+                        <span>
+                          {b.start} – {b.end ?? 'now'}
+                        </span>
+                        <span className="text-slate-500">{fmtHM(b.minutes)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            ) : null}
           </dl>
         </div>
       ) : null}

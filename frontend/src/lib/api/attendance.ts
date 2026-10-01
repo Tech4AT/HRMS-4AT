@@ -37,6 +37,8 @@ export interface AttendanceDayView {
   on_break?: boolean;
   /** Total break minutes so far today, including any break in progress. */
   break_minutes?: number | null;
+  /** Each break in the order taken; `end` is null for one still in progress. */
+  breaks?: { start: string; end: string | null; minutes: number }[];
   /** Set by the org calendar (a one-off WFH date or an active recurring
    *  weekday rule) - informational only, doesn't change how check-in/out work. */
   is_wfh_day?: boolean;

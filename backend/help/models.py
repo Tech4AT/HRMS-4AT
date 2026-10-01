@@ -69,21 +69,30 @@ class Ticket(models.Model):
 
 
 class CategoryAssignment(models.Model):
-    """Which employee owns a given category by default - e.g. IT & Access
-    always routes to Priya, Food to Ravi. `TicketViewSet.perform_create`
-    consults this to auto-assign a new ticket; the `assign` action still lets
-    a helper override it (or pick it up manually for a category with no
-    mapping configured). A category with no row here just stays unassigned,
-    same as before this existed."""
+    """One owner of a category: a category can have several, each its own row -
+    e.g. IT & Access is owned by Priya and Arun. Every owner can work that
+    category's tickets (Resolve Tickets, scoped to it) and is notified about
+    them. `TicketViewSet.perform_create` consults this to auto-assign a new
+    ticket to one of the owners (see `services.pick_assignee`); the `assign`
+    action still lets a helper override it (or pick it up manually for a
+    category with no owners configured). A category with no row here just
+    stays unassigned."""
 
-    category = models.CharField(max_length=32, choices=TicketCategory.choices, unique=True)
+    category = models.CharField(max_length=32, choices=TicketCategory.choices)
     assignee = models.ForeignKey(
         "employees.Employee", on_delete=models.CASCADE, related_name="help_category_assignments"
     )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["category"]
+        # Row order is the order owners were added, which is also the tie-break
+        # when auto-assigning between equally busy owners.
+        ordering = ["category", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["category", "assignee"], name="unique_help_owner_per_category"
+            )
+        ]
 
     def __str__(self):
         return f"{self.category} -> {self.assignee_id}"
