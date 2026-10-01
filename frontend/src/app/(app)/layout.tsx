@@ -466,6 +466,12 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const activeSection = filteredNavItems.find((item) => item.children?.length && isActive(item));
   const activeSectionChildren = activeSection?.children?.filter(canAccess);
 
+  // Inside a section that groups sub-pages (Organization, Attendance, Payroll,
+  // ...), the top heading stays the SECTION name no matter which subsection is
+  // open — the subsection is shown by the tab row below, not by swapping the
+  // title. Standalone pages keep their own title.
+  const headerTitle = (activeSection ? getPageTitle(activeSection.href) : null) ?? currentPageTitle;
+
   const sidebarContent = (
     <>
       <div className={`flex items-center gap-3 px-5 pb-4 ${collapsed ? 'md:justify-center md:px-0' : ''}`}>
@@ -565,7 +571,7 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden pt-14 md:pt-0 min-w-0">
         {/* Shared top bar, visible on every page */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
-          {currentPageTitle ? (
+          {headerTitle ? (
             <div className="min-w-0 shrink-0 flex items-center gap-1.5">
               {pathname !== '/' ? (
                 <button
@@ -579,9 +585,9 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
                 </button>
               ) : null}
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
-                {currentPageTitle.subtitle ? (
-                  <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{headerTitle.title}</h1>
+                {headerTitle.subtitle ? (
+                  <p className="text-xs text-slate-500 truncate hidden sm:block">{headerTitle.subtitle}</p>
                 ) : null}
               </div>
             </div>
