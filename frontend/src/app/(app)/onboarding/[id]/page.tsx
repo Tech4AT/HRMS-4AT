@@ -243,7 +243,7 @@ export default function OnboardingRecordDetailPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <h1 className="text-xl font-bold text-gray-900">{record.employee.name}</h1>
+                  <h2 className="text-xl font-bold text-gray-900">{record.employee.name}</h2>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STAGE_COLOR[record.stage]}`}>
                     {STAGE_LABEL[record.stage]}
                   </span>

@@ -54,11 +54,6 @@ export default function OnboardingWorkPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8 space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-gray-900">Onboarding tasks</h1>
-        <p className="text-sm text-gray-500">Work HR has assigned to you for new hires, and data HR has shared with you.</p>
-      </div>
-
       <section className="bg-white rounded-2xl border border-gray-200 p-5">
         <h2 className="font-bold text-gray-900 mb-3">Assigned to you</h2>
         {data.tasks.length === 0 ? (

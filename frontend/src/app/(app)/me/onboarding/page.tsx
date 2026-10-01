@@ -91,7 +91,7 @@ export default function MyOnboardingPage() {
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8">
       <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-xl font-bold text-gray-900">Welcome, {data.employee.name.split(' ')[0]}!</h1>
+          <h2 className="text-xl font-bold text-gray-900">Welcome, {data.employee.name.split(' ')[0]}!</h2>
           <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STAGE_COLOR[data.stage]}`}>
             {STAGE_LABEL[data.stage]}
           </span>

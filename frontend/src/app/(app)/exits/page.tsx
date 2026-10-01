@@ -53,11 +53,7 @@ export default function ExitsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Exits</h1>
-          <p className="text-sm text-gray-500">Review resignations and record employee exits.</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-6">
         <button
           onClick={() => setInitiating(true)}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold text-sm hover:bg-purple-700"

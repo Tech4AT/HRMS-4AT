@@ -508,8 +508,6 @@ function AttendanceTab() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold text-slate-900">Attendance Stats</h1>
-
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         {/* Attendance Stats */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">

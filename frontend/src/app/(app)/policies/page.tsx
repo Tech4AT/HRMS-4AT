@@ -54,11 +54,7 @@ export default function PoliciesPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Company Policies</h1>
-          <p className="text-sm text-gray-500">Publish policies employees must read and acknowledge.</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-6">
         <button
           onClick={() => setCreating(true)}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 text-white font-semibold text-sm hover:bg-indigo-700"
