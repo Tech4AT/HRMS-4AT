@@ -37,7 +37,7 @@ export default function LearningCompliancePage() {
             </div>
 
             <section className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5">
-              <h3 className="font-bold text-gray-900 mb-3">Completion by department</h3>
+              <h3 className="text-base font-bold text-slate-900 mb-3">Completion by department</h3>
               {data.byDepartment.length ? (
                 <ul className="space-y-3">
                   {data.byDepartment.map((d) => (
@@ -61,7 +61,7 @@ export default function LearningCompliancePage() {
             </section>
 
             <section className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5">
-              <h3 className="font-bold text-gray-900">Certifications expiring in the next 30 days</h3>
+              <h3 className="text-base font-bold text-slate-900">Certifications expiring in the next 30 days</h3>
               <p className="text-sm text-gray-500 mb-3">Includes certifications that have already expired.</p>
               {data.expiringCertifications.length ? (
                 <div className="overflow-x-auto">

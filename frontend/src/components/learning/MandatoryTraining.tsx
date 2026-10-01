@@ -44,7 +44,7 @@ export function MandatoryTraining({
     <section className="bg-white border border-gray-200 rounded-xl p-4 sm:p-5">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-3">
         <div>
-          <h3 className="font-bold text-gray-900">Mandatory training</h3>
+          <h3 className="text-base font-bold text-slate-900">Mandatory training</h3>
           <p className="text-sm text-gray-500">
             {courses == null
               ? 'Loading…'
