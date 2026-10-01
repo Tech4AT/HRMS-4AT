@@ -50,6 +50,7 @@ from employees.views import (
     OrgSettingAdminViewSet,
     PayGradeAdminViewSet,
 )
+from audit.views import EmployeeActivityViewSet
 from employees.analytics_views import OrgAnalyticsSummaryView, OrgHeadcountView
 from employees.reports import (
     CustomReportViewSet,
@@ -79,6 +80,7 @@ router.register("positions", PositionViewSet, basename="position")
 
 # Managing the structure (org.manage; camelCase, paginated, audited).
 router.register("org/departments", DepartmentAdminViewSet, basename="org-department")
+router.register("org/employee-activity", EmployeeActivityViewSet, basename="org-employee-activity")
 router.register("org/designations", DesignationAdminViewSet, basename="org-designation")
 # Designation was renamed JobTitle; expose both paths against the same viewset so
 # existing "org/designations" callers and the newer "org/job-titles" both resolve.
