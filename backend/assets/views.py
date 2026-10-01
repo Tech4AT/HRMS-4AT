@@ -1,12 +1,17 @@
 import base64
 import binascii
+import csv
 
+from django.db.models import Count
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from audit.mixins import AuditedModelViewSet
+from audit.service import write_audit
 from assets.importer import import_asset_rows, rows_from_upload
 from assets.models import Asset
 from assets.serializers import AssetSerializer
@@ -39,34 +44,66 @@ class AssetViewSet(AuditedModelViewSet):
     required_permission = "assets.read"
     write_permission = "assets.write"
     # Custom actions must map their own code (strict mode won't fall back).
-    action_permissions = {"import_file": "assets.write"}
+    action_permissions = {"import_file": "assets.write", "export": "assets.read", "stats": "assets.read"}
     pagination_class = ContractPageNumberPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["asset_tag", "brand", "serial", "processor"]
     ordering_fields = ["asset_tag", "brand", "date_of_allotment"]
     ordering = ["asset_tag"]
     audit_entity_type = "Asset"
+    # list + the two custom collection reads share scope + query-param filters;
+    # detail routes (retrieve/update/destroy) scope-check per object instead.
+    LIST_LIKE = {"list", "export", "stats"}
 
     def get_queryset(self):
         queryset = Asset.objects.select_related("assigned_to__user").all()
-        if self.action != "list":
+        if self.action not in self.LIST_LIKE:
             # Detail routes scope-check per object (403, not 404).
             return queryset
         if not _is_all_scope(self.request.user, self.required_permission):
             scope = resolve_employee_scope(self.request.user, self.required_permission)
             queryset = queryset.filter(assigned_to__in=scope)
-        status = self.request.query_params.get("status")
+        return self._apply_filters(queryset)
+
+    def _apply_filters(self, queryset):
+        """Manual query-param filters (django-filter is not installed). Shared
+        by list, export and stats so a filtered CSV/KPI matches the table."""
+        params = self.request.query_params
+        status = params.get("status")
         if status == Asset.STATUS_ASSIGNED:
             queryset = queryset.filter(assigned_to__isnull=False)
         elif status == Asset.STATUS_RECOVERED:
             queryset = queryset.filter(assigned_to__isnull=True, date_of_recover__isnull=False)
         elif status == Asset.STATUS_AVAILABLE:
             queryset = queryset.filter(assigned_to__isnull=True, date_of_recover__isnull=True)
-        assigned = self.request.query_params.get("assigned")
+        assigned = params.get("assigned")
         if assigned == "true":
             queryset = queryset.filter(assigned_to__isnull=False)
         elif assigned == "false":
             queryset = queryset.filter(assigned_to__isnull=True)
+        category = params.get("category")
+        if category:
+            queryset = queryset.filter(category__iexact=category)
+        brand = params.get("brand")
+        if brand:
+            queryset = queryset.filter(brand__icontains=brand)
+        has_bag = params.get("has_bag")
+        if has_bag == "true":
+            queryset = queryset.filter(has_bag=True)
+        elif has_bag == "false":
+            queryset = queryset.filter(has_bag=False)
+        for param, lookup in (
+            ("allotted_from", "date_of_allotment__gte"),
+            ("allotted_to", "date_of_allotment__lte"),
+            ("recovered_from", "date_of_recover__gte"),
+            ("recovered_to", "date_of_recover__lte"),
+        ):
+            value = params.get(param)
+            if value:
+                queryset = queryset.filter(**{lookup: value})
+        year = params.get("allotted_year")
+        if year and year.isdigit():
+            queryset = queryset.filter(date_of_allotment__year=int(year))
         return queryset
 
     def get_object(self):
@@ -117,3 +154,50 @@ class AssetViewSet(AuditedModelViewSet):
         except Exception:
             return Response({"detail": "Could not read the file — check it is the asset tracker export."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(summary, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request):
+        """Stream the scope + filter matched inventory as a CSV attachment.
+        Same filters as list, so the download mirrors the on-screen table."""
+        queryset = self.filter_queryset(self.get_queryset())
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="assets.csv"'
+        writer = csv.writer(response)
+        writer.writerow([
+            "Asset tag", "Category", "Brand", "Serial", "Processor", "RAM",
+            "Date of allotment", "Date of recover", "Has bag", "Status",
+            "Assigned to code", "Assigned to name", "Previously used",
+        ])
+        for a in queryset:
+            emp = a.assigned_to
+            user = getattr(emp, "user", None)
+            writer.writerow([
+                a.asset_tag, a.category, a.brand, a.serial, a.processor, a.ram,
+                a.date_of_allotment or "", a.date_of_recover or "",
+                "yes" if a.has_bag else "no", a.status,
+                getattr(emp, "employee_code", "") if emp else "",
+                user.get_full_name().strip() if user else "",
+                a.previously_used,
+            ])
+        write_audit(request.user, "asset.export", self.audit_entity_type, None, {"count": queryset.count()})
+        return response
+
+    @action(detail=False, methods=["get"], url_path="stats")
+    def stats(self, request):
+        """KPI counts over the scoped (and optionally filtered) queryset."""
+        queryset = self.filter_queryset(self.get_queryset())
+        assigned = queryset.filter(assigned_to__isnull=False).count()
+        recovered = queryset.filter(assigned_to__isnull=True, date_of_recover__isnull=False).count()
+        available = queryset.filter(assigned_to__isnull=True, date_of_recover__isnull=True).count()
+        by_category = {
+            row["category"]: row["n"]
+            for row in queryset.values("category").annotate(n=Count("id")).order_by("category")
+        }
+        return Response({
+            "total": queryset.count(),
+            "assigned": assigned,
+            "available": available,
+            "recovered": recovered,
+            "by_category": by_category,
+            "issued_this_year": queryset.filter(date_of_allotment__year=timezone.now().year).count(),
+        })
