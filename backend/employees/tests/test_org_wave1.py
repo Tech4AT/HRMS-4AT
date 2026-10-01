@@ -228,15 +228,15 @@ def test_work_mode_is_writable_and_a_headcount_dimension():
         format="json",
     )
     assert created.status_code == 201, created.content
-    assert created.json()["work_mode"] == "remote"
+    assert created.json()["data"]["work_mode"] == "remote"
 
     # Edit it back to office.
-    emp_id = created.json()["id"]
+    emp_id = created.json()["data"]["id"]
     edited = hr.patch(f"/api/v1/employees/{emp_id}/", {"work_mode": "office"}, format="json")
-    assert edited.status_code == 200 and edited.json()["work_mode"] == "office"
+    assert edited.status_code == 200 and edited.json()["data"]["work_mode"] == "office"
 
     # work_mode is an accepted analytics dimension.
     res = hr.get("/api/v1/org/analytics/headcount/?by=work_mode")
     assert res.status_code == 200, res.content
-    names = {b["name"] for b in res.json()["buckets"]}
+    names = {b["name"] for b in res.json()["data"]["buckets"]}
     assert names  # at least one bucket (Office/Remote/Hybrid)
