@@ -162,7 +162,7 @@ export function RolesTab() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">User Roles</h2>
+          <h2 className="text-base font-bold text-slate-900">User Roles</h2>
           <p className="text-sm text-gray-600 max-w-2xl mt-1">
             User roles can be assigned to employees from here. New roles can be created and privileges
             for all these roles can be managed from this section.

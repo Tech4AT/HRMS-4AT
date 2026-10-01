@@ -118,7 +118,7 @@ function PermissionDetail({ permission, roles }: { permission: Permission; roles
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-slate-900">{permission.code}</h2>
+        <h2 className="text-base font-bold text-slate-900">{permission.code}</h2>
         {permission.description && <p className="text-gray-600 mt-1">{permission.description}</p>}
       </div>
 
