@@ -50,5 +50,7 @@ def resolve_profile_access(user, employee) -> ProfileAccess:
         can_view=allowed("ess.profile.read", "employees.read"),
         can_read_personal=allowed("ess.profile.read", "employees.personal.read"),
         can_edit_personal=allowed("ess.profile.write", "employees.personal.write"),
-        can_edit_name=allowed("ess.profile.write", "employees.write"),
+        # Legal name is never self-editable; it changes only through HR/admin scope
+        # over someone else's record.
+        can_edit_name=(not is_self) and in_scope("employees.write"),
     )

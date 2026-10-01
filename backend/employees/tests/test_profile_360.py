@@ -53,7 +53,7 @@ def test_a_person_reads_their_own_full_profile_through_me():
         "is_self": True,
         "can_read_personal": True,
         "can_edit_personal": True,
-        "can_edit_name": True,
+        "can_edit_name": False,
     }
     assert data["personal"]["phone"] == "555-0100" and data["personal"]["dob"] == "1990-01-02"
     assert data["address"]["current_country"] == "India"
@@ -147,18 +147,30 @@ def test_self_service_read_can_be_switched_off_for_one_person():
 # --- legal name ---------------------------------------------------------------------------
 
 
-def test_a_person_changes_their_own_legal_name_on_both_user_and_employee():
-    client, me = _as("Employee")
+def test_a_person_cannot_change_their_own_legal_name():
+    for role in ("Employee", "HR Admin"):
+        client, me = _as(role)
 
-    response = client.patch(
-        _url(tail="name/"), {"first_name": "  Priya ", "last_name": "O'Neil-Rao"}, format="json"
+        response = client.patch(_url(tail="name/"), {"first_name": "Priya"}, format="json")
+
+        assert response.status_code == 403
+        me.user.refresh_from_db()
+        assert me.user.first_name == "Pat"
+
+
+def test_hr_rename_updates_both_user_and_employee():
+    hr, _ = _as("HR Admin")
+    person = EmployeeFactory(user=UserFactory(first_name="Pat", last_name="Lee"))
+
+    response = hr.patch(
+        _url(person.pk, "name/"), {"first_name": "  Priya ", "last_name": "O'Neil-Rao"}, format="json"
     )
 
     assert response.status_code == 200
-    me.refresh_from_db()
-    me.user.refresh_from_db()
-    assert (me.user.first_name, me.user.last_name) == ("Priya", "O'Neil-Rao")
-    assert (me.first_name, me.last_name) == ("Priya", "O'Neil-Rao")
+    person.refresh_from_db()
+    person.user.refresh_from_db()
+    assert (person.user.first_name, person.user.last_name) == ("Priya", "O'Neil-Rao")
+    assert (person.first_name, person.last_name) == ("Priya", "O'Neil-Rao")
     assert response.json()["data"]["first_name"] == "Priya"
     entry = AuditLog.objects.get(action="Employee.name_updated")
     assert entry.diff["before"] == {"first_name": "Pat", "last_name": "Lee"}
@@ -175,13 +187,14 @@ def test_a_person_changes_their_own_legal_name_on_both_user_and_employee():
     ],
 )
 def test_invalid_names_are_refused_and_nothing_changes(body):
-    client, me = _as("Employee")
+    hr, _ = _as("HR Admin")
+    person = EmployeeFactory(user=UserFactory(first_name="Pat", last_name="Lee"))
 
-    response = client.patch(_url(tail="name/"), body, format="json")
+    response = hr.patch(_url(person.pk, "name/"), body, format="json")
 
     assert response.status_code == 400
-    me.user.refresh_from_db()
-    assert me.user.first_name == "Pat"
+    person.user.refresh_from_db()
+    assert person.user.first_name == "Pat"
 
 
 def test_hr_can_rename_someone_but_an_employee_cannot_rename_a_colleague():
