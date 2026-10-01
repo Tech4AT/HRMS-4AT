@@ -16,7 +16,8 @@ import {
   TemplateInput,
   EmploymentType,
   OfferLetterTemplate,
-  OfferLetterTemplateInput,
+  SalaryBreakup,
+  SalaryStructureOption,
   STAGE_LABEL,
   STAGE_COLOR,
   OWNER_LABEL,
@@ -27,7 +28,8 @@ import {
   AccessArea,
   AccessGrant,
 } from '@/lib/api/onboarding';
-import { PlusIcon, FileTextIcon } from '@/components/icons';
+import { PlusIcon } from '@/components/icons';
+import { SalaryBreakup as SalaryBreakupView } from '@/components/onboarding/SalaryBreakup';
 
 interface NamedEntity {
   id: number;
@@ -77,7 +79,7 @@ export default function OnboardingPage() {
     }
   }, [authLoading, hasAccess, router]);
 
-  const [tab, setTab] = useState<'records' | 'templates' | 'offerLetterTemplates' | 'access'>('records');
+  const [tab, setTab] = useState<'records' | 'templates' | 'access'>('records');
   const [records, setRecords] = useState<OnboardingRecordListItem[]>([]);
   const [stageFilter, setStageFilter] = useState<OnboardingStage | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -148,16 +150,6 @@ export default function OnboardingPage() {
           )}
           {isHrAdmin && (
             <button
-              onClick={() => setTab('offerLetterTemplates')}
-              className={`px-1 py-3 border-b-2 font-semibold transition-colors ${
-                tab === 'offerLetterTemplates' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Offer Letter Templates
-            </button>
-          )}
-          {isHrAdmin && (
-            <button
               onClick={() => setTab('access')}
               className={`px-1 py-3 border-b-2 font-semibold transition-colors ${
                 tab === 'access' ? 'border-purple-600 text-purple-600' : 'border-transparent text-gray-600 hover:text-gray-900'
@@ -184,7 +176,6 @@ export default function OnboardingPage() {
           />
         )}
         {tab === 'templates' && isHrAdmin && <TemplatesTab />}
-        {tab === 'offerLetterTemplates' && isHrAdmin && <OfferLetterTemplatesTab />}
         {tab === 'access' && isHrAdmin && <AccessTab />}
       </div>
 
@@ -407,10 +398,12 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
     personalEmail: '',
     phone: '',
     joiningDate: '',
-    basicSalary: 0,
-    hra: 0,
-    otherAllowances: 0,
-    otherComponents: 0,
+    annualPackage: 0,
+    salaryStructureId: null,
+    includeBonus: false,
+    bonusAmount: 0,
+    includeExtraAllowance: false,
+    extraAllowanceAmount: 0,
     currency: 'INR',
     employmentType: 'full_time',
     workerType: 'permanent',
@@ -422,8 +415,47 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [structures, setStructures] = useState<SalaryStructureOption[]>([]);
+  const [salary, setSalary] = useState<SalaryBreakup | null>(null);
+  const [salaryError, setSalaryError] = useState<string | null>(null);
+  const [salaryLoading, setSalaryLoading] = useState(false);
   const [showCreateDepartment, setShowCreateDepartment] = useState(false);
   const [showCreateDesignation, setShowCreateDesignation] = useState(false);
+
+  useEffect(() => {
+    onboardingApi.getSalaryStructures().then(setStructures).catch(() => {});
+  }, []);
+
+  // Live payroll-engine preview whenever the package / extras change.
+  useEffect(() => {
+    if (!form.annualPackage || form.annualPackage <= 0) {
+      setSalary(null);
+      setSalaryError(null);
+      return;
+    }
+    setSalaryLoading(true);
+    const handle = setTimeout(() => {
+      onboardingApi
+        .previewSalary({
+          annualPackage: form.annualPackage,
+          salaryStructureId: form.salaryStructureId,
+          includeBonus: form.includeBonus,
+          bonusAmount: form.bonusAmount,
+          includeExtraAllowance: form.includeExtraAllowance,
+          extraAllowanceAmount: form.extraAllowanceAmount,
+        })
+        .then((r) => {
+          setSalary(r);
+          setSalaryError(null);
+        })
+        .catch((e) => {
+          setSalary(null);
+          setSalaryError(e instanceof Error ? e.message : 'Could not calculate the salary breakup.');
+        })
+        .finally(() => setSalaryLoading(false));
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [form.annualPackage, form.salaryStructureId, form.includeBonus, form.bonusAmount, form.includeExtraAllowance, form.extraAllowanceAmount]);
 
   const reloadDepartments = () => fetchJson<NamedEntity[]>('/api/departments').then(setDepartments).catch(() => {});
   const reloadDesignations = () => fetchJson<NamedEntity[]>('/api/designations').then(setDesignations).catch(() => {});
@@ -450,6 +482,15 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
   }, []);
 
   const update = (patch: Partial<CreateNewHireInput>) => setForm((f) => ({ ...f, ...patch }));
+  const [phoneCountry, setPhoneCountry] = useState<(typeof PHONE_COUNTRIES)[number]['code']>('IN');
+  const [phoneDigits, setPhoneDigits] = useState('');
+  const phoneRule = PHONE_COUNTRIES.find((c) => c.code === phoneCountry)!;
+  const setPhone = (code: string, digits: string) => {
+    const rule = PHONE_COUNTRIES.find((c) => c.code === code)!;
+    const clean = digits.replace(/\D/g, '').slice(0, rule.digits);
+    setPhoneDigits(clean);
+    update({ phone: clean ? `${rule.dial} ${clean}` : '' });
+  };
 
   const validateStep = (s: number): string | null => {
     if (s === 1) {
@@ -457,13 +498,18 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
       if (!form.lastName.trim()) return 'Last name is required.';
       if (!form.workEmail.trim()) return 'Work email is required.';
       if (!form.personalEmail?.trim()) return 'Personal email is required — it is how we reach the candidate before day 1.';
+      if (phoneDigits && !phoneRule.pattern.test(phoneDigits)) {
+        return `Enter a valid ${phoneRule.label.split(' (')[0]} phone number: ${phoneRule.hint}.`;
+      }
     }
     if (s === 2) {
       if (!form.joiningDate) return 'Joining date is required.';
     }
     if (s === 4) {
-      const total = (form.basicSalary || 0) + (form.hra || 0) + (form.otherAllowances || 0) + (form.otherComponents || 0);
-      if (total <= 0) return 'Enter at least one salary component greater than 0.';
+      if (!form.annualPackage || form.annualPackage <= 0) return 'Enter the annual package (CTC).';
+      if (form.includeBonus && !(form.bonusAmount && form.bonusAmount > 0)) return 'Enter the bonus amount, or untick Include bonus.';
+      if (form.includeExtraAllowance && !(form.extraAllowanceAmount && form.extraAllowanceAmount > 0)) return 'Enter the extra allowance amount, or untick Include extra allowance.';
+      if (salaryError) return salaryError;
     }
     return null;
   };
@@ -562,12 +608,32 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
                 />
               </Field>
               <Field label="Phone">
-                <input
-                  className="wizard-input"
-                  value={form.phone ?? ''}
-                  onChange={(e) => update({ phone: e.target.value })}
-                  placeholder="+91 9999 9999 99"
-                />
+                <div className="flex gap-2">
+                  <select
+                    className="wizard-input !w-44 shrink-0"
+                    value={phoneCountry}
+                    onChange={(e) => {
+                      const code = e.target.value as typeof phoneCountry;
+                      setPhoneCountry(code);
+                      setPhone(code, phoneDigits);
+                    }}
+                    aria-label="Phone country"
+                  >
+                    {PHONE_COUNTRIES.map((c) => (
+                      <option key={c.code} value={c.code}>{c.label}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="wizard-input"
+                    inputMode="numeric"
+                    value={phoneDigits}
+                    onChange={(e) => setPhone(phoneCountry, e.target.value)}
+                    maxLength={phoneRule.digits}
+                    placeholder={'9'.repeat(phoneRule.digits)}
+                    aria-label="Phone number"
+                  />
+                </div>
+                <span className="block text-xs text-gray-400 mt-1">{phoneRule.hint}</span>
               </Field>
             </div>
           )}
@@ -816,9 +882,12 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
           {/* ── Step 4: Compensation ── */}
           {step === 4 && (
             <div className="space-y-4">
-              <p className="text-xs text-gray-500">Annual figures — the offer letter is generated from these values.</p>
+              <p className="text-xs text-gray-500">
+                Enter the annual package only — Basic, HRA, allowances and employer contributions are calculated by the
+                payroll engine from the salary structure.
+              </p>
               <div className="grid grid-cols-2 gap-4">
-                <Field label="Basic Salary *">
+                <Field label="Annual Package (CTC) *">
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{form.currency}</span>
                     <input
@@ -826,68 +895,81 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
                       min={0}
                       step="1000"
                       className="wizard-input pl-12"
-                      value={form.basicSalary || ''}
-                      onChange={(e) => update({ basicSalary: Number(e.target.value) })}
-                      placeholder="e.g. 900000"
+                      value={form.annualPackage || ''}
+                      onChange={(e) => update({ annualPackage: Number(e.target.value) })}
+                      placeholder="e.g. 1200000"
                     />
                   </div>
                 </Field>
-                <Field label="HRA">
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{form.currency}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="1000"
-                      className="wizard-input pl-12"
-                      value={form.hra || ''}
-                      onChange={(e) => update({ hra: Number(e.target.value) })}
-                      placeholder="e.g. 200000"
-                    />
-                  </div>
-                </Field>
-                <Field label="Other Allowances">
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{form.currency}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="1000"
-                      className="wizard-input pl-12"
-                      value={form.otherAllowances || ''}
-                      onChange={(e) => update({ otherAllowances: Number(e.target.value) })}
-                      placeholder="0"
-                    />
-                  </div>
-                </Field>
-                <Field label="Other Components">
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">{form.currency}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      step="1000"
-                      className="wizard-input pl-12"
-                      value={form.otherComponents || ''}
-                      onChange={(e) => update({ otherComponents: Number(e.target.value) })}
-                      placeholder="0"
-                    />
-                  </div>
+                <Field label="Salary Structure">
+                  <select
+                    className="wizard-input"
+                    value={form.salaryStructureId ?? ''}
+                    onChange={(e) => update({ salaryStructureId: e.target.value || null })}
+                  >
+                    <option value="">{structures.length ? 'Default (first active)' : 'No active structure'}</option>
+                    {structures.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
                 </Field>
               </div>
 
-              <div className="flex items-center justify-between bg-purple-50 border border-purple-100 rounded-xl px-4 py-3">
-                <span className="text-sm font-semibold text-purple-700">Total CTC (annual)</span>
-                <span className="text-base font-bold text-purple-900">
-                  {form.currency}{' '}
-                  {(
-                    (form.basicSalary || 0) +
-                    (form.hra || 0) +
-                    (form.otherAllowances || 0) +
-                    (form.otherComponents || 0)
-                  ).toLocaleString('en-IN')}
-                </span>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                    <input
+                      type="checkbox"
+                      checked={!!form.includeBonus}
+                      onChange={(e) => update({ includeBonus: e.target.checked, bonusAmount: e.target.checked ? form.bonusAmount : 0 })}
+                    />
+                    Include bonus
+                  </label>
+                  {form.includeBonus && (
+                    <input
+                      type="number"
+                      min={0}
+                      step="1000"
+                      className="wizard-input"
+                      value={form.bonusAmount || ''}
+                      onChange={(e) => update({ bonusAmount: Number(e.target.value) })}
+                      placeholder="Bonus amount (annual)"
+                      aria-label="Bonus amount"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                    <input
+                      type="checkbox"
+                      checked={!!form.includeExtraAllowance}
+                      onChange={(e) =>
+                        update({ includeExtraAllowance: e.target.checked, extraAllowanceAmount: e.target.checked ? form.extraAllowanceAmount : 0 })
+                      }
+                    />
+                    Include extra allowance
+                  </label>
+                  {form.includeExtraAllowance && (
+                    <input
+                      type="number"
+                      min={0}
+                      step="1000"
+                      className="wizard-input"
+                      value={form.extraAllowanceAmount || ''}
+                      onChange={(e) => update({ extraAllowanceAmount: Number(e.target.value) })}
+                      placeholder="Extra allowance (annual)"
+                      aria-label="Extra allowance amount"
+                    />
+                  )}
+                </div>
               </div>
+              <p className="text-xs text-gray-400 -mt-2">Bonus and extra allowance are added on top of the package.</p>
+
+              {salaryLoading && <p className="text-sm text-gray-500">Calculating breakup…</p>}
+              {salaryError && !salaryLoading && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{salaryError}</p>
+              )}
+              {salary && !salaryLoading && <SalaryBreakupView data={salary} currency={form.currency ?? 'INR'} />}
 
               <Field label="Currency">
                 <input
@@ -967,6 +1049,13 @@ function AddNewHireModal({ onClose, onCreated }: { onClose: () => void; onCreate
     </div>
   );
 }
+
+const PHONE_COUNTRIES = [
+  { code: 'IN', label: 'India (+91)', dial: '+91', digits: 10, pattern: /^[6-9]\d{9}$/, hint: '10 digits, starting with 6-9' },
+  { code: 'US', label: 'United States (+1)', dial: '+1', digits: 10, pattern: /^[2-9]\d{2}[2-9]\d{6}$/, hint: '10 digits (area code + number)' },
+  { code: 'GB', label: 'United Kingdom (+44)', dial: '+44', digits: 10, pattern: /^[1-9]\d{9}$/, hint: '10 digits, without the leading 0' },
+  { code: 'AE', label: 'UAE (+971)', dial: '+971', digits: 9, pattern: /^5\d{8}$/, hint: '9 digits, starting with 5' },
+] as const;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -1537,290 +1626,6 @@ function AccessTab() {
         </div>
         {bulkMsg && <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-4 py-2 mb-3">{bulkMsg}</p>}
         <div className="space-y-4">{itAreas.map(areaCard)}</div>
-      </div>
-    </div>
-  );
-}
-
-function OfferLetterTemplatesTab() {
-  const [templates, setTemplates] = useState<OfferLetterTemplate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState<OfferLetterTemplate | null>(null);
-
-  const load = async () => {
-    try {
-      setIsLoading(true);
-      setTemplates(await onboardingApi.getOfferLetterTemplates());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load offer letter templates');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const remove = async (id: number) => {
-    if (!confirm('Remove this template?')) return;
-    try {
-      await onboardingApi.deactivateOfferLetterTemplate(id);
-      load();
-    } catch (e) {
-      alert(e instanceof OnboardingApiError ? e.message : 'Failed to remove template');
-    }
-  };
-
-  const makeDefault = async (id: number) => {
-    try {
-      await onboardingApi.updateOfferLetterTemplate(id, { isDefault: true });
-      load();
-    } catch (e) {
-      alert(e instanceof OnboardingApiError ? e.message : 'Failed to set default');
-    }
-  };
-
-  return (
-    <div>
-      <div className="flex items-start justify-between mb-4 gap-4">
-        <p className="text-sm text-gray-500 max-w-xl">
-          These are the offer letters HR sends new hires. Pick one per hire in the &quot;Add New Employee&quot; form —
-          e.g. a different template for interns vs. full-time roles.
-        </p>
-        <button
-          onClick={() => setShowAdd(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 text-white rounded-lg font-semibold text-sm hover:bg-purple-700 transition-colors shrink-0"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Add Template
-        </button>
-      </div>
-
-      {isLoading && <p className="text-gray-500 text-sm">Loading templates...</p>}
-      {error && <p className="text-red-600 text-sm">{error}</p>}
-
-      {!isLoading && !error && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {templates.map((t) => (
-            <div key={t.id} className="bg-white rounded-2xl border border-gray-200 p-5">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <h3 className="font-bold text-gray-900">{t.name}</h3>
-                  <p className="text-xs text-gray-500">{t.heading}</p>
-                </div>
-                {t.isDefault && (
-                  <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 shrink-0">
-                    Default
-                  </span>
-                )}
-              </div>
-              {t.sourceDocxName ? (
-                <div className="flex items-center gap-2 text-sm">
-                  <FileTextIcon className="w-4 h-4 text-purple-600 shrink-0" />
-                  {t.sourceDocxUrl ? (
-                    <a href={t.sourceDocxUrl} target="_blank" rel="noreferrer" className="text-purple-600 hover:underline truncate">
-                      {t.sourceDocxName}
-                    </a>
-                  ) : (
-                    <span className="text-gray-600 truncate">{t.sourceDocxName}</span>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-600 whitespace-pre-wrap line-clamp-4">{t.body}</p>
-              )}
-              <div className="flex gap-3 mt-4 pt-3 border-t border-gray-100">
-                <button onClick={() => setEditing(t)} className="text-purple-600 text-sm font-semibold hover:underline">
-                  Edit
-                </button>
-                {!t.isDefault && (
-                  <button onClick={() => makeDefault(t.id)} className="text-gray-600 text-sm font-semibold hover:underline">
-                    Make default
-                  </button>
-                )}
-                <button onClick={() => remove(t.id)} className="text-red-600 text-sm font-semibold hover:underline ml-auto">
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {(showAdd || editing) && (
-        <OfferLetterTemplateModal
-          template={editing}
-          onClose={() => {
-            setShowAdd(false);
-            setEditing(null);
-          }}
-          onSaved={() => {
-            setShowAdd(false);
-            setEditing(null);
-            load();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function OfferLetterTemplateModal({
-  template,
-  onClose,
-  onSaved,
-}: {
-  template: OfferLetterTemplate | null;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [form, setForm] = useState<OfferLetterTemplateInput>(
-    template
-      ? { name: template.name, heading: template.heading, body: template.body, isDefault: template.isDefault }
-      : { name: '', heading: 'Offer of Employment', body: '', isDefault: false },
-  );
-  const [file, setFile] = useState<File | null>(null);
-  const [removeExistingFile, setRemoveExistingFile] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const hasExistingFile = !!template?.sourceDocxName && !removeExistingFile;
-  const usingWordFile = hasExistingFile || !!file;
-
-  const placeholders = template?.placeholders ?? [
-    'first_name', 'last_name', 'full_name', 'designation', 'department', 'employee_code',
-    'joining_date', 'package', 'monthly_package', 'employment_type', 'probation_period_months',
-    'notice_period_days', 'today', 'reporting_manager',
-  ];
-
-  const insertPlaceholder = (name: string) => {
-    setForm((f) => ({ ...f, body: `${f.body ?? ''}{{${name}}}` }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name.trim()) {
-      setError('Template name is required.');
-      return;
-    }
-    if (!usingWordFile && !file && !form.body?.trim()) {
-      setError('Upload a Word (.docx) template or type a letter body.');
-      return;
-    }
-    setSubmitting(true);
-    setError(null);
-    try {
-      if (template) {
-        await onboardingApi.updateOfferLetterTemplate(
-          template.id,
-          { ...form, removeSourceDocx: removeExistingFile && !file },
-          file,
-        );
-      } else {
-        await onboardingApi.createOfferLetterTemplate(form, file);
-      }
-      onSaved();
-    } catch (e) {
-      setError(e instanceof OnboardingApiError ? e.message : 'Failed to save template');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-4">{template ? 'Edit offer letter template' : 'Add offer letter template'}</h2>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Template name *">
-              <input className="input" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Contractor Offer" />
-            </Field>
-            <Field label="Letter heading">
-              <input className="input" value={form.heading} onChange={(e) => setForm((f) => ({ ...f, heading: e.target.value }))} />
-            </Field>
-          </div>
-
-          <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-            <span className="block text-xs font-semibold text-gray-600 mb-2">Upload a Word (.docx) template</span>
-            {hasExistingFile ? (
-              <div className="flex items-center gap-2 text-sm">
-                <FileTextIcon className="w-4 h-4 text-purple-600 shrink-0" />
-                <span className="text-gray-700 truncate flex-1">{template!.sourceDocxName}</span>
-                <button
-                  type="button"
-                  onClick={() => setRemoveExistingFile(true)}
-                  className="text-red-600 text-xs font-semibold hover:underline shrink-0"
-                >
-                  Remove
-                </button>
-              </div>
-            ) : (
-              <>
-                <input
-                  type="file"
-                  accept=".docx"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  className="text-sm w-full"
-                />
-                <p className="text-xs text-gray-400 mt-1.5">
-                  Type placeholders like <code className="font-mono">{'{{first_name}}'}</code> directly into your Word document —
-                  they get filled in and the letter is sent as a PDF, with your formatting, logo and letterhead intact.
-                </p>
-              </>
-            )}
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="block text-xs font-semibold text-gray-600">
-                Letter body {usingWordFile ? '(not used — a Word file is attached above)' : '*'}
-              </span>
-              <span className="text-xs text-gray-400">Blank line = new paragraph &middot; **bold** &middot; click a placeholder to insert</span>
-            </div>
-            <textarea
-              className={`input font-mono text-xs ${usingWordFile ? 'opacity-50' : ''}`}
-              rows={usingWordFile ? 4 : 14}
-              value={form.body ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
-              placeholder={'Dear {{first_name}} {{last_name}},\n\nWe are pleased to offer you...'}
-            />
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {placeholders.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => insertPlaceholder(p)}
-                  className="px-2 py-1 rounded-md bg-gray-100 text-gray-700 text-xs font-mono hover:bg-purple-100 hover:text-purple-700"
-                >
-                  {`{{${p}}}`}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={form.isDefault ?? false}
-              onChange={(e) => setForm((f) => ({ ...f, isDefault: e.target.checked }))}
-            />
-            Use as the default template for new hires
-          </label>
-
-          {error && <p className="text-red-600 text-sm">{error}</p>}
-
-          <div className="flex gap-2 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold text-sm hover:bg-gray-50">
-              Cancel
-            </button>
-            <button type="submit" disabled={submitting} className="flex-1 px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold text-sm hover:bg-purple-700 disabled:opacity-50">
-              {submitting ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );

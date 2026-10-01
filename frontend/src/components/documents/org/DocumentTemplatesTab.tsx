@@ -5,36 +5,56 @@ import {
   type DocumentTemplate,
   type TemplateFolder,
 } from '@/lib/api/documentTemplates';
+import { onboardingApi, type OfferLetterTemplate } from '@/lib/api/onboarding';
 import { BTN_OUTLINE, BTN_PRIMARY, EmptyRow, SectionHeader, SELECT, TH } from './shared';
 import { DocumentUploadModal } from '../DocumentUploadModal';
+import { TemplateWizard, type WizardTarget } from './TemplateWizard';
 
 const COLS = ['Document name', 'Folder', 'Workflow enabled', 'Action type', 'Last used', 'Actions'];
+const PAGE_SIZE = 50;
+const OFFER_FOLDER = 'Offer Letters';
 
-/** Keka "Document templates" screen, wired to the document_templates engine. */
+type RowBase = {
+  key: string;
+  name: string;
+  folderName: string | null;
+  folderId: string;
+  workflow: boolean;
+  lastUsed: string | null;
+};
+type Row =
+  | (RowBase & { kind: 'document'; template: DocumentTemplate })
+  | (RowBase & { kind: 'offer'; template: OfferLetterTemplate });
+
+/** Keka "Document templates" screen. General templates come from the
+ * document_templates engine; offer letter templates (onboarding app) are
+ * listed alongside them and edited through the same 3-step wizard. */
 export function DocumentTemplatesTab() {
   const [templates, setTemplates] = useState<DocumentTemplate[] | null>(null);
+  const [offers, setOffers] = useState<OfferLetterTemplate[]>([]);
   const [folders, setFolders] = useState<TemplateFolder[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [folderFilter, setFolderFilter] = useState('');
   const [search, setSearch] = useState('');
-  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [wizard, setWizard] = useState<WizardTarget | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [newName, setNewName] = useState('');
   const [generatingId, setGeneratingId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
 
   const load = async () => {
     setLoadError(null);
     try {
-      const [list, folderList] = await Promise.all([
+      const [list, folderList, offerList] = await Promise.all([
         documentTemplatesApi.list(),
         documentTemplatesApi.folders(),
+        onboardingApi.getOfferLetterTemplates().catch(() => [] as OfferLetterTemplate[]),
       ]);
       setTemplates(list);
       setFolders(folderList);
+      setOffers(offerList);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load templates');
       setTemplates([]);
@@ -45,30 +65,55 @@ export function DocumentTemplatesTab() {
     load();
   }, []);
 
-  const filtered = (templates ?? []).filter((t) => {
-    if (actionFilter && t.actionType !== actionFilter) return false;
-    if (statusFilter === 'workflow' && !t.workflowEnabled) return false;
-    if (statusFilter === 'no-workflow' && t.workflowEnabled) return false;
-    if (folderFilter && String(t.folder ?? '') !== folderFilter) return false;
-    if (search && !t.name.toLowerCase().includes(search.toLowerCase())) return false;
+  const rows: Row[] = [
+    ...(templates ?? []).map(
+      (t): Row => ({
+        kind: 'document',
+        key: `d${t.id}`,
+        name: t.name,
+        folderName: t.folderName,
+        folderId: String(t.folder ?? ''),
+        workflow: t.workflowEnabled,
+        lastUsed: t.lastUsedAt,
+        template: t,
+      }),
+    ),
+    ...offers.map(
+      (o): Row => ({
+        kind: 'offer',
+        key: `o${o.id}`,
+        name: o.name,
+        folderName: OFFER_FOLDER,
+        folderId: 'offer',
+        workflow: false,
+        lastUsed: null,
+        template: o,
+      }),
+    ),
+  ];
+
+  const filtered = rows.filter((r) => {
+    if (actionFilter && actionFilter !== 'document_generation') return false;
+    if (statusFilter === 'workflow' && !r.workflow) return false;
+    if (statusFilter === 'no-workflow' && r.workflow) return false;
+    if (folderFilter && r.folderId !== folderFilter) return false;
+    if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const visible = filtered.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
-  const create = async () => {
-    const name = newName.trim();
-    if (!name || busy) return;
-    setBusy(true);
+  const remove = async (r: Row) => {
+    if (!confirm(`Delete template "${r.name}"?`)) return;
     setNotice(null);
     try {
-      await documentTemplatesApi.create({ name });
-      setNewName('');
-      setCreating(false);
+      if (r.kind === 'offer') await onboardingApi.deactivateOfferLetterTemplate(r.template.id);
+      else await documentTemplatesApi.remove(r.template.id);
       await load();
-      setNotice(`Template "${name}" created.`);
+      setNotice(`Template "${r.name}" deleted.`);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : 'Create failed');
-    } finally {
-      setBusy(false);
+      setNotice(e instanceof Error ? e.message : 'Delete failed');
     }
   };
 
@@ -99,7 +144,7 @@ export function DocumentTemplatesTab() {
             <button type="button" onClick={() => setUploadOpen(true)} className={BTN_OUTLINE}>
               ⭱ Upload
             </button>
-            <button type="button" onClick={() => setCreating((v) => !v)} className={BTN_PRIMARY}>
+            <button type="button" onClick={() => setWizard({ kind: 'new' })} className={BTN_PRIMARY}>
               + Create template ▾
             </button>
           </>
@@ -119,19 +164,17 @@ export function DocumentTemplatesTab() {
           onClose={() => setUploadOpen(false)}
         />
       )}
-      {creating && (
-        <div className="flex items-center gap-2 bg-white rounded-xl border border-gray-200 px-4 py-3">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Template name, e.g. Appointment Letter"
-            className={`${SELECT} flex-1`}
-            aria-label="New template name"
-          />
-          <button type="button" disabled={busy || !newName.trim()} onClick={create} className={BTN_PRIMARY}>
-            Create
-          </button>
-        </div>
+      {wizard && (
+        <TemplateWizard
+          target={wizard}
+          folders={folders}
+          onClose={() => setWizard(null)}
+          onSaved={(msg) => {
+            setWizard(null);
+            setNotice(msg);
+            void load();
+          }}
+        />
       )}
       <div className="flex items-center gap-3 flex-wrap">
         <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} className={SELECT} aria-label="Action type">
@@ -148,6 +191,7 @@ export function DocumentTemplatesTab() {
           {folders.map((f) => (
             <option key={f.id} value={f.id}>{f.name}</option>
           ))}
+          <option value="offer">{OFFER_FOLDER}</option>
         </select>
         <input
           value={search}
@@ -164,23 +208,49 @@ export function DocumentTemplatesTab() {
             <tr>{COLS.map((c) => <th key={c} className={TH}>{c}</th>)}</tr>
           </thead>
           <tbody>
-            {filtered.map((t) => (
-              <tr key={t.id} className="border-b border-gray-100 last:border-0">
-                <td className="px-5 py-3 text-sm font-medium text-slate-900">{t.name}</td>
-                <td className="px-5 py-3 text-sm text-slate-600">{t.folderName ?? '—'}</td>
-                <td className="px-5 py-3 text-sm text-slate-600">{t.workflowEnabled ? 'Yes' : 'No'}</td>
-                <td className="px-5 py-3 text-sm text-slate-600">📄 {t.actionType === 'document_generation' ? 'Document Generation' : t.actionType}</td>
-                <td className="px-5 py-3 text-sm text-slate-600">
-                  {t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleDateString() : 'Not Generated'}
-                </td>
-                <td className="px-5 py-3">
+            {visible.map((r) => (
+              <tr key={r.key} className="border-b border-gray-100 last:border-0 h-16">
+                <td className="px-5 py-3 text-sm">
                   <button
                     type="button"
-                    disabled={generatingId === t.id}
-                    onClick={() => generate(t)}
-                    className={BTN_OUTLINE}
+                    onClick={() =>
+                      setWizard(
+                        r.kind === 'offer'
+                          ? { kind: 'offer', template: r.template }
+                          : { kind: 'document', template: r.template },
+                      )
+                    }
+                    className="text-purple-700 hover:underline text-left"
                   >
-                    {generatingId === t.id ? 'Generating…' : 'Generate'}
+                    {r.name}
+                  </button>
+                  {r.kind === 'offer' && r.template.isDefault && (
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">
+                      Default
+                    </span>
+                  )}
+                </td>
+                <td className="px-5 py-3 text-sm text-slate-800">{r.folderName ?? '—'}</td>
+                <td className="px-5 py-3 text-sm text-slate-800">{r.workflow ? 'Yes' : 'No'}</td>
+                <td className="px-5 py-3 text-sm text-slate-800">📄 Document Generation</td>
+                <td className="px-5 py-3 text-sm text-gray-500">
+                  {r.lastUsed
+                    ? new Date(r.lastUsed).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : 'Not Generated'}
+                </td>
+                <td className="px-5 py-3 whitespace-nowrap">
+                  {r.kind === 'document' && (
+                    <button
+                      type="button"
+                      disabled={generatingId === r.template.id}
+                      onClick={() => generate(r.template)}
+                      className={`${BTN_OUTLINE} mr-2`}
+                    >
+                      {generatingId === r.template.id ? 'Generating…' : 'Generate'}
+                    </button>
+                  )}
+                  <button type="button" onClick={() => remove(r)} className="text-sm text-red-600 hover:underline">
+                    Delete
                   </button>
                 </td>
               </tr>
@@ -191,6 +261,14 @@ export function DocumentTemplatesTab() {
         {templates !== null && filtered.length === 0 && (
           <EmptyRow>{loadError ?? 'No document templates'}</EmptyRow>
         )}
+        <div className="flex items-center justify-end gap-6 px-6 py-3 border-t border-gray-100 text-xs text-slate-700">
+          <span>
+            {filtered.length === 0 ? 0 : (curPage - 1) * PAGE_SIZE + 1} to {Math.min(curPage * PAGE_SIZE, filtered.length)} of {filtered.length}
+          </span>
+          <button type="button" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)} className="disabled:opacity-30" aria-label="Previous page">‹</button>
+          <span>Page {curPage} of {pageCount}</span>
+          <button type="button" disabled={curPage >= pageCount} onClick={() => setPage(curPage + 1)} className="disabled:opacity-30" aria-label="Next page">›</button>
+        </div>
       </div>
     </div>
   );

@@ -18,7 +18,7 @@ from employees.models import BankDetails, EducationRecord, Employee, EmployeeLet
 
 User = get_user_model()
 
-from . import services
+from . import salary, services
 from .exceptions import OfferWorkflowError
 from .models import (
     ACCESS_AREA_BANK_DETAILS,
@@ -897,10 +897,27 @@ class OfferLetterDetailView(APIView):
                 return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'Invalid template'}}, status=400)
 
         editable_fields = (
-            'basic_salary', 'hra', 'other_allowances', 'other_components', 'currency',
-            'employment_type', 'probation_period_months', 'notice_period_days',
+            'currency', 'employment_type', 'probation_period_months', 'notice_period_days',
         )
         updates = {field: request.data[field] for field in editable_fields if field in request.data}
+
+        # Salary is package-based: recompute the breakup with the payroll engine.
+        salary_keys = ('annual_package', 'bonus_amount', 'extra_allowance_amount', 'salary_structure_id')
+        if any(k in request.data for k in salary_keys):
+            package = request.data.get('annual_package', offer.salary_breakup.get('annualPackage') or offer.annual_ctc)
+            try:
+                result = salary.compute_offer_salary(
+                    package,
+                    structure_id=request.data.get('salary_structure_id') or (offer.salary_breakup.get('structure') or {}).get('id'),
+                    bonus=request.data.get('bonus_amount', offer.bonus_amount),
+                    extra_allowance=request.data.get('extra_allowance_amount', offer.extra_allowance_amount),
+                )
+            except ValueError as exc:
+                return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': str(exc)}}, status=400)
+            updates.update(result['components'])
+            updates['bonus_amount'] = result['bonus']
+            updates['extra_allowance_amount'] = result['extra_allowance']
+            updates['salary_breakup'] = salary.stored_breakup(result)
         if template is not None:
             updates['template'] = template
 
@@ -920,6 +937,34 @@ class OfferLetterDetailView(APIView):
                 return _workflow_error_response(exc)
 
         return Response({'success': True, 'data': OfferLetterSerializer(result, context={'request': request}).data})
+
+
+class SalaryPreviewView(APIView):
+    """POST: payroll-engine breakup for an annual package (HR Admin only, nothing saved)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not is_hr_admin(request.user):
+            return _forbidden('HR Admin only')
+        data = [{'id': str(s.pk), 'code': s.code, 'name': s.name, 'minCtc': s.min_ctc, 'maxCtc': s.max_ctc}
+                for s in salary.active_structures()]
+        return Response({'success': True, 'data': data})
+
+    def post(self, request):
+        if not is_hr_admin(request.user):
+            return _forbidden('HR Admin only')
+        d = request.data
+        try:
+            result = salary.compute_offer_salary(
+                d.get('annual_package'),
+                structure_id=d.get('salary_structure_id') or None,
+                bonus=d.get('bonus_amount') if d.get('include_bonus') else 0,
+                extra_allowance=d.get('extra_allowance_amount') if d.get('include_extra_allowance') else 0,
+            )
+        except ValueError as exc:
+            return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': str(exc)}}, status=400)
+        return Response({'success': True, 'data': salary.stored_breakup(result)})
 
 
 class OfferLetterSendView(APIView):
@@ -1072,6 +1117,28 @@ class OfferLetterTemplateListView(APIView):
             _set_as_default(template)
         write_audit(request.user, 'onboarding.offer_letter_template_created', 'offer_letter_template', template.id, {'name': template.name})
         return Response({'success': True, 'data': OfferLetterTemplateSerializer(template, context={'request': request}).data}, status=201)
+
+
+class OfferLetterTemplateFileView(APIView):
+    """GET the template's uploaded .docx as raw bytes (HR Admin only) so the
+    template editor can load it. Media files aren't served over HTTP."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not is_hr_admin(request.user):
+            return _forbidden('HR Admin only')
+        template = get_object_or_404(OfferLetterTemplate, pk=pk, is_active=True)
+        if not template.source_docx:
+            return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'No file'}}, status=404)
+        with template.source_docx.open('rb') as fh:
+            data = fh.read()
+        resp = HttpResponse(
+            data,
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        resp['Content-Disposition'] = 'inline'
+        return resp
 
 
 class OfferLetterTemplateDetailView(APIView):

@@ -300,7 +300,7 @@ def resolve_offer_letter_template(template_id=None) -> OfferLetterTemplate | Non
 
 def create_offer_letter(profile: OnboardingProfile, *, basic_salary, hra, other_allowances, other_components,
                          currency, employment_type, probation_period_months, notice_period_days, created_by,
-                         template=None) -> OfferLetter:
+                         template=None, bonus_amount=0, extra_allowance_amount=0, salary_breakup=None) -> OfferLetter:
     """Called from new-hire creation — auto-generates the draft PDF
     immediately, from `template` (or the org's default). Never sends it; see
     `send_offer_letter`. `annual_ctc` is never passed in — it's always the
@@ -322,6 +322,9 @@ def create_offer_letter(profile: OnboardingProfile, *, basic_salary, hra, other_
         hra=hra,
         other_allowances=other_allowances,
         other_components=other_components,
+        bonus_amount=bonus_amount,
+        extra_allowance_amount=extra_allowance_amount,
+        salary_breakup=salary_breakup or {},
         currency=currency,
         employment_type=employment_type,
         probation_period_months=probation_period_months,
@@ -518,6 +521,9 @@ def create_new_offer_version(offer: OfferLetter, actor, **field_updates) -> Offe
         hra=field_updates.get('hra', offer.hra),
         other_allowances=field_updates.get('other_allowances', offer.other_allowances),
         other_components=field_updates.get('other_components', offer.other_components),
+        bonus_amount=field_updates.get('bonus_amount', offer.bonus_amount),
+        extra_allowance_amount=field_updates.get('extra_allowance_amount', offer.extra_allowance_amount),
+        salary_breakup=field_updates.get('salary_breakup', offer.salary_breakup),
         currency=field_updates.get('currency', offer.currency),
         employment_type=field_updates.get('employment_type', offer.employment_type),
         probation_period_months=field_updates.get('probation_period_months', offer.probation_period_months),

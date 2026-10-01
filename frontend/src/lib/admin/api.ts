@@ -53,6 +53,7 @@ export interface ReportCard {
   description: string;
   wired: boolean;
   unavailable?: string | null;
+  customizable?: boolean;
 }
 
 export interface ReportCategory {

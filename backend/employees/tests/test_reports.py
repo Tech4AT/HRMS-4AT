@@ -13,7 +13,7 @@ from rest_framework.test import APIClient
 from accounts.factories import UserFactory
 from accounts.models import Role
 from employees.factories import DepartmentFactory, EmployeeFactory
-from employees.models import CustomReport, Employee, Grade, JobTitle
+from employees.models import CustomReport, Employee, EmployeeRosterInfo, Grade, JobTitle
 from employees.reports import ALL_EMPLOYEES_COLUMNS
 
 pytestmark = pytest.mark.django_db
@@ -90,6 +90,7 @@ def test_catalog_lists_categories_cards_and_field_groups():
         "Job Info",
         "Contact Info",
         "Identity Info",
+        "Reporting & Attendance Info",
     ]
     assert all(g["count"] > 0 for g in data["field_groups"])
 
@@ -366,3 +367,46 @@ def test_custom_report_validation():
         format="json",
     )
     assert bad_filter.status_code == 400
+
+
+def test_roster_columns_and_employee_a_to_z_order():
+    d = _directory()
+    EmployeeRosterInfo.objects.create(
+        employee=d["dev"], worker_type="Permanent", time_type="Full Time", l2_manager="Big Boss"
+    )
+    client, _ = _client("HR Admin")
+    resp = client.get(
+        RUN_URL, {"type": "ee_reporting"}
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert [c["key"] for c in data["columns"]][:4] == [
+        "employee_number", "first_name", "last_name", "full_name"
+    ]
+    rows = {r["employee_number"]: r for r in data["rows"]}
+    assert rows["E-002"]["worker_type"] == "Permanent"
+    assert rows["E-002"]["time_type"] == "Full Time"
+    assert rows["E-002"]["l2_manager"] == "Big Boss"
+    assert rows["E-002"]["reporting_manager"]
+    names = [r["full_name"].casefold() for r in data["rows"]]
+    assert names == sorted(names)
+
+
+def test_custom_report_on_roster_fields_round_trips():
+    _directory()
+    client, _ = _client("HR Admin")
+    created = client.post(
+        CUSTOM_URL,
+        {
+            "name": "Roster view",
+            "base_type": "all_employees",
+            "selected_fields": ["employee_number", "worker_type", "attendance_number"],
+        },
+        format="json",
+    )
+    assert created.status_code == 201, created.content
+    cid = created.json()["id"] if "id" in created.json() else created.json()["data"]["id"]
+    run = client.get(RUN_URL, {"custom": cid})
+    assert [c["key"] for c in run.json()["data"]["columns"]] == [
+        "employee_number", "worker_type", "attendance_number"
+    ]

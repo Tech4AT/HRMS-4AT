@@ -9,9 +9,11 @@ interface DirectoryRow {
   first_name: string;
   last_name: string;
   work_email?: string;
+  employee_code?: string;
+  status?: string;
 }
 
-/** Header search for HR/admins: type a name (or email), pick a match, land on
+/** Header search for HR/admins: type a name, employee ID, username or email, pick a match, land on
  *  that employee's full profile (/org/[id]). Reads the company directory once
  *  on first focus and filters client-side. */
 export function EmployeeSearch() {
@@ -24,7 +26,7 @@ export function EmployeeSearch() {
 
   const load = () => {
     if (rows) return;
-    fetch('/api/org-directory', { credentials: 'include' })
+    fetch('/api/org-directory?includeFormer=true', { credentials: 'include' })
       .then((r) => r.json())
       .then((b) => setRows(b?.success ? (b.data as DirectoryRow[]) : []))
       .catch(() => setRows([]));
@@ -41,8 +43,19 @@ export function EmployeeSearch() {
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q || !rows) return [];
+    // Username is the part of the login email before the @ (e.g. 4at0111).
+    const hay = (e: DirectoryRow) =>
+      `${e.first_name} ${e.last_name} ${e.employee_code ?? ''} ${e.work_email ?? ''}`.toLowerCase();
+    const exact = (e: DirectoryRow) =>
+      (e.employee_code ?? '').toLowerCase() === q || (e.work_email ?? '').toLowerCase().split('@')[0] === q;
     return rows
-      .filter((e) => `${e.first_name} ${e.last_name} ${e.work_email ?? ''}`.toLowerCase().includes(q))
+      .filter((e) => hay(e).includes(q))
+      // Exact ID/username first, then current staff before former, then name order.
+      .sort(
+        (a, b) =>
+          Number(exact(b)) - Number(exact(a)) ||
+          Number(a.status === 'exited') - Number(b.status === 'exited'),
+      )
       .slice(0, 8);
   }, [rows, query]);
 
@@ -100,7 +113,10 @@ export function EmployeeSearch() {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-sm font-semibold text-slate-900 truncate">{name || e.work_email}</span>
-                    {e.work_email ? <span className="block text-xs text-slate-500 truncate">{e.work_email}</span> : null}
+                    <span className="block text-xs text-slate-500 truncate">
+                      {[e.employee_code, e.work_email].filter(Boolean).join(' · ')}
+                      {e.status === 'exited' ? ' · Former' : ''}
+                    </span>
                   </span>
                 </button>
               );

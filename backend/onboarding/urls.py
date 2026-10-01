@@ -36,6 +36,8 @@ urlpatterns = [
     path('me/documents-overview', views.MyDocumentsOverviewView.as_view(), name='onboarding-my-documents-overview'),
     path('templates', views.OnboardingTaskTemplateListView.as_view(), name='onboarding-template-list'),
     path('templates/<int:pk>', views.OnboardingTaskTemplateDetailView.as_view(), name='onboarding-template-detail'),
+    path('salary-preview', views.SalaryPreviewView.as_view(), name='onboarding-salary-preview'),
     path('offer-letter-templates', views.OfferLetterTemplateListView.as_view(), name='onboarding-offer-letter-template-list'),
     path('offer-letter-templates/<int:pk>', views.OfferLetterTemplateDetailView.as_view(), name='onboarding-offer-letter-template-detail'),
+    path('offer-letter-templates/<int:pk>/file', views.OfferLetterTemplateFileView.as_view(), name='onboarding-offer-letter-template-file'),
 ]

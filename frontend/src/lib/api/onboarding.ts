@@ -103,6 +103,10 @@ export interface OfferLetter {
   hra: string;
   otherAllowances: string;
   otherComponents: string;
+  bonusAmount: string;
+  extraAllowanceAmount: string;
+  /** Payroll-engine breakup saved with the offer; empty for offers created before the engine. */
+  salaryBreakup: SalaryBreakup | Record<string, never>;
   /** Always basicSalary + hra + otherAllowances + otherComponents — never entered directly. */
   annualCtc: string;
   currency: string;
@@ -334,6 +338,42 @@ export interface OfferLetterTemplate {
   sourceDocxUrl: string | null;
 }
 
+export interface SalaryStructureOption {
+  id: string;
+  code: string;
+  name: string;
+  minCtc: string | null;
+  maxCtc: string | null;
+}
+
+export interface SalaryBreakup {
+  structure: { id: string; code: string; name: string };
+  annualPackage: string;
+  bonus: string;
+  extraAllowance: string;
+  totalCompensation: string;
+  breakup: {
+    lines: {
+      code: string;
+      name: string;
+      componentType: 'earning' | 'deduction' | 'employer_contribution';
+      partOfCtc: boolean;
+      monthly: string;
+      annual: string;
+    }[];
+    totals: Record<string, string>;
+  };
+}
+
+export interface SalaryPreviewInput {
+  annualPackage: number;
+  salaryStructureId?: string | null;
+  includeBonus?: boolean;
+  bonusAmount?: number;
+  includeExtraAllowance?: boolean;
+  extraAllowanceAmount?: number;
+}
+
 export interface OfferLetterTemplateInput {
   name: string;
   heading: string;
@@ -407,11 +447,13 @@ export interface CreateNewHireInput {
   costCenterId?: number | null;
   joiningDate: string;
   temporaryPassword?: string;
-  /** Annual figures — Total CTC is always their sum, never entered directly. */
-  basicSalary: number;
-  hra?: number;
-  otherAllowances?: number;
-  otherComponents?: number;
+  /** Annual package (CTC). The breakup is calculated by the payroll engine on the server. */
+  annualPackage: number;
+  salaryStructureId?: string | null;
+  includeBonus?: boolean;
+  bonusAmount?: number;
+  includeExtraAllowance?: boolean;
+  extraAllowanceAmount?: number;
   currency?: string;
   employmentType?: EmploymentType;
   workerType?: string;
@@ -422,10 +464,10 @@ export interface CreateNewHireInput {
 }
 
 export interface UpdateOfferLetterInput {
-  basicSalary?: number;
-  hra?: number;
-  otherAllowances?: number;
-  otherComponents?: number;
+  annualPackage?: number;
+  salaryStructureId?: string | null;
+  bonusAmount?: number;
+  extraAllowanceAmount?: number;
   currency?: string;
   employmentType?: EmploymentType;
   probationPeriodMonths?: number;
@@ -561,6 +603,9 @@ export const onboardingApi = {
     request<OnboardingTask>(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   removeTask: (taskId: number) => request<void>(`/tasks/${taskId}`, { method: 'DELETE' }),
   getMine: () => request<MyOnboarding | null>('/me'),
+  getSalaryStructures: () => request<SalaryStructureOption[]>('/salary-preview'),
+  previewSalary: (input: SalaryPreviewInput) =>
+    request<SalaryBreakup>('/salary-preview', { method: 'POST', body: JSON.stringify(input) }),
   getOfferLetter: (recordId: number) => request<OfferLetter>(`/records/${recordId}/offer-letter`),
   updateOfferLetter: (recordId: number, input: UpdateOfferLetterInput) =>
     request<OfferLetter>(`/records/${recordId}/offer-letter`, { method: 'PATCH', body: JSON.stringify(input) }),

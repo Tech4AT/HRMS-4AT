@@ -20,6 +20,28 @@ def _format_amount(amount, currency: str) -> str:
     return f'{currency} {amount:,.2f}'
 
 
+def salary_rows(offer) -> list:
+    """(name, monthly, annual) rows for the letter's salary table, straight from
+    the payroll-engine breakup saved on the offer: every earning and employer
+    contribution that is part of CTC, then the optional bonus / extra
+    allowance. Empty for offers created before the engine existed."""
+    from decimal import Decimal
+
+    data = offer.salary_breakup or {}
+    lines = (data.get('breakup') or {}).get('lines') or []
+    if not lines:
+        return []
+    rows = []
+    for line in lines:
+        annual = Decimal(str(line.get('annual') or 0))
+        if line.get('component_type') in ('earning', 'employer_contribution') and line.get('part_of_ctc') and annual != 0:
+            rows.append((line['name'], _format_amount(annual / 12, offer.currency), _format_amount(annual, offer.currency)))
+    for label, amount in (('Bonus', offer.bonus_amount), ('Extra Allowance', offer.extra_allowance_amount)):
+        if amount and amount > 0:
+            rows.append((label, _format_amount(amount / 12, offer.currency), _format_amount(amount, offer.currency)))
+    return rows
+
+
 def build_placeholder_context(offer) -> dict:
     """The values available to a template's `{{placeholder}}` tokens — kept
     in one place so the HR-facing template editor's helper text and the
@@ -44,6 +66,9 @@ def build_placeholder_context(offer) -> dict:
         'other_allowances_monthly': _format_amount(offer.other_allowances / 12, offer.currency),
         'other_components': _format_amount(offer.other_components, offer.currency),
         'other_components_monthly': _format_amount(offer.other_components / 12, offer.currency),
+        'bonus': _format_amount(offer.bonus_amount, offer.currency),
+        'extra_allowance': _format_amount(offer.extra_allowance_amount, offer.currency),
+        'salary_rows': salary_rows(offer),
         'employment_type': offer.get_employment_type_display(),
         'probation_period_months': str(offer.probation_period_months),
         'notice_period_days': str(offer.notice_period_days),

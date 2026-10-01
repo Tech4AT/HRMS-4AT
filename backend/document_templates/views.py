@@ -12,6 +12,7 @@ import re
 
 from django.db.models import Count
 from django.utils import timezone
+from django.http import HttpResponse
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -179,3 +180,28 @@ class TemplateGenerateView(APIView):
         }
         write_audit(request.user, "document_template.generate", "document_template", str(template.id), {"name": template.name})
         return Response({"success": True, "data": payload})
+
+
+class TemplateFileView(APIView):
+    """`GET /document-templates/<id>/file` (manage only) — the uploaded source
+    file as raw bytes, for the template editor (media isn't served over HTTP)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not _can_manage(request.user):
+            return FORBIDDEN
+        try:
+            template = DocumentTemplate.objects.get(pk=pk)
+        except DocumentTemplate.DoesNotExist:
+            return NOT_FOUND
+        if not template.file:
+            return NOT_FOUND
+        with template.file.open("rb") as fh:
+            data = fh.read()
+        resp = HttpResponse(
+            data,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        resp["Content-Disposition"] = "inline"
+        return resp

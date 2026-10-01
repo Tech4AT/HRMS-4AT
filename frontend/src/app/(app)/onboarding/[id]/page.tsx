@@ -1,5 +1,7 @@
 'use client';
 
+import { SalaryBreakup as SalaryBreakupView } from '@/components/onboarding/SalaryBreakup';
+import type { SalaryBreakup } from '@/lib/api/onboarding';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -322,9 +324,22 @@ export default function OnboardingRecordDetailPage() {
                   <p className="text-xs text-gray-400 mt-0.5">
                     Basic {formatCurrency(record.offerLetter.basicSalary, record.offerLetter.currency)} · HRA{' '}
                     {formatCurrency(record.offerLetter.hra, record.offerLetter.currency)} · Other allowances{' '}
-                    {formatCurrency(record.offerLetter.otherAllowances, record.offerLetter.currency)} · Other components{' '}
-                    {formatCurrency(record.offerLetter.otherComponents, record.offerLetter.currency)}
+                    {formatCurrency(record.offerLetter.otherAllowances, record.offerLetter.currency)}
+                    {Number(record.offerLetter.bonusAmount) > 0 && (
+                      <> · Bonus {formatCurrency(record.offerLetter.bonusAmount, record.offerLetter.currency)}</>
+                    )}
+                    {Number(record.offerLetter.extraAllowanceAmount) > 0 && (
+                      <> · Extra allowance {formatCurrency(record.offerLetter.extraAllowanceAmount, record.offerLetter.currency)}</>
+                    )}
                   </p>
+                  {'breakup' in record.offerLetter.salaryBreakup && (
+                    <details className="mt-3 max-w-xl">
+                      <summary className="text-xs font-semibold text-purple-600 cursor-pointer">View salary breakup</summary>
+                      <div className="mt-2">
+                        <SalaryBreakupView data={record.offerLetter.salaryBreakup as SalaryBreakup} currency={record.offerLetter.currency} />
+                      </div>
+                    </details>
+                  )}
                   {record.offerLetter.templateName && (
                     <p className="text-xs text-gray-400 mt-0.5">Template: {record.offerLetter.templateName}</p>
                   )}

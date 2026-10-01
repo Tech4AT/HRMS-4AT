@@ -125,6 +125,8 @@ export function ReportView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  // Column sort; null = the order the server sent (employees: A-Z by name).
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
 
   const targetKey = target.kind === 'report' ? `r:${target.id}` : `s:${target.id}`;
 
@@ -174,13 +176,42 @@ export function ReportView({
     );
   }, [payload, search]);
 
+  const sorted = useMemo(() => {
+    if (!sort) return searched;
+    const factor = sort.dir === 'asc' ? 1 : -1;
+    return [...searched].sort((a, b) => {
+      const x = String(a[sort.key] ?? '');
+      const y = String(b[sort.key] ?? '');
+      // Blanks always sink to the bottom, whichever direction is active.
+      if (!x && y) return 1;
+      if (x && !y) return -1;
+      return (
+        factor *
+        x.localeCompare(y, undefined, { numeric: true, sensitivity: 'base' })
+      );
+    });
+  }, [searched, sort]);
+
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, sort]);
+
+  useEffect(() => {
+    setSort(null);
+  }, [targetKey]);
+
+  const toggleSort = (key: string) =>
+    setSort((s) =>
+      !s || s.key !== key
+        ? { key, dir: 'asc' }
+        : s.dir === 'asc'
+          ? { key, dir: 'desc' }
+          : null,
+    );
 
   const pageRows = useMemo(
-    () => searched.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [searched, page],
+    () => sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [sorted, page],
   );
   const columns = payload?.columns ?? [];
 
@@ -221,7 +252,7 @@ export function ReportView({
             payload &&
             downloadCsv(
               `${fileBase}-${new Date().toISOString().slice(0, 10)}.csv`,
-              reportRowsToCsv(payload.columns, searched),
+              reportRowsToCsv(payload.columns, sorted),
             )
           }
           className="px-3 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-40"
@@ -335,9 +366,26 @@ export function ReportView({
                       <th
                         key={c.key}
                         scope="col"
+                        aria-sort={
+                          sort?.key === c.key
+                            ? sort.dir === 'asc'
+                              ? 'ascending'
+                              : 'descending'
+                            : 'none'
+                        }
                         className="px-4 py-2.5 text-left text-[11px] font-bold text-slate-500 uppercase tracking-wide whitespace-nowrap"
                       >
-                        {c.label}
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(c.key)}
+                          title="Sort A–Z / Z–A"
+                          className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-800"
+                        >
+                          {c.label}
+                          <span aria-hidden className="text-[10px]">
+                            {sort?.key === c.key ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+                          </span>
+                        </button>
                       </th>
                     ))}
                   </tr>

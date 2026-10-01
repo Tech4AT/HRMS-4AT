@@ -101,7 +101,24 @@ FIELDS = {
     "id_documents": ("Identity Documents", GROUP_IDENTITY),
 }
 
-GROUP_ORDER = (GROUP_BASIC, GROUP_PERSONAL, GROUP_JOB, GROUP_CONTACT, GROUP_IDENTITY)
+GROUP_ROSTER = "Reporting & Attendance Info"
+
+FIELDS.update(
+    {
+        "employment_status": ("Employment Status", GROUP_ROSTER),
+        "reporting_manager": ("Reporting Manager", GROUP_ROSTER),
+        "reporting_manager_email": ("Reporting Manager Email", GROUP_ROSTER),
+        "l2_manager": ("L2 Manager", GROUP_ROSTER),
+        "worker_type": ("Worker Type", GROUP_ROSTER),
+        "time_type": ("Time Type", GROUP_ROSTER),
+        "attendance_number": ("Attendance Number", GROUP_ROSTER),
+        "attendance_capture_scheme": ("Attendance Capture Scheme", GROUP_ROSTER),
+        "attendance_tracking_policy": ("Attendance Tracking Policy", GROUP_ROSTER),
+        "exit_status": ("Exit Status", GROUP_ROSTER),
+    }
+)
+
+GROUP_ORDER = (GROUP_BASIC, GROUP_PERSONAL, GROUP_JOB, GROUP_CONTACT, GROUP_IDENTITY, GROUP_ROSTER)
 
 FILTER_KEYS = (
     "business_unit",
@@ -214,6 +231,15 @@ def _employee_row(emp, columns, *, can_see_personal):
     grade = getattr(emp, "grade", None)
     manager = getattr(emp, "manager", None)
     latest, doc_count = _identity_map(emp)
+    roster = getattr(emp, "roster_info", None)  # absent until import_roster has run
+
+    def r(attr):
+        return getattr(roster, attr, "") if roster is not None else ""
+
+    # L2 = the roster's value, else the manager's own manager.
+    l2 = r("l2_manager") or (
+        _person_name(manager.manager) if manager and getattr(manager, "manager", None) else ""
+    )
 
     def id_col(doc_type, number=True):
         doc = latest.get(doc_type)
@@ -243,8 +269,18 @@ def _employee_row(emp, columns, *, can_see_personal):
         "legal_entity": le.name if le else "",
         "band": _band_name(emp),
         "reporting_to": _person_name(manager) if manager else "",
-        # No dotted-line/second-manager FK exists on this branch — honest blank.
-        "dotted_line_manager": "",
+        "dotted_line_manager": r("dotted_line_manager"),
+        "employment_status": r("employment_status"),
+        "reporting_manager": _person_name(manager) if manager else "",
+        "reporting_manager_email": r("reporting_manager_email")
+        or (_work_email(manager) if manager else ""),
+        "l2_manager": l2,
+        "worker_type": r("worker_type"),
+        "time_type": r("time_type"),
+        "attendance_number": r("attendance_number"),
+        "attendance_capture_scheme": r("attendance_capture_scheme"),
+        "attendance_tracking_policy": r("attendance_tracking_policy"),
+        "exit_status": r("exit_status"),
         "position": position.name if position else "",
         "level": level.name if level else "",
         "grade": grade.name if grade else "",
@@ -275,6 +311,8 @@ def _filtered_employees(params):
             "user",
             "manager",
             "manager__user",
+            "manager__manager",
+            "roster_info",
             "department",
             "department__parent",
             "designation",
@@ -384,8 +422,38 @@ JOB_DETAILS_COLUMNS = [
     "status",
 ]
 
+EE_REPORTING_COLUMNS = [
+    "employee_number",
+    "first_name",
+    "last_name",
+    "full_name",
+    "employment_status",
+    "date_of_joining",
+    "dotted_line_manager",
+    "reporting_manager",
+    "reporting_manager_email",
+    "job_title",
+    "department",
+    "sub_department",
+    "location",
+    "worker_type",
+    "time_type",
+    "attendance_number",
+    "attendance_capture_scheme",
+    "attendance_tracking_policy",
+    "exit_status",
+    "l2_manager",
+]
+
 REPORTS = {
     # -- Employee Info --
+    "ee_reporting": {
+        "title": "EE & Reporting",
+        "description": "Employees with their reporting managers, worker/time type and attendance setup.",
+        "category": "employee_info",
+        "columns": EE_REPORTING_COLUMNS,
+        "source": "employees",
+    },
     "all_employees": {
         "title": "All Employees",
         "description": "Every employee with job, org and reporting columns.",
@@ -629,8 +697,12 @@ def _column_meta(keys):
 
 def _employee_source(params, columns, user):
     can_see_personal = user_has_permission(user, "employees.personal.read")
-    rows = _filtered_employees(params)
-    return [_employee_row(e, columns, can_see_personal=can_see_personal) for e in rows], None
+    # Alphabetical (A-Z) by display name, employee code as the tiebreak.
+    employees = sorted(
+        _filtered_employees(params),
+        key=lambda e: (_person_name(e).casefold(), e.employee_code),
+    )
+    return [_employee_row(e, columns, can_see_personal=can_see_personal) for e in employees], None
 
 
 def _roles_source(params, user):
@@ -1137,6 +1209,9 @@ def _catalog():
                     "description": definition["description"],
                     "wired": definition["source"] != "empty",
                     "unavailable": definition.get("unavailable"),
+                    # Can be the base of a custom report (employee-sourced rows).
+                    "customizable": definition["source"]
+                    in ("employees", "without_manager", "new_joiners"),
                 }
             )
         categories.append(

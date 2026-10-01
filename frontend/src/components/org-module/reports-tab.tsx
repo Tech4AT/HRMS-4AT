@@ -1,320 +1,488 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  adminApi,
+  reportRowsToCsv,
+  type ReportCatalog,
+  type SavedReport,
+} from '@/lib/admin/api';
+import { orgApi } from '@/lib/api/org';
+import {
+  ReportView,
+  type ReportMasters,
+  type ReportTarget,
+} from './reports/report-view';
+import { CustomReportWizard, type WizardBase } from './reports/custom-report-wizard';
 
-interface ReportRow {
-  name: string;
-  desc: string;
-  /** Set when a real page/export exists in this app; otherwise disabled. */
-  href?: string;
-  disabledNote?: string;
+/** Employee Reports (Org Dashboard > Employee Reports): Keka-style category
+ *  rail + two-column report cards, backed by the reports engine
+ *  (org/reports/*). Saved custom reports show as cards beside the built-ins. */
+
+interface Card {
+  key: string;
+  target: ReportTarget;
+  title: string;
+  description: string;
+  category: string;
+  custom: boolean;
+  disabled?: string | null;
 }
 
-interface Category {
-  id: string;
-  label: string;
-  reports: ReportRow[];
+const EMPTY_MASTERS: ReportMasters = {
+  businessUnits: [],
+  departments: [],
+  locations: [],
+  costCenters: [],
+  legalEntities: [],
+};
+
+function downloadCsv(filename: string, text: string) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-const CATEGORIES: Category[] = [
-  {
-    id: 'employee-info',
-    label: 'Employee Info',
-    reports: [
-      { name: 'Employee directory', desc: 'Live headcount list', href: '/org?tab=directory' },
-      { name: 'Organisation chart', desc: 'Live reporting lines', href: '/org?tab=chart' },
-      { name: 'All employees', desc: 'Searchable employee grid', href: '/employees' },
-      { name: 'Headcount export', desc: 'Downloadable headcount file', disabledNote: 'No export yet' },
-      { name: 'Profile changes', desc: 'Edits to employee profiles', disabledNote: 'Not tracked yet' },
-    ],
-  },
-  {
-    id: 'policies-others',
-    label: 'Employee policies & Others',
-    reports: [
-      { name: 'Company policies', desc: 'Published policy documents', href: '/policies' },
-      { name: 'My documents', desc: 'Files on my own record', href: '/profile?tab=documents' },
-      { name: 'Organization documents', desc: 'Shared organisation files', href: '/org?tab=documents' },
-      { name: 'Custom fields', desc: 'Employee custom attributes', disabledNote: 'No page yet' },
-    ],
-  },
-  {
-    id: 'demography',
-    label: 'Employee Demography',
-    reports: [
-      { name: 'Headcount by department', desc: 'Live department breakdown', href: '/org?tab=directory' },
-      { name: 'Headcount by location', desc: 'Live location breakdown', href: '/org?tab=directory' },
-      { name: 'Gender breakdown', desc: 'Headcount by gender', disabledNote: 'Not tracked yet' },
-      { name: 'Age breakdown', desc: 'Headcount by age band', disabledNote: 'Not tracked yet' },
-      { name: 'Tenure breakdown', desc: 'Headcount by years of service', disabledNote: 'Not tracked yet' },
-    ],
-  },
-  {
-    id: 'invites',
-    label: 'Invites & Registrations',
-    reports: [
-      { name: 'Pending invites', desc: 'Invitations awaiting acceptance', disabledNote: 'No data source yet' },
-      { name: 'Registration status', desc: 'Who has completed sign-up', disabledNote: 'No data source yet' },
-    ],
-  },
-  {
-    id: 'joins-exits',
-    label: 'New Joins & Exits',
-    reports: [
-      { name: 'Onboarding pipeline', desc: 'Live hire progress', href: '/onboarding' },
-      { name: 'New joiners', desc: 'Recent and upcoming joiners', href: '/onboarding' },
-      { name: 'Exits', desc: 'Live resignation states', href: '/exits' },
-      { name: 'My exit', desc: 'My own separation record', href: '/me/exit' },
-    ],
-  },
-  {
-    id: 'logins',
-    label: 'Logins',
-    reports: [
-      { name: 'Login activity', desc: 'Sign-ins across the organisation', disabledNote: 'No data source yet' },
-    ],
-  },
-  {
-    id: 'aggregates',
-    label: 'Employee Aggregates',
-    reports: [
-      { name: 'Headcount summary', desc: 'Totals by department and location', href: '/org?tab=directory' },
-      { name: 'Vacancy summary', desc: 'Open positions by department', href: '/org-module/positions' },
-      { name: 'Team summary', desc: 'Team rosters and leads', href: '/team' },
-    ],
-  },
-];
-
-function ReportRowView({ row }: { row: ReportRow }) {
-  if (row.href) {
-    return (
-      <Link
-        href={row.href}
-        className="block px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors"
-      >
-        <p className="text-sm font-semibold text-slate-800">{row.name}</p>
-        <p className="text-xs text-slate-500 mt-0.5">{row.desc}</p>
-      </Link>
-    );
-  }
+function PeopleIcon() {
   return (
-    <span
-      title={row.disabledNote}
-      aria-disabled="true"
-      className="block px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
+    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor" aria-hidden>
+      <path d="M16 11a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3Zm0 2c-2.3 0-7 1.2-7 3.5V19h10v-2.5c0-1 .5-2 1.5-2.8A9 9 0 0 0 8 13Zm8 0c-.3 0-.7 0-1.1.1 1.3.8 2.1 1.9 2.1 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5Z" />
+    </svg>
+  );
+}
+
+function CardMenu({
+  card,
+  onOpen,
+  onExport,
+  onDelete,
+}: {
+  card: Card;
+  onOpen: () => void;
+  onExport: () => void;
+  onDelete?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+  const item =
+    'block w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50';
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label={`Options for ${card.title}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        className="px-2 py-1 text-slate-400 hover:text-slate-700 rounded-md hover:bg-slate-100 text-lg leading-none"
+      >
+        ⋮
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full mt-1 z-20 w-40 bg-white border border-slate-200 rounded-lg shadow-lg py-1"
+        >
+          <button
+            role="menuitem"
+            type="button"
+            className={item}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onOpen();
+            }}
+          >
+            Open
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            className={item}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onExport();
+            }}
+          >
+            Export CSV
+          </button>
+          {onDelete && (
+            <button
+              role="menuitem"
+              type="button"
+              className={`${item} text-red-600`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpen(false);
+                onDelete();
+              }}
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReportCard({
+  card,
+  onOpen,
+  onExport,
+  onDelete,
+}: {
+  card: Card;
+  onOpen: () => void;
+  onExport: () => void;
+  onDelete?: () => void;
+}) {
+  const disabled = !!card.disabled;
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
+      title={card.disabled ?? undefined}
+      onClick={() => !disabled && onOpen()}
+      onKeyDown={(e) => {
+        if (!disabled && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className={`flex items-start justify-between gap-3 px-5 py-4 bg-white border border-slate-200 rounded-lg transition-colors ${
+        disabled ? 'cursor-not-allowed' : 'cursor-pointer hover:border-indigo-300 hover:shadow-sm'
+      }`}
     >
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold">{row.name}</span>
-        <span className="text-[11px] shrink-0">{row.disabledNote}</span>
-      </span>
-      <span className="block text-xs mt-0.5">{row.desc}</span>
-    </span>
+      <div className={`min-w-0 ${disabled ? 'opacity-50' : ''}`}>
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <span className="truncate">{card.title}</span>
+          {card.custom && (
+            <span className="text-slate-400" title="Custom report">
+              <PeopleIcon />
+            </span>
+          )}
+        </p>
+        <p className="mt-1.5 text-sm text-slate-500 line-clamp-2">
+          {disabled ? card.disabled : card.description}
+        </p>
+      </div>
+      {!disabled && (
+        <CardMenu card={card} onOpen={onOpen} onExport={onExport} onDelete={onDelete} />
+      )}
+    </div>
   );
 }
 
 export function ReportsTab() {
-  const [category, setCategory] = useState<string>('home');
-  const [query, setQuery] = useState('');
-  const [customOpen, setCustomOpen] = useState(false);
+  const [catalog, setCatalog] = useState<ReportCatalog | null>(null);
+  const [saved, setSaved] = useState<SavedReport[]>([]);
+  const [masters, setMasters] = useState<ReportMasters>(EMPTY_MASTERS);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const searchResults = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return null;
-    const out: { category: string; row: ReportRow }[] = [];
-    for (const c of CATEGORIES) {
-      for (const row of c.reports) {
-        if (
-          row.name.toLowerCase().includes(q) ||
-          row.desc.toLowerCase().includes(q)
-        ) {
-          out.push({ category: c.label, row });
-        }
+  const [category, setCategory] = useState<string>('employee_info');
+  const [query, setQuery] = useState('');
+  const [opened, setOpened] = useState<ReportTarget | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [scheduleFor, setScheduleFor] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const [cat, list] = await Promise.all([
+        adminApi.getReportCatalog(),
+        adminApi.listCustomReports(),
+      ]);
+      setCatalog(cat);
+      setSaved(list.results ?? []);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Could not load reports.');
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+    // Filter dropdown sources; a failed list just leaves that dropdown empty.
+    const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
+    Promise.all([
+      safe(orgApi.listBusinessUnits()),
+      safe(orgApi.listDepartments()),
+      safe(orgApi.listLocations()),
+      safe(orgApi.listCostCenters()),
+      safe(orgApi.listLegalEntities()),
+    ]).then(([businessUnits, departments, locations, costCenters, legalEntities]) =>
+      setMasters({ businessUnits, departments, locations, costCenters, legalEntities }),
+    );
+  }, [reload]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Every card (built-in + saved custom), tagged with its category.
+  const cards = useMemo<Card[]>(() => {
+    if (!catalog) return [];
+    const byId = new Map<string, string>();
+    const out: Card[] = [];
+    for (const cat of catalog.categories) {
+      for (const r of cat.reports) {
+        byId.set(r.id, cat.id);
+        out.push({
+          key: `r:${r.id}`,
+          target: { kind: 'report', id: r.id },
+          title: r.title,
+          description: r.description,
+          category: cat.id,
+          custom: false,
+          disabled: r.wired ? null : (r.unavailable ?? 'No data source yet'),
+        });
       }
     }
+    for (const s of saved) {
+      out.push({
+        key: `s:${s.id}`,
+        target: { kind: 'saved', id: s.id, name: s.name },
+        title: s.name,
+        description: `Custom report · ${s.selected_fields.length} fields`,
+        category: byId.get(s.base_type) ?? 'employee_info',
+        custom: true,
+      });
+    }
     return out;
-  }, [query]);
+  }, [catalog, saved]);
 
-  const active = CATEGORIES.find((c) => c.id === category);
+  const bases = useMemo<WizardBase[]>(
+    () =>
+      (catalog?.categories ?? [])
+        .flatMap((c) => c.reports)
+        .filter((r) => r.customizable)
+        .map((r) => ({ id: r.id, title: r.title, description: r.description })),
+    [catalog],
+  );
+
+  const exportCard = async (card: Card) => {
+    try {
+      const payload =
+        card.target.kind === 'report'
+          ? await adminApi.runReport(card.target.id)
+          : await adminApi.runSavedReport(card.target.id);
+      downloadCsv(
+        `${card.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${new Date()
+          .toISOString()
+          .slice(0, 10)}.csv`,
+        reportRowsToCsv(payload.columns, payload.rows),
+      );
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Could not export this report.');
+    }
+  };
+
+  const deleteSaved = async (card: Card) => {
+    if (card.target.kind !== 'saved') return;
+    if (!window.confirm(`Delete the custom report “${card.title}”?`)) return;
+    try {
+      await adminApi.deleteCustomReport(card.target.id);
+      setSaved((s) => s.filter((x) => x.id !== (card.target as { id: number }).id));
+      setToast('Report deleted.');
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Could not delete this report.');
+    }
+  };
+
+  if (opened) {
+    return (
+      <>
+        <ReportView
+          target={opened}
+          masters={masters}
+          onBack={() => setOpened(null)}
+          onSchedule={setScheduleFor}
+        />
+        {scheduleFor && <ScheduleNotice title={scheduleFor} onClose={() => setScheduleFor(null)} />}
+      </>
+    );
+  }
+
+  const q = query.trim().toLowerCase();
+  const inCategory = cards.filter((c) => c.category === category);
+  const visible = (category === 'home' ? cards : inCategory).filter(
+    (c) => !q || c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
+  );
+  const activeLabel =
+    category === 'home'
+      ? 'Reports Home'
+      : (catalog?.categories.find((c) => c.id === category)?.label ?? 'Reports');
+
+  const railBtn = (id: string, label: string) => (
+    <li key={id}>
+      <button
+        type="button"
+        onClick={() => {
+          setCategory(id);
+          setQuery('');
+        }}
+        aria-current={category === id ? 'true' : undefined}
+        className={`w-full text-left px-4 py-3 text-sm rounded-md transition-colors ${
+          category === id
+            ? 'bg-indigo-50 text-indigo-700 font-semibold'
+            : 'text-slate-700 hover:bg-slate-50'
+        }`}
+      >
+        {label}
+      </button>
+    </li>
+  );
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4">
-      {/* Categories rail */}
+    <div className="grid grid-cols-1 lg:grid-cols-[250px_1fr] gap-5">
       <nav
         aria-label="Report categories"
-        className="bg-white border border-slate-200 rounded-xl p-3 h-fit"
+        className="bg-white border border-slate-200 rounded-lg p-3 h-fit"
       >
-        <p className="px-2 pt-1 text-[11px] font-bold text-slate-400 uppercase tracking-wide">
-          Categories
-        </p>
-        <ul className="mt-1 space-y-0.5">
-          <li>
-            <button
-              type="button"
-              onClick={() => setCategory('home')}
-              aria-current={category === 'home' ? 'true' : undefined}
-              className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
-                category === 'home'
-                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                  : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              Reports Home
-            </button>
-          </li>
-          {CATEGORIES.map((c) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                onClick={() => setCategory(c.id)}
-                aria-current={category === c.id ? 'true' : undefined}
-                className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
-                  category === c.id
-                    ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {c.label}
-              </button>
-            </li>
-          ))}
+        <p className="px-3 pt-1 pb-2 text-base font-semibold text-slate-900">Categories</p>
+        <ul className="space-y-1">
+          {railBtn('home', 'Reports Home')}
+          {(catalog?.categories ?? [])
+            .filter((c) => c.id !== 'scheduled')
+            .map((c) => railBtn(c.id, c.label))}
         </ul>
         <div className="mt-2 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => setCategory('scheduled')}
-            aria-current={category === 'scheduled' ? 'true' : undefined}
-            className={`w-full text-left px-3 py-2 text-sm rounded-lg transition-colors ${
-              category === 'scheduled'
-                ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            Scheduled reports
-          </button>
+          <ul>{railBtn('scheduled', 'Scheduled reports')}</ul>
         </div>
       </nav>
 
-      {/* Main */}
       <div className="min-w-0">
-        {category === 'home' && (
-          <div role="tabpanel" aria-label="Reports Home">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex-1 min-w-[220px]">
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search in all reports"
-                  aria-label="Search in all reports"
-                  className="w-full px-4 py-2.5 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-400"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setCustomOpen(true)}
-                className="px-4 py-2.5 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
-              >
-                Create Custom Report
-              </button>
-            </div>
-
-            {searchResults !== null ? (
-              <section className="mt-4 bg-white border border-slate-200 rounded-xl p-5">
-                <h3 className="text-sm font-bold text-slate-900">
-                  Results ({searchResults.length})
-                </h3>
-                {searchResults.length === 0 ? (
-                  <p className="py-8 text-center text-sm text-slate-500">
-                    No reports match “{query.trim()}”.
-                  </p>
-                ) : (
-                  <div className="mt-3 space-y-2">
-                    {searchResults.map((r, i) => (
-                      <div key={`${r.category}-${r.row.name}-${i}`}>
-                        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
-                          {r.category}
-                        </p>
-                        <ReportRowView row={r.row} />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
-            ) : (
-              <>
-                <section className="mt-4 bg-white border border-slate-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-slate-900">Favourites</h3>
-                  <p className="py-8 text-center text-sm text-slate-500">
-                    No favourites yet — star a report to pin it here.
-                  </p>
-                </section>
-                <section className="mt-4 bg-white border border-slate-200 rounded-xl p-5">
-                  <h3 className="text-sm font-bold text-slate-900">Recently Used</h3>
-                  <p className="py-8 text-center text-sm text-slate-500">
-                    No recently used reports yet.
-                  </p>
-                </section>
-              </>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="text-base font-semibold text-slate-900">{activeLabel}</h3>
+          <div className="flex items-center gap-3 flex-wrap">
+            {category !== 'scheduled' && (
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={category === 'home' ? 'Search in all reports' : 'Search in this category'}
+                aria-label="Search reports"
+                className="w-64 px-4 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400"
+              />
             )}
+            <button
+              type="button"
+              onClick={() => setWizardOpen(true)}
+              disabled={bases.length === 0}
+              className="px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-40"
+            >
+              Create Custom Report
+            </button>
           </div>
-        )}
+        </div>
 
-        {category === 'scheduled' && (
-          <div role="tabpanel" aria-label="Scheduled reports">
-            <section className="bg-white border border-slate-200 rounded-xl p-5">
-              <h3 className="text-sm font-bold text-slate-900">Scheduled reports</h3>
-              <p className="py-8 text-center text-sm text-slate-500">
-                No scheduled reports yet.
-              </p>
-            </section>
-          </div>
-        )}
-
-        {active && (
-          <div role="tabpanel" aria-label={active.label}>
-            <section className="bg-white border border-slate-200 rounded-xl p-5">
-              <h3 className="text-sm font-bold text-slate-900">{active.label}</h3>
-              <div className="mt-3 space-y-2">
-                {active.reports.map((row) => (
-                  <ReportRowView key={row.name} row={row} />
-                ))}
-              </div>
-            </section>
+        {loadError ? (
+          <p className="mt-6 py-10 text-center text-sm text-red-600 bg-white border border-slate-200 rounded-lg">
+            {loadError}
+          </p>
+        ) : !catalog ? (
+          <p className="mt-6 py-10 text-center text-sm text-slate-500">Loading reports…</p>
+        ) : category === 'scheduled' ? (
+          <p className="mt-4 py-10 text-center text-sm text-slate-500 bg-white border border-slate-200 rounded-lg">
+            No scheduled reports yet.
+          </p>
+        ) : visible.length === 0 ? (
+          <p className="mt-4 py-10 text-center text-sm text-slate-500 bg-white border border-slate-200 rounded-lg">
+            {q ? `No reports match “${query.trim()}”.` : 'No reports in this category.'}
+          </p>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {visible.map((card) => (
+              <ReportCard
+                key={card.key}
+                card={card}
+                onOpen={() => setOpened(card.target)}
+                onExport={() => void exportCard(card)}
+                onDelete={card.custom ? () => void deleteSaved(card) : undefined}
+              />
+            ))}
           </div>
         )}
       </div>
 
-      {/* Create Custom Report — no report-builder backend; coming soon */}
-      {customOpen && (
+      {wizardOpen && catalog && (
+        <CustomReportWizard
+          bases={bases}
+          fieldGroups={catalog.field_groups}
+          masters={masters}
+          onClose={() => setWizardOpen(false)}
+          onSaved={(report) => {
+            setWizardOpen(false);
+            setSaved((s) => [report, ...s]);
+            setToast(`Saved “${report.name}”.`);
+            setCategory('employee_info');
+            setOpened({ kind: 'saved', id: report.id, name: report.name });
+          }}
+        />
+      )}
+
+      {toast && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setCustomOpen(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Create Custom Report"
+          role="status"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 text-sm rounded-lg bg-slate-900 text-white shadow-lg"
         >
-          <div
-            className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-lg p-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-sm font-bold text-slate-900">Create Custom Report</h3>
-            <p className="text-sm text-slate-500 mt-1">
-              Custom report builder is coming soon — there is no report backend
-              yet, so reports cannot be built or saved.
-            </p>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setCustomOpen(false)}
-                className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
+          {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+function ScheduleNotice({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Schedule report"
+    >
+      <div
+        className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-lg p-5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-bold text-slate-900">Schedule “{title}”</h3>
+        <p className="text-sm text-slate-500 mt-1">
+          Emailed/scheduled delivery isn’t available yet. Use Export CSV to download the
+          report now.
+        </p>
+        <div className="mt-5 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-slate-300 text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
