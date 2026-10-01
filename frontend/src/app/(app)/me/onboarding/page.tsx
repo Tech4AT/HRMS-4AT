@@ -18,6 +18,7 @@ import {
 import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
 import { CheckCircleIcon, FileTextIcon, XIcon } from '@/components/icons';
 import { ConfirmDialog } from '@/components/documents/ConfirmDialog';
+import { MandatoryTraining } from '@/components/learning/MandatoryTraining';
 
 // Matched against onboarding/management/commands/seed_onboarding_templates.py
 // and the backend's auto-complete-on-submit logic (services.py::
@@ -119,6 +120,9 @@ export default function MyOnboardingPage() {
         </Link>
       </div>
       <BankDetailsCard onSaved={load} />
+      <div id="training" className="mb-4 scroll-mt-4">
+        <MandatoryTraining employeeId="me" showLaunch />
+      </div>
 
       {categories.map((category) => {
         const tasks = data.tasks.filter((t) => t.category === category).sort((a, b) => a.sortOrder - b.sortOrder);

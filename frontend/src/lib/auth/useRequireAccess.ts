@@ -8,6 +8,8 @@ export interface RequireAccessOptions {
   /** Require {kind:'org'} scope - use for sections that must see/act across
    * the whole organization, not just a caller's own team or self. */
   requireOrgScope?: boolean;
+  /** Require superadmin (is_superuser) access. */
+  requireSuperAdmin?: boolean;
 }
 
 /**
@@ -17,14 +19,15 @@ export interface RequireAccessOptions {
  * separate concern using the same hasPermission/hasOrgScope checks from
  * useAuth directly, since a hidden element doesn't need a redirect.
  */
-export function useRequireAccess({ permission, requireOrgScope }: RequireAccessOptions) {
+export function useRequireAccess({ permission, requireOrgScope, requireSuperAdmin }: RequireAccessOptions) {
   const { user, isLoading, hasPermission, hasOrgScope } = useAuth();
   const router = useRouter();
 
   const hasAccess =
     !!user &&
     (!permission || hasPermission(permission)) &&
-    (!requireOrgScope || hasOrgScope());
+    (!requireOrgScope || hasOrgScope()) &&
+    (!requireSuperAdmin || user.is_superuser);
 
   useEffect(() => {
     if (isLoading) return;

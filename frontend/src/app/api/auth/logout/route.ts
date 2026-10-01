@@ -21,5 +21,9 @@ export async function POST(req: NextRequest) {
 
   const resp = NextResponse.json({ success: true });
   clearAuthCookies(resp);
+  // Clear mock user email cookie if mock auth is enabled
+  if (MOCK_AUTH_ENABLED) {
+    resp.cookies.delete('mockUserEmail');
+  }
   return resp;
 }

@@ -1,0 +1,24 @@
+# Local dev Postgres for the HRMS backend.
+# Usage (from backend/):  docker compose up -d
+# Matches env.example: host port 5433 -> container 5432, db/user/password = hrms.
+# A dedicated dev-only cluster; does not touch the machine's system Postgres on 5432.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hrms-postgres
+    environment:
+      POSTGRES_DB: hrms
+      POSTGRES_USER: hrms
+      POSTGRES_PASSWORD: hrms
+    ports:
+      - "5433:5432"
+    volumes:
+      - hrms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrms -d hrms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hrms_pgdata:

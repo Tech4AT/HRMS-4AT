@@ -30,6 +30,8 @@ import {
   IdCardIcon,
   ClipboardCheckIcon,
   PackageIcon,
+  ReceiptIcon,
+  GraduationCapIcon,
 } from '@/components/icons';
 
 type RequiredRole = 'employee' | 'admin' | 'superadmin';
@@ -180,6 +182,19 @@ const navItems: NavItem[] = [
     href: '/performance',
     roles: ['admin', 'employee', 'superadmin'],
   },
+  {
+    id: 'learning',
+    label: 'Learning',
+    icon: GraduationCapIcon,
+    href: '/learning',
+    roles: ['admin', 'employee', 'superadmin'],
+    requirePermission: 'lms.read',
+    children: [
+      { label: 'My Learning', href: '/learning' },
+      { label: 'Compliance', href: '/learning/compliance', roles: ['admin', 'superadmin'] },
+      { label: 'LMS Integration', href: '/learning/admin', requirePermission: 'lms.admin' },
+    ],
+  },
   { id: 'team', label: 'My Team', icon: TeamIcon, href: '/team', roles: ['admin', 'employee', 'superadmin'] },
   {
     // Org menu: directory/chart visible to all; admin sections gated to admin+.
@@ -226,14 +241,20 @@ const navItems: NavItem[] = [
   {
     id: 'payroll',
     label: 'Payroll',
-    icon: WalletIcon,
-    href: '/payroll-inputs',
+    icon: ReceiptIcon,
+    href: '/payroll',
     roles: ['admin', 'employee', 'superadmin'],
-    requireOrgScope: true,
-    requireAnyPermission: ['payroll.write', 'payroll.manage'],
+    requireAnyPermission: [
+      'payroll.process', 'payroll.manage', 'payroll.write', 'payroll.review',
+      'payroll.approve', 'payroll.finalize', 'payroll.release', 'payroll.audit',
+    ],
     children: [
-      { label: 'Payroll Inputs', href: '/payroll-inputs' },
-      { label: 'Payroll Setup', href: '/payroll-setup' },
+      { label: 'Dashboard', href: '/payroll' },
+      { label: 'Run Payroll', href: '/payroll/run' },
+      { label: 'Configuration', href: '/payroll/configuration' },
+      { label: 'Employee Compensation', href: '/payroll/compensation' },
+      { label: 'Approvals', href: '/payroll/approvals' },
+      { label: 'Reports & Audit', href: '/payroll/reports' },
     ],
   },
   { id: 'admin', label: 'Access control', icon: IdCardIcon, href: '/admin', roles: ['admin', 'employee', 'superadmin'], requirePermission: 'roles.manage' },
@@ -262,6 +283,8 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
+  '/payroll': { title: 'Payroll', subtitle: 'Configure, process, approve and release payroll' },
+  '/attendance': { title: 'Attendance', subtitle: 'Attendance, leave and shift overview' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
   '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
@@ -272,7 +295,9 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
   '/apps': { title: 'Apps', subtitle: 'Access the tools and applications available to you' },
   '/reports': { title: 'Reports', subtitle: 'Headcount, attendance, leave, and payroll analytics' },
-  '/learning': { title: 'Learning', subtitle: 'Courses, certifications, and skill-building resources' },
+  '/learning': { title: 'Learning', subtitle: 'Courses, certifications, and skills from the LMS' },
+  '/learning/compliance': { title: 'Learning compliance', subtitle: 'Training completion and expiring certifications' },
+  '/learning/admin': { title: 'LMS integration', subtitle: 'Sync health, learner links and reconciliation' },
   '/career': { title: 'Career', subtitle: 'Growth plans, internal mobility, and career conversations' },
 };
 

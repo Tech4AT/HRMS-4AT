@@ -5,8 +5,8 @@ import pytest
 
 from core.testing import assert_module_conforms
 from employees.models import Employee
-from payroll import views
 from payroll.conformance import ENDPOINT
+from payroll.views import base as views
 
 pytestmark = pytest.mark.django_db
 

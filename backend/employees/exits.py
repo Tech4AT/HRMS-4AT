@@ -37,7 +37,13 @@ def _employee_email(employee: Employee) -> str:
 def _hr_recipients() -> list[str]:
     User = get_user_model()
     return list(
-        User.objects.filter(is_active=True).filter(Q(is_superuser=True) | Q(role__name='hr_admin'))
+        # Multi-role: a user is an HR recipient if any active role is HR Admin
+        # (legacy 'hr_admin' name kept for older seeds).
+        User.objects.filter(is_active=True)
+        .filter(
+            Q(is_superuser=True)
+            | Q(roles__name__in=['HR Admin', 'hr_admin'], roles__is_active=True)
+        )
         .exclude(email='').values_list('email', flat=True).distinct()
     )
 

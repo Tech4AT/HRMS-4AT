@@ -22,6 +22,8 @@ unchanged.
 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | Phases, timeline, the 4-engineer parallelization strategy, the exact API contract Django must match |
 | [TASKS.md](TASKS.md) | The concrete, ordered task breakdown (task IDs, owners, dependencies) engineers execute against |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | How to run the frontend and (once it exists) the backend locally |
+| [payroll/PAYROLL-ARCHITECTURE.md](payroll/PAYROLL-ARCHITECTURE.md) ([HTML](payroll/PAYROLL-ARCHITECTURE.html)) | Payroll architecture: system context, containers, layers, request lifecycle, calculation and workflow architecture, security, deployment, architecture decisions |
+| [payroll/PAYROLL-MODULE.md](payroll/PAYROLL-MODULE.md) ([HTML](payroll/PAYROLL-MODULE.html)) | Payroll module guide: features, data model, calculation engine, approvals, RBAC, runbook, UAT status, troubleshooting, design decisions |
 
 Read them in that order the first time. `REQUIREMENTS.md` and `ARCHITECTURE.md` are the
 *what/why* (source of truth for scope); `IMPLEMENTATION-PLAN.md` and `TASKS.md` are the

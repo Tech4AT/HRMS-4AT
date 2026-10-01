@@ -50,6 +50,8 @@ INSTALLED_APPS = [
     # ORG module Wave 1: effective-dated org changes (promotions, transfers).
     "orgchanges",
     "policies",
+    # LMS integration: identity sync + learning projections (docs/LMS-INTEGRATION.md).
+    "lms_integration",
 ]
 
 MIDDLEWARE = [
@@ -126,6 +128,83 @@ ORG_TIMEZONE = "Asia/Kolkata"
 
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Documents primitive (#6): files land on local disk under MEDIA_ROOT, unless
+# AWS_STORAGE_BUCKET_NAME is set — then document uploads go to that S3 bucket
+# instead (django-storages S3Storage). Unset bucket => local FileSystemStorage,
+# so dev without creds keeps working. A storage-backend change, not a schema
+# change: no model field is touched, so `makemigrations --check` stays clean.
+MEDIA_URL = "media/"
+MEDIA_ROOT = env("DJANGO_MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
+# S3 document storage (env-driven; unset AWS_STORAGE_BUCKET_NAME => local).
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY may be left unset when the
+# runtime already provides credentials (EC2/ECS IAM role, SSO) — boto3's
+# default chain handles that. AWS_S3_ENDPOINT_URL is for S3-compatible
+# backends (MinIO, LocalStack); leave unset for real AWS.
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="")
+AWS_S3_REGION_NAME = env("AWS_S3_REGION_NAME", default=None)
+AWS_ACCESS_KEY_ID = env("AWS_ACCESS_KEY_ID", default=None)
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None)
+AWS_S3_ENDPOINT_URL = env("AWS_S3_ENDPOINT_URL", default=None)
+# Private bucket: never set a canned ACL on upload (also required for
+# buckets with Object Ownership enforced). Never overwrite an existing key
+# (upload_to already embeds a uuid, this is belt-and-braces).
+AWS_DEFAULT_ACL = None
+AWS_S3_FILE_OVERWRITE = False
+if AWS_STORAGE_BUCKET_NAME:
+    STORAGES = {
+        "default": {"BACKEND": "storages.backends.s3.S3Storage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+
+# Notifications primitive (#5): console backend until real SMTP/SES is wired for
+# prod. send_email() is fail-silent regardless (notifications/service.py).
+EMAIL_BACKEND = env(
+    "DJANGO_EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
+)
+DEFAULT_FROM_EMAIL = env("DJANGO_DEFAULT_FROM_EMAIL", default="no-reply@hrms.local")
+# Display name used in email templates (notifications/utils.py renders it into
+# every HTML email context as `company_name`). Overridable via env.
+COMPANY_NAME = env("COMPANY_NAME", default="4AT HRMS")
+# Base URL of the Next.js frontend, used to build absolute candidate-facing
+# links (offer signing, set-password). Overridable via env.
+FRONTEND_ORIGIN = env("FRONTEND_ORIGIN", default="http://localhost:3000")
+# Lifetime (hours) of the one-time set-password link issued by the onboarding
+# flow (accounts.models.issue_password_setup_token). Overridable via env.
+PASSWORD_SETUP_TOKEN_TTL_HOURS = env.int("PASSWORD_SETUP_TOKEN_TTL_HOURS", default=72)
+# Lifetime (hours) of the candidate-facing offer signing token
+# (onboarding.models.OfferLetter.issue_signing_token). Overridable via env.
+OFFER_SIGNING_TOKEN_TTL_HOURS = env.int("OFFER_SIGNING_TOKEN_TTL_HOURS", default=168)  # 7 days
+# E-signature provider selection for the onboarding module
+# (onboarding.esignature.get_signature_provider). Overridable via env.
+ESIGNATURE_PROVIDER = env("ESIGNATURE_PROVIDER", default="in_app")
+ESIGN_WEBHOOK_SECRET = env("ESIGN_WEBHOOK_SECRET", default="dev-only-webhook-secret")
+# Real delivery: set DJANGO_EMAIL_BACKEND to the SMTP backend and fill these in
+# (env). Left blank the console backend prints emails to the server log instead.
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+
+# LMS integration (lms_integration app, docs/LMS-INTEGRATION.md). Disabled by
+# default: while off, employee changes are not queued for the LMS at all, and a
+# later reconciliation run provisions whoever is missing.
+LMS_INTEGRATION_ENABLED = env.bool("LMS_INTEGRATION_ENABLED", default=False)
+# Base URL of the LMS integration endpoints (the api-gateway), e.g.
+# https://lms.example.com/api. Blank = events stay queued, nothing is sent.
+LMS_BASE_URL = env("LMS_BASE_URL", default="")
+# HMAC secrets for service-to-service calls, one per direction.
+LMS_OUTBOUND_SECRET = env("LMS_OUTBOUND_SECRET", default="")  # HRMS signs, LMS verifies
+LMS_INBOUND_SECRET = env("LMS_INBOUND_SECRET", default="")  # LMS signs, HRMS verifies
+LMS_TIMEOUT_SECONDS = env.int("LMS_TIMEOUT_SECONDS", default=10)
+LMS_MAX_ATTEMPTS = env.int("LMS_MAX_ATTEMPTS", default=8)
+# SSO hand-off: HRMS mints a short-lived token the LMS auth service exchanges
+# for its own session. Separate from the LMS's internal JWT secret on purpose.
+LMS_SSO_SECRET = env("LMS_SSO_SECRET", default="")
+LMS_SSO_LAUNCH_URL = env("LMS_SSO_LAUNCH_URL", default="")
+LMS_SSO_TOKEN_TTL_SECONDS = env.int("LMS_SSO_TOKEN_TTL_SECONDS", default=60)
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],

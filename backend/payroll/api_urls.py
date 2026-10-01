@@ -1,31 +1,41 @@
-from django.urls import include, path
+"""Payroll API routes, mounted under /api/v1/ by config.api_urls
+(endpoint catalogue: Payroll API & Backend Contract §6)."""
+
 from rest_framework.routers import DefaultRouter
 
-from . import views as v
+from payroll.views import config, outputs, people, processing
 
-setup_router = DefaultRouter()
-setup_router.register(r"legal-entities", v.LegalEntityViewSet, basename="payroll-legal-entity")
-setup_router.register(r"legal-entity-profiles", v.LegalEntityPayrollProfileViewSet)
-setup_router.register(r"pay-schedules", v.PayScheduleViewSet)
-setup_router.register(r"statutory-configs", v.StatutoryConfigViewSet)
-setup_router.register(r"salary-components", v.SalaryComponentViewSet)
-setup_router.register(r"salary-structures", v.SalaryStructureViewSet)
-setup_router.register(r"salary-structure-components", v.SalaryStructureComponentViewSet)
-setup_router.register(r"tax-filing-configs", v.TaxFilingConfigViewSet)
-setup_router.register(r"pay-stub-templates", v.PayStubTemplateViewSet)
-setup_router.register(r"pay-groups", v.PayGroupViewSet)
+router = DefaultRouter()
+router.include_root_view = False
 
-inputs_router = DefaultRouter()
-inputs_router.register(r"payment-info", v.EmployeePaymentInfoViewSet)
-inputs_router.register(r"compensation", v.EmployeeCompensationViewSet)
-inputs_router.register(r"variable-pay", v.EmployeeVariablePayViewSet)
-inputs_router.register(r"statutory-info", v.EmployeeStatutoryInfoViewSet)
-inputs_router.register(r"deductions", v.EmployeeDeductionViewSet)
-inputs_router.register(r"benefits", v.EmployeeBenefitViewSet)
-inputs_router.register(r"overtime-adjustments", v.PayrollOvertimeAdjustmentViewSet)
-inputs_router.register(r"payroll-status", v.EmployeePayrollStatusViewSet)
+# Configuration (PAY-001, PAY-002, statutory rules, pay groups)
+router.register("payroll/components", config.ComponentViewSet, basename="payroll-component")
+router.register("payroll/salary-structures", config.StructureViewSet, basename="payroll-structure")
+router.register(
+    "payroll/statutory-rules", config.StatutoryRuleViewSet, basename="payroll-statutory-rule"
+)
+router.register("payroll/pay-groups", config.PayGroupViewSet, basename="payroll-pay-group")
 
-urlpatterns = [
-    path("payroll/setup/", include(setup_router.urls)),
-    path("payroll/inputs/", include(inputs_router.urls)),
-]
+# People (PAY-003, PAY-004/005) and employee self-service
+router.register("payroll/employees", people.PayrollEmployeeViewSet, basename="payroll-employee")
+router.register(
+    "payroll/compensations", people.CompensationViewSet, basename="payroll-compensation"
+)
+router.register("payroll/my", people.MyPayrollViewSet, basename="payroll-my")
+router.register("payroll/loans", outputs.LoanViewSet, basename="payroll-loan")
+
+# Monthly processing (PAY-006..017)
+router.register("payroll/periods", processing.PeriodViewSet, basename="payroll-period")
+router.register("payroll/runs", processing.RunViewSet, basename="payroll-run")
+router.register("payroll/results", processing.ResultViewSet, basename="payroll-result")
+router.register("payroll/exceptions", processing.ExceptionViewSet, basename="payroll-exception")
+
+# Outputs, reports, audit (PAY-018..020)
+router.register("payroll/payslips", outputs.PayslipViewSet, basename="payroll-payslip")
+router.register("payroll/outputs", outputs.OutputViewSet, basename="payroll-output")
+router.register("payroll/reports", outputs.ReportViewSet, basename="payroll-report")
+router.register("payroll/audit", outputs.AuditViewSet, basename="payroll-audit")
+router.register("payroll/dashboard", outputs.DashboardViewSet, basename="payroll-dashboard")
+router.register("payroll/meta", outputs.MetaViewSet, basename="payroll-meta")
+
+urlpatterns = router.urls

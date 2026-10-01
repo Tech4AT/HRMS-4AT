@@ -79,7 +79,7 @@ async function callRefresh(refreshToken: string): Promise<Rotated | null> {
 export async function proxyToBackend(
   req: NextRequest,
   path: string,
-  init: RequestInit = {},
+  init: RequestInit & { isMultipart?: boolean } = {},
 ): Promise<ProxyResult> {
   if (MOCK_AUTH_ENABLED) {
     if (req.cookies.get('refreshToken')?.value !== MOCK_REFRESH_TOKEN) {
@@ -94,6 +94,7 @@ export async function proxyToBackend(
   let accessToken = req.cookies.get('accessToken')?.value;
   const refreshToken = req.cookies.get('refreshToken')?.value;
   let rotated: Rotated | undefined;
+  const { isMultipart, ...restInit } = init;
 
   if (!accessToken && refreshToken) {
     const r = await callRefresh(refreshToken);
@@ -105,20 +106,24 @@ export async function proxyToBackend(
     return { status: 401, body: null, sessionExpired: true };
   }
 
-  const send = (token: string) =>
-    fetch(`${BACKEND_API_URL}${path}`, {
-      ...init,
-      // This proxies a live backend resource on every call - Next.js's fetch
-      // cache must never serve a stale GET here (e.g. Policy Settings read
-      // right back after its own PUT), so this is explicit rather than
-      // relying on `cookies()` usage elsewhere marking the route dynamic.
+  const send = (token: string) => {
+    const headers: any = {
+      ...(restInit.headers ?? {}),
+      Authorization: `Bearer ${token}`,
+    };
+    // Don't set Content-Type for multipart requests (let fetch handle it).
+    if (!isMultipart) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return fetch(`${BACKEND_API_URL}${path}`, {
+      ...restInit,
+      // Proxies a live backend resource on every call — never let Next.js's
+      // fetch cache serve a stale GET (e.g. Policy Settings read right back
+      // after its own PUT).
       cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
     });
+  };
 
   let res = await send(accessToken);
 
@@ -150,14 +155,21 @@ type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
  */
 export function createBackendProxyRoute(
   backendPrefix: string,
+  options: { trailingSlash?: boolean } = {},
 ): Record<Method, RouteHandler> {
+  // DRF's default routers expect a trailing slash (payroll, admin,
+  // notifications...); the attendance / leave / calendar / approvals routers
+  // are built with trailing_slash=False and need none.
+  const trailingSlash = options.trailingSlash ?? true;
   const make =
     (method: Method): RouteHandler =>
     async (req, ctx) => {
       // ctx.params is absent on a base (non-catch-all) route.ts, so guard it —
       // otherwise destructuring undefined throws a 500 (e.g. /api/assets list).
       const { path = [] } = (await ctx.params) ?? {};
-      const backendPath = `/${backendPrefix}/${path.join('/')}${req.nextUrl.search}`;
+      const pathStr = path.length > 0 ? path.join('/') : '';
+      const base = pathStr ? `/${backendPrefix}/${pathStr}` : `/${backendPrefix}`;
+      const backendPath = `${base}${trailingSlash || !pathStr ? '/' : ''}${req.nextUrl.search}`;
 
       const init: RequestInit = { method };
       if (method !== 'GET') {

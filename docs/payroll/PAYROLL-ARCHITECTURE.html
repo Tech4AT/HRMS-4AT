@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Payroll Architecture</title>
+<!-- Generated from PAYROLL-ARCHITECTURE.md by build-html.mjs — edit the .md, then regenerate. -->
+<style>
+  :root { --bg:#f8fafc; --panel:#ffffff; --text:#0f172a; --muted:#64748b; --line:#e2e8f0;
+          --accent:#1d4ed8; --accent-soft:#eff6ff; --code:#f1f5f9; --note:#fefce8; --note-line:#facc15; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+          --bg:#0b1120; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8; --line:#1f2937;
+          --accent:#60a5fa; --accent-soft:#172554; --code:#1e293b; --note:#292524; --note-line:#ca8a04; } }
+  :root[data-theme="dark"] { --bg:#0b1120; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8; --line:#1f2937;
+          --accent:#60a5fa; --accent-soft:#172554; --code:#1e293b; --note:#292524; --note-line:#ca8a04; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .layout { display:grid; grid-template-columns:260px minmax(0,1fr); max-width:1400px; margin:0 auto; }
+  nav { position:sticky; top:0; height:100vh; overflow:auto; padding:24px 16px; border-right:1px solid var(--line); }
+  nav .brand { font-weight:700; margin-bottom:12px; }
+  nav .docs { margin-top:20px; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  nav a { display:block; padding:5px 10px; border-radius:6px; color:var(--muted); text-decoration:none; font-size:14px; }
+  nav a:hover, nav a.current { background:var(--accent-soft); color:var(--accent); }
+  main { padding:32px 40px 80px; min-width:0; }
+  h1 { font-size:30px; margin:0 0 12px; }
+  h2 { font-size:22px; margin:40px 0 12px; padding-top:8px; border-top:1px solid var(--line); }
+  h3 { font-size:17px; margin:24px 0 8px; }
+  a { color:var(--accent); }
+  hr { display:none; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:.88em; }
+  pre.code { background:var(--code); padding:14px 16px; border-radius:8px; overflow:auto; }
+  pre.code code { background:none; padding:0; }
+  .table { overflow-x:auto; margin:12px 0; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:var(--accent-soft); font-weight:600; white-space:nowrap; }
+  tr:last-child td { border-bottom:0; }
+  .diagram { margin:16px 0; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow-x:auto; text-align:center; }
+  .diagram pre.mermaid { margin:0; background:none; }
+  aside.note { background:var(--note); border-left:4px solid var(--note-line); padding:10px 14px; border-radius:6px; margin:12px 0; }
+  li { margin:3px 0; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns:1fr; }
+    nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); padding:16px; }
+    main { padding:20px 16px 60px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav><div class="brand">Payroll Module — Architecture</div><a href="#1-purpose-and-scope">1. Purpose and scope</a><a href="#2-system-context">2. System context</a><a href="#3-containers">3. Containers</a><a href="#4-components-inside-django">4. Components inside Django</a><a href="#5-request-lifecycle-read-and-write">5. Request lifecycle (read and write)</a><a href="#6-calculation-architecture">6. Calculation architecture</a><a href="#7-workflow-state-architecture">7. Workflow &amp; state architecture</a><a href="#8-data-architecture">8. Data architecture</a><a href="#9-security-architecture">9. Security architecture</a><a href="#10-frontend-architecture">10. Frontend architecture</a><a href="#11-deployment-view">11. Deployment view</a><a href="#12-key-architecture-decisions">12. Key architecture decisions</a><a href="#13-known-architectural-limits">13. Known architectural limits</a><div class="docs">Payroll docs</div><a href="PAYROLL-ARCHITECTURE.html" class="current">Payroll Architecture</a><a href="PAYROLL-MODULE.html">Payroll Module Guide</a></nav>
+<main>
+<h1 id="payroll-module-architecture">Payroll Module — Architecture</h1>
+<aside class="note">Companion to <code>PAYROLL-ARCHITECTURE.html</code> (same content with rendered diagrams). This Markdown file is the canonical copy for coding agents — edit it, then run <code>node docs/payroll/build-html.mjs</code> to regenerate the HTML. For the runbook, UAT status, troubleshooting and feature detail see <code>PAYROLL-MODULE.md</code>.</aside>
+<h2 id="1-purpose-and-scope">1. Purpose and scope</h2>
+<p>The payroll module turns configuration (components, structures, statutory rules), people data (employees, compensation) and monthly inputs (attendance, leave, bonus, OT, deductions) into an <strong>approved, locked, auditable payroll</strong> and its outputs (payslips, bank advice, statutory files, journal, reports).</p>
+<p>Architectural goals, in priority order:</p>
+<ol><li><strong>Correctness &amp; reproducibility</strong> — the same inputs always produce the same result; any past payslip can be re-explained line by line.</li><li><strong>Control</strong> — nothing becomes official without maker-checker approval; finalized payroll cannot change except through a privileged, audited reopen.</li><li><strong>Least privilege</strong> — every read and write is permission- and scope-checked on the server.</li><li><strong>Fit the HRMS platform</strong> — reuse the shared primitives (RBAC, audit, approvals, notifications, documents, attendance) instead of re-inventing them.</li><li><strong>Simplicity</strong> — a modular monolith; no queues, services or engines beyond what the requirements need.</li></ol>
+<hr/>
+<h2 id="2-system-context">2. System context</h2>
+<figure class="diagram"><pre class="mermaid">flowchart TB
+  EMP["Employee&lt;br/&gt;(views own payslips)"]
+  PADM["Payroll Admin&lt;br/&gt;(configures, prepares runs)"]
+  FIN["Finance Reviewer&lt;br/&gt;(stage 1 approval)"]
+  APR["Payroll Approver / HR Admin&lt;br/&gt;(final approval, finalize, reopen)"]
+  AUD["Auditor&lt;br/&gt;(read-only reports &amp; audit)"]
+  HRMS["4AT HRMS&lt;br/&gt;(Next.js web app + Django API)"]
+  BANK["Bank&lt;br/&gt;(bank advice file)"]
+  STAT["Statutory portals&lt;br/&gt;(PF / ESI / PT / TDS files)"]
+  GL["Accounting&lt;br/&gt;(payroll journal)"]
+  EMP --&gt; HRMS
+  PADM --&gt; HRMS
+  FIN --&gt; HRMS
+  APR --&gt; HRMS
+  AUD --&gt; HRMS
+  HRMS -- "CSV download" --&gt; BANK
+  HRMS -- "CSV download" --&gt; STAT
+  HRMS -- "CSV download" --&gt; GL</pre></figure>
+<p>External systems receive <strong>files downloaded by payroll staff</strong>; there are no outbound API integrations in v1.</p>
+<hr/>
+<h2 id="3-containers">3. Containers</h2>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+  B["Browser&lt;br/&gt;React UI"] -- "HTTPS, HttpOnly cookies" --&gt; N["Next.js server&lt;br/&gt;pages + /api/* proxy routes"]
+  N -- "HTTP JSON, Authorization: Bearer JWT" --&gt; D["Django + DRF&lt;br/&gt;/api/v1/*"]
+  D -- "SQL (psycopg)" --&gt; P[("PostgreSQL 16")]
+  D -- "files" --&gt; F[("Media storage&lt;br/&gt;documents app")]</pre></figure>
+<div class="table"><table><thead><tr><th>Container</th><th>Tech</th><th>Responsibility</th></tr></thead><tbody><tr><td>Browser</td><td>React (Next.js client components), Tailwind</td><td>Payroll screens, employee My Finances; UI permission gating only</td></tr><tr><td>Next.js server</td><td>Next.js 16 route handlers</td><td>Holds auth cookies (HttpOnly), converts them to a Bearer token, refreshes on 401, forwards to Django (<code>frontend/src/lib/api/proxy.ts</code>)</td></tr><tr><td>Django API</td><td>Django 5.1, DRF, SimpleJWT</td><td>All business rules, authorization, persistence, audit</td></tr><tr><td>PostgreSQL</td><td>16 (<code>backend/docker-compose.yml</code> for local dev, host port 5433)</td><td>System of record; row locks for finalize</td></tr><tr><td>Media storage</td><td>Local disk / object storage</td><td>Uploaded documents (documents primitive)</td></tr></tbody></table></div>
+<p>The browser never sees the JWT: the proxy keeps tokens server-side, which removes a whole class of XSS token-theft risk.</p>
+<hr/>
+<h2 id="4-components-inside-django">4. Components inside Django</h2>
+<figure class="diagram"><pre class="mermaid">flowchart TB
+  subgraph payroll["payroll app"]
+    direction TB
+    URL["api_urls.py&lt;br/&gt;DRF router"]
+    VW["views/&lt;br/&gt;config · people · processing · outputs&lt;br/&gt;base.PayrollViewSet"]
+    SV["services/&lt;br/&gt;config · people · periods · runs · outputs · reports · common"]
+    EN["engine/&lt;br/&gt;formula · breakup · calculator · statutory · money"]
+    IN["integrations/&lt;br/&gt;attendance_source · approvals_bridge · notify"]
+    MD["models.py"]
+    RB["rbac.py"]
+  end
+  subgraph core["shared platform"]
+    CS["core.scope&lt;br/&gt;resolve_employee_scope, user_has_permission"]
+    CR["core.registry&lt;br/&gt;register_permissions"]
+    AU["audit.service.write_audit"]
+    AP["approvals&lt;br/&gt;Request + request_decided signal"]
+    NT["notifications.notify"]
+    AT["attendance · leave · org_calendar"]
+    EM["employees&lt;br/&gt;Employee, LegalEntity"]
+  end
+  URL --&gt; VW --&gt; SV --&gt; EN
+  SV --&gt; MD
+  SV --&gt; IN
+  VW --&gt; CS
+  RB --&gt; CR
+  SV --&gt; AU
+  IN --&gt; AP
+  IN --&gt; NT
+  IN --&gt; AT
+  MD --&gt; EM</pre></figure>
+<h3 id="layer-contracts">Layer contracts</h3>
+<div class="table"><table><thead><tr><th>Layer</th><th>May do</th><th>Must not do</th></tr></thead><tbody><tr><td><strong>views</strong></td><td>Authenticate, check permission codes, resolve scope, parse/validate request, call one service, shape the envelope, handle idempotency</td><td>Contain business rules or state transitions</td></tr><tr><td><strong>services</strong></td><td>Business rules, state machines, transactions and row locks, period-lock and version checks, audit writes, call engine and integrations</td><td>Know about HTTP / DRF request objects</td></tr><tr><td><strong>engine</strong></td><td>Pure calculation over plain dicts / Decimals</td><td>Touch the database, time, or globals</td></tr><tr><td><strong>integrations</strong></td><td>Adapt other modules to payroll's needs (read attendance, mirror approvals, send notifications)</td><td>Own payroll rules — they call back into services</td></tr><tr><td><strong>models</strong></td><td>Schema, constraints, simple properties</td><td>Cross-entity workflows</td></tr></tbody></table></div>
+<p>Dependencies point <strong>downwards only</strong> (views → services → engine). The engine imports nothing from Django, which is why it is unit-tested in isolation and reusable for previews.</p>
+<hr/>
+<h2 id="5-request-lifecycle-read-and-write">5. Request lifecycle (read and write)</h2>
+<figure class="diagram"><pre class="mermaid">sequenceDiagram
+  participant U as Browser
+  participant N as Next proxy
+  participant V as PayrollViewSet
+  participant R as core.scope / RBAC
+  participant S as Service
+  participant DB as PostgreSQL
+  participant A as audit
+  U-&gt;&gt;N: POST /api/payroll/periods/{id}/inputs (cookie)
+  N-&gt;&gt;V: POST /api/v1/payroll/periods/{id}/inputs/ (Bearer JWT)
+  V-&gt;&gt;R: has permission payroll.process? employee in scope?
+  R--&gt;&gt;V: yes / 403 PAY_FORBIDDEN
+  V-&gt;&gt;S: add_input(period, data, actor)
+  S-&gt;&gt;DB: BEGIN, check period lock, version, duplicates
+  S-&gt;&gt;A: write_audit(actor, "payroll.input.created", …)
+  S-&gt;&gt;DB: COMMIT
+  S--&gt;&gt;V: domain object
+  V--&gt;&gt;N: {"success": true, "data": …}
+  N--&gt;&gt;U: same envelope (+ rotated cookies if refreshed)</pre></figure>
+<p>Cross-cutting behaviour applied on this path:</p>
+<div class="table"><table><thead><tr><th>Concern</th><th>Where</th><th>How</th></tr></thead><tbody><tr><td>Authentication</td><td>Django <code>JWTAuthentication</code>; Next proxy</td><td>Bearer token from HttpOnly cookie; transparent refresh on 401</td></tr><tr><td>Authorization</td><td><code>views/base.py::PayrollPermission</code></td><td><code>required_permission</code> / <code>action_permissions</code> / <code>any_permissions</code> per action (codes from <code>rbac.py</code>)</td></tr><tr><td>Data scope</td><td><code>PayrollViewSet.scope_ids</code>, <code>employee_in_scope</code></td><td><code>resolve_employee_scope(user, code)</code> → self / team / all</td></tr><tr><td>Errors</td><td><code>services/common.py</code>, <code>PayrollViewSet.handle_exception</code></td><td>Uniform <code>{"success": false, "error": {code: "PAY_*", message, details}}</code></td></tr><tr><td>Idempotency</td><td><code>PayrollViewSet.idempotent</code> + <code>IdempotencyRecord</code></td><td>Same <code>Idempotency-Key</code> + scope replays the stored response</td></tr><tr><td>Concurrency</td><td><code>TrackedModel.version</code>, <code>select_for_update</code></td><td>Optimistic <code>PAY_VERSION_CONFLICT</code>; row locks when finalizing</td></tr><tr><td>Period lock</td><td><code>services/common.py::ensure_unlocked</code></td><td>Any write on a finalized period → <code>409 PAY_PERIOD_LOCKED</code></td></tr><tr><td>Audit</td><td><code>audit.service.write_audit</code></td><td>Append-only log entry with actor, entity, before/after for every mutation</td></tr><tr><td>Transactions</td><td><code>@transaction.atomic</code> on every mutating service</td><td>All-or-nothing, e.g. finalize locks every result or none</td></tr></tbody></table></div>
+<hr/>
+<h2 id="6-calculation-architecture">6. Calculation architecture</h2>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+  subgraph gather["services/runs.calculate (DB side)"]
+    P["Period + PayGroup"] --&gt; C
+    POP["Population&lt;br/&gt;(eligible employees)"] --&gt; C
+    CMP["Compensation versions&lt;br/&gt;+ frozen structure lines"] --&gt; C
+    ATT["Attendance summary&lt;br/&gt;(integration or import)"] --&gt; C
+    INP["Approved inputs&lt;br/&gt;+ overrides"] --&gt; C
+    RUL["Effective statutory rules"] --&gt; C
+    C["Build ctx per employee&lt;br/&gt;(plain dicts, Decimals)"]
+  end
+  C --&gt; E["engine.calculate_employee(ctx)&lt;br/&gt;pure, deterministic"]
+  E --&gt; R["Result: lines + trace + exceptions"]
+  R --&gt; V["Validations, holds, variance&lt;br/&gt;vs previous finalized result"]
+  V --&gt; ST[("Store: PayrollRun n,&lt;br/&gt;InputSnapshot, results,&lt;br/&gt;components, exceptions")]</pre></figure>
+<ul><li><strong>Gather once, calculate purely.</strong> The service reads everything a run needs, freezes it into an <code>InputSnapshot</code>, then calls the engine per employee with plain data. The engine never queries.</li><li><strong>Deterministic:</strong> <code>ENGINE_VERSION</code> is stored on each run; same context ⇒ same output, so a run can be re-explained or re-computed for audit.</li><li><strong>Append-only runs:</strong> a recalculation writes run <em>n+1</em> and supersedes the previous draft; a finalized run is immutable.</li><li><strong>Trace:</strong> every component line stores source, rule/structure version, formula, inputs and the rounded value — the trace screen reads it; nothing is recomputed on display.</li><li><strong>Extensibility:</strong> new statutory rules are data (<code>StatutoryRule</code> params); new formula variables are added in <code>engine/formula.py</code> context building; the attendance source is swappable (<code>attendance.payroll_provider</code> if present, else <code>payroll.integrations.attendance_source</code>, else manual import).</li></ul>
+<hr/>
+<h2 id="7-workflow-state-architecture">7. Workflow &amp; state architecture</h2>
+<figure class="diagram"><pre class="mermaid">stateDiagram-v2
+  direction LR
+  state Period {
+    draft --&gt; in_progress
+    in_progress --&gt; pending_approval: run submitted
+    pending_approval --&gt; approved
+    approved --&gt; finalized: LOCK
+    finalized --&gt; reopened: privileged reopen
+    reopened --&gt; in_progress
+    finalized --&gt; completed: outputs done
+  }</pre></figure>
+<figure class="diagram"><pre class="mermaid">stateDiagram-v2
+  direction LR
+  [*] --&gt; ready: calculate
+  ready --&gt; submitted: submit
+  submitted --&gt; returned: finance returns / rejects
+  submitted --&gt; approved: final approval
+  approved --&gt; finalized: finalize
+  finalized --&gt; reopened: reopen
+  ready --&gt; superseded: recalculated
+  returned --&gt; superseded: recalculated
+  reopened --&gt; superseded: recalculated</pre></figure>
+<ul><li>State transitions live <strong>only</strong> in <code>services/runs.py</code> and <code>services/people.py</code>; each checks the current state and raises <code>PAY_INVALID_STATE</code> otherwise.</li><li>Maker-checker is structural: submit (<code>payroll.process</code>), Finance Review (<code>payroll.review</code>), Final Approval (<code>payroll.approve</code>), finalize (<code>payroll.finalize</code>) and reopen (<code>payroll.reopen</code>) are separate permissions, and the preparer is always excluded from approving.</li></ul>
+<h3 id="integration-with-the-shared-approvals-inbox">Integration with the shared approvals inbox</h3>
+<p>Payroll is multi-stage; the shared engine is single-approver. The bridge (<code>integrations/approvals_bridge.py</code>) <strong>mirrors</strong> each pending payroll stage as one <code>approvals.Request</code>:</p>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+  subgraph payrollSide["Payroll (source of truth)"]
+    S1["Stage opens"] --&gt; OS["open_stage → Request(approver)"]
+    DP["Decided on payroll screen"] --&gt; CL["close_stage → resolve Request"]
+  end
+  subgraph inbox["Shared Approvals inbox"]
+    RQ["Request pending"] --&gt; DC["Decided in inbox"]
+  end
+  OS --&gt; RQ
+  DC -- "request_decided signal" --&gt; AP["runs.decide / people.decide_revision&lt;br/&gt;(from_inbox=True)"]
+  AP -- "PayrollError" --&gt; RB["Reset Request to pending,&lt;br/&gt;return 'Payroll: …' error"]
+  CL --&gt; RQ</pre></figure>
+<p>Payroll remains the source of truth: an inbox decision is applied <strong>through payroll's own service</strong>, so maker-checker, permissions and audit still apply; if payroll refuses, the inbox request is rolled back so both sides agree.</p>
+<hr/>
+<h2 id="8-data-architecture">8. Data architecture</h2>
+<div class="table"><table><thead><tr><th>Group</th><th>Tables</th><th>Notes</th></tr></thead><tbody><tr><td>Configuration</td><td><code>PayGroup</code>, <code>SalaryComponent</code> (+<code>Version</code>), <code>SalaryStructure</code> (+<code>Component</code>, <code>Version</code>), <code>StatutoryRule</code></td><td>Effective-dated, versioned; <code>TrackedModel</code> gives <code>version</code> + created/updated by/at</td></tr><tr><td>People</td><td><code>EmployeePayrollProfile</code>, <code>CompensationRevision</code>, <code>EmployeeCompensation</code>, payment/statutory info, loans</td><td>Compensation versions never overlap; revision approval closes the prior version</td></tr><tr><td>Processing</td><td><code>PayrollPeriod</code>, <code>AttendancePayrollInput</code>, <code>PayrollInput</code>, <code>PayrollEmployeeAction</code>, <code>PayrollOverride</code></td><td>All writes blocked when the period is locked</td></tr><tr><td>Results</td><td><code>PayrollRun</code>, <code>InputSnapshot</code>, <code>EmployeePayrollResult</code>, <code>PayrollResultComponent</code>, <code>PayrollException</code>, <code>PayrollApproval</code></td><td>Append-only per run; one current run per period</td></tr><tr><td>Outputs</td><td><code>Payslip</code>, <code>PayrollOutput</code></td><td>Versioned; regeneration supersedes</td></tr><tr><td>Infrastructure</td><td><code>IdempotencyRecord</code></td><td>Stored responses for retried POSTs</td></tr></tbody></table></div>
+<p>Ownership boundaries: payroll <strong>reads</strong> <code>employees.Employee</code>, attendance, leave and calendar data but never writes them; other modules never write payroll tables. Money columns are <code>Decimal</code> (<code>max_digits</code> sized for INR), never floats.</p>
+<hr/>
+<h2 id="9-security-architecture">9. Security architecture</h2>
+<figure class="diagram"><pre class="mermaid">flowchart TB
+  RQ["Request"] --&gt; AN{"Authenticated?"}
+  AN -- no --&gt; X401["401"]
+  AN -- yes --&gt; PM{"Has permission code&lt;br/&gt;for this action?"}
+  PM -- no --&gt; X403["403 PAY_FORBIDDEN"]
+  PM -- yes --&gt; SC{"Employee in caller's scope?&lt;br/&gt;(self / team / all)"}
+  SC -- no --&gt; X403
+  SC -- yes --&gt; ST{"Extra rule?&lt;br/&gt;own slip must be released,&lt;br/&gt;preparer ≠ approver,&lt;br/&gt;sensitive fields masked"}
+  ST -- fails --&gt; X403
+  ST -- ok --&gt; OK["Service call"]</pre></figure>
+<ul><li><strong>Defence in depth:</strong> UI hides what a user can't do, but every rule is enforced server-side; tests call endpoints directly as each role (<code>test_rbac_matrix.py</code>).</li><li><strong>Self-service isolation:</strong> <code>/my/*</code> endpoints derive the employee from the token, never from the URL, and filter <code>employee = me AND status = released</code> in one query.</li><li><strong>Sensitive data:</strong> bank / PAN / UAN masked unless <code>payroll.sensitive.read</code>; payslips show last 4 digits only; employer-cost lines never appear on employee payslips.</li><li><strong>Documents:</strong> permission grants for employee-owned files are scope-checked (fixes a cross-employee payslip-document read found during UAT).</li><li><strong>Audit:</strong> every mutation (including report exports and output downloads) is logged; reopen requires a reason, which is stored.</li><li><strong>No dynamic code:</strong> formulas are parsed by a whitelist AST evaluator — never <code>eval</code>.</li></ul>
+<hr/>
+<h2 id="10-frontend-architecture">10. Frontend architecture</h2>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+  PG["app/(app)/payroll/** pages"] --&gt; CMP["components/payroll/**&lt;br/&gt;ui kit · run wizard steps · PayslipView"]
+  PG --&gt; MET["lib/payroll/meta.ts&lt;br/&gt;usePayrollMeta(): choices + my permissions"]
+  CMP --&gt; API["lib/payroll/api.ts&lt;br/&gt;payrollApi.get/post/put…"]
+  MET --&gt; API
+  API --&gt; RT["app/api/payroll/[...path]/route.ts&lt;br/&gt;createBackendProxyRoute('payroll')"]
+  RT --&gt; DJ["Django /api/v1/payroll/*"]
+  ESS["app/(app)/payslips (My Finances)"] --&gt; API
+  ESS --&gt; DOC["components/payroll/payslipDocument.ts&lt;br/&gt;printable payslip (PDF)"]</pre></figure>
+<ul><li>Screens follow the UI Design Reference 1:1 and use only the payroll UI kit (no reuse of older payroll screens).</li><li><code>usePayrollMeta()</code> fetches choice lists and the caller's permission codes once (cached) for gating buttons; the sidebar's Payroll entry needs one of the staff permissions.</li><li>The run wizard is URL-driven (<code>/payroll/run/&lt;periodId&gt;?step=…</code>) so every step is linkable and reload-safe; read-only mode is derived from permissions + period lock.</li><li>The proxy adds a trailing slash for DRF routers (payroll) and omits it for routers built without (<code>attendance</code>, <code>leave</code>, <code>calendar</code>, <code>requests</code>).</li></ul>
+<hr/>
+<h2 id="11-deployment-view">11. Deployment view</h2>
+<div class="table"><table><thead><tr><th>Environment</th><th>Composition</th></tr></thead><tbody><tr><td>Local dev</td><td><code>next dev</code> (port 3001) → <code>manage.py runserver</code> (8000) → Postgres 16 on 5433 (local install or <code>backend/docker-compose.yml</code>); SQLite fallback when <code>POSTGRES_HOST</code> is unset</td></tr><tr><td>Tests</td><td><code>pytest --ds=config.settings.test</code> against Postgres (<code>hrms</code> database)</td></tr><tr><td>Production (planned)</td><td>Next.js server + Django + managed Postgres; secrets from environment, never in the repo. Note: <code>backend/Dockerfile</code> currently starts <code>manage.py runserver</code> — switch to a WSGI server (e.g. gunicorn) before go-live</td></tr></tbody></table></div>
+<p>Everything is synchronous in-request: a monthly run for the current headcount calculates in seconds. If headcount grows enough that calculation exceeds request time limits, the calculate service is already isolated behind one function and can be moved to a background worker without changing the engine or the API contract (return the run in <code>calculating</code> state and poll).</p>
+<hr/>
+<h2 id="12-key-architecture-decisions">12. Key architecture decisions</h2>
+<div class="table"><table><thead><tr><th>#</th><th>Decision</th><th>Alternatives considered</th><th>Why</th></tr></thead><tbody><tr><td>AD-1</td><td>Modular monolith app inside the existing Django project</td><td>Separate payroll service</td><td>Shares auth, RBAC, audit and DB transactions; far less operational cost</td></tr><tr><td>AD-2</td><td>Pure calculation engine over plain data</td><td>ORM-driven calculation</td><td>Determinism, reproducibility, DB-free unit tests, preview reuse</td></tr><tr><td>AD-3</td><td>Decimal-only money with configured rounding points</td><td>Floats, round at end</td><td>Avoids paisa drift; matches Calculation Rules §9</td></tr><tr><td>AD-4</td><td>Versioned config + append-only runs + superseded outputs</td><td>Update in place</td><td>Past payroll must stay explainable; audit and compliance</td></tr><tr><td>AD-5</td><td>Separate permission per approval stage</td><td>Single "payroll admin" role</td><td>Maker-checker enforced by construction</td></tr><tr><td>AD-6</td><td>Mirror stages into shared approvals inbox</td><td>Replace with engine / separate inbox</td><td>Keeps payroll's multi-stage rules while approvers use one inbox</td></tr><tr><td>AD-7</td><td>Statutory values as effective-dated data</td><td>Hard-coded rates</td><td>Laws and state slabs change; no deploy needed</td></tr><tr><td>AD-8</td><td>Unmarked attendance = pending, not absent</td><td>Treat as LOP</td><td>Never silently cut pay</td></tr><tr><td>AD-9</td><td>Next.js proxy holds tokens in HttpOnly cookies</td><td>Tokens in browser storage</td><td>XSS cannot steal tokens</td></tr><tr><td>AD-10</td><td>Copy (not merge) features from in-progress branches</td><td>Merge branches</td><td>Keeps teammates' work unaffected until the planned merge to main</td></tr><tr><td>AD-11</td><td>Payslip PDF rendered client-side from the scope-checked API payload</td><td>Server PDF library</td><td>No new dependency and no second data path to secure; server PDF can be added for emailing later</td></tr></tbody></table></div>
+<hr/>
+<h2 id="13-known-architectural-limits">13. Known architectural limits</h2>
+<ul><li>Calculation is synchronous (fine for current headcount — see §11 for the scale-out path).</li><li>No outbound integrations (bank / statutory / accounting are file downloads).</li><li>Payroll keeps its own payment-info tables until the organization branch's <code>BankDetails</code> / <code>IdentityDocument</code> are merged and can be adopted.</li><li>One role per user in the platform RBAC: payroll-only roles lack employee self-service.</li><li>Mermaid diagrams in the HTML load from a CDN; offline, the diagram source text is shown.</li></ul>
+</main>
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default', securityLevel: 'strict' });
+</script>
+</body>
+</html>

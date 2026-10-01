@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { printPayslip } from '@/components/payroll/payslipDocument';
+import { payrollApi } from '@/lib/payroll/api';
 import { DashboardCard } from '@/components/dashboard/DashboardCard';
 import { IdCardIcon, FileTextIcon, ReceiptIcon, TrendingUpIcon, ChevronDownIcon } from '@/components/icons';
 
@@ -301,6 +303,20 @@ export default function PayslipsPage() {
       cancelled = true;
     };
   }, [selectedPayslip]);
+
+  const [downloading, setDownloading] = useState(false);
+  // The full payslip document, fetched from the employee's own (released-only) endpoint.
+  const downloadPayslip = async (id: string) => {
+    setDownloading(true);
+    try {
+      const { data } = await payrollApi.get<any>(`my/payslips/${id}`);
+      printPayslip(data);
+    } catch {
+      setSlipsError('Could not download the payslip. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const fyLabel = financialYears.find((f) => f.id === taxFy)?.label ?? '';
   const td = taxDataByFy[taxFy];
@@ -612,6 +628,9 @@ export default function PayslipsPage() {
                           <h2 className="text-base font-bold text-slate-900">Payslip</h2>
                           <p className="text-xs text-gray-500 mt-0.5">{monthLabel(currentPayslip.month)}</p>
                         </div>
+                        <a href={`/payslips/view/${currentPayslip.id}`} className="text-sm font-medium text-blue-700 hover:underline">
+                          View full payslip →
+                        </a>
                       </div>
                     </div>
 
@@ -666,9 +685,13 @@ export default function PayslipsPage() {
                             <p className="text-xs text-gray-600">Net Pay</p>
                             <p className="text-xl font-bold text-purple-600 mt-0.5">₹{currentPayslip.netAmount.toLocaleString()}</p>
                           </div>
-                          <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center">
-                            <span className="text-white font-bold text-sm">✓</span>
-                          </div>
+                          <button
+                            onClick={() => downloadPayslip(currentPayslip.id)}
+                            disabled={downloading}
+                            className="flex items-center gap-2 rounded-lg bg-gradient-to-br from-purple-600 to-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                          >
+                            <DownloadIcon /> {downloading ? 'Preparing…' : 'Download payslip'}
+                          </button>
                         </div>
                       </div>
                     </div>

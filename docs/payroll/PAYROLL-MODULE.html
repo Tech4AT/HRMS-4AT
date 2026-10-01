@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Payroll Module Guide</title>
+<!-- Generated from PAYROLL-MODULE.md by build-html.mjs — edit the .md, then regenerate. -->
+<style>
+  :root { --bg:#f8fafc; --panel:#ffffff; --text:#0f172a; --muted:#64748b; --line:#e2e8f0;
+          --accent:#1d4ed8; --accent-soft:#eff6ff; --code:#f1f5f9; --note:#fefce8; --note-line:#facc15; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+          --bg:#0b1120; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8; --line:#1f2937;
+          --accent:#60a5fa; --accent-soft:#172554; --code:#1e293b; --note:#292524; --note-line:#ca8a04; } }
+  :root[data-theme="dark"] { --bg:#0b1120; --panel:#111827; --text:#e5e7eb; --muted:#94a3b8; --line:#1f2937;
+          --accent:#60a5fa; --accent-soft:#172554; --code:#1e293b; --note:#292524; --note-line:#ca8a04; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .layout { display:grid; grid-template-columns:260px minmax(0,1fr); max-width:1400px; margin:0 auto; }
+  nav { position:sticky; top:0; height:100vh; overflow:auto; padding:24px 16px; border-right:1px solid var(--line); }
+  nav .brand { font-weight:700; margin-bottom:12px; }
+  nav .docs { margin-top:20px; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  nav a { display:block; padding:5px 10px; border-radius:6px; color:var(--muted); text-decoration:none; font-size:14px; }
+  nav a:hover, nav a.current { background:var(--accent-soft); color:var(--accent); }
+  main { padding:32px 40px 80px; min-width:0; }
+  h1 { font-size:30px; margin:0 0 12px; }
+  h2 { font-size:22px; margin:40px 0 12px; padding-top:8px; border-top:1px solid var(--line); }
+  h3 { font-size:17px; margin:24px 0 8px; }
+  a { color:var(--accent); }
+  hr { display:none; }
+  code { background:var(--code); padding:1px 5px; border-radius:4px; font-size:.88em; }
+  pre.code { background:var(--code); padding:14px 16px; border-radius:8px; overflow:auto; }
+  pre.code code { background:none; padding:0; }
+  .table { overflow-x:auto; margin:12px 0; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { background:var(--accent-soft); font-weight:600; white-space:nowrap; }
+  tr:last-child td { border-bottom:0; }
+  .diagram { margin:16px 0; padding:16px; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow-x:auto; text-align:center; }
+  .diagram pre.mermaid { margin:0; background:none; }
+  aside.note { background:var(--note); border-left:4px solid var(--note-line); padding:10px 14px; border-radius:6px; margin:12px 0; }
+  li { margin:3px 0; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns:1fr; }
+    nav { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); padding:16px; }
+    main { padding:20px 16px 60px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav><div class="brand">Payroll Module — Architecture, Runbook &amp; Decisions</div><a href="#1-what-the-module-does">1. What the module does</a><a href="#2-architecture">2. Architecture</a><a href="#3-data-model">3. Data model</a><a href="#4-monthly-payroll-lifecycle">4. Monthly payroll lifecycle</a><a href="#5-calculation-engine">5. Calculation engine</a><a href="#6-attendance-source">6. Attendance source</a><a href="#7-approvals-maker-checker-and-the-shared-inbox">7. Approvals (maker-checker) and the shared inbox</a><a href="#8-rbac-and-data-protection">8. RBAC and data protection</a><a href="#9-payslips-outputs">9. Payslips &amp; outputs</a><a href="#10-api">10. API</a><a href="#11-features-copied-from-other-branches-and-why-copy-not-merge">11. Features copied from other branches (and why copy, not merge)</a><a href="#12-running-it-locally">12. Running it locally</a><a href="#13-troubleshooting">13. Troubleshooting</a><a href="#14-design-decisions-why">14. Design decisions (why)</a><a href="#15-known-gaps-follow-ups">15. Known gaps / follow-ups</a><div class="docs">Payroll docs</div><a href="PAYROLL-ARCHITECTURE.html">Payroll Architecture</a><a href="PAYROLL-MODULE.html" class="current">Payroll Module Guide</a></nav>
+<main>
+<h1 id="payroll-module-architecture-runbook-decisions">Payroll Module — Architecture, Runbook &amp; Decisions</h1>
+<aside class="note">Companion to <code>PAYROLL-MODULE.html</code> (same content, with rendered diagrams, for human readers). This Markdown file is the canonical copy for coding agents — edit it, then run <code>node docs/payroll/build-html.mjs</code> to regenerate the HTML. The deeper architecture view (containers, layers, request lifecycle, security, decisions) is in <code>PAYROLL-ARCHITECTURE.md</code>.</aside>
+<ul><li><strong>Branch:</strong> <code>payroll_module</code> (standalone; not merged with other feature branches — see §11)</li><li><strong>Specs implemented:</strong> PRD v1.0, Calculation Rules v1.0, API &amp; Backend Contract v1.0, Jira Backlog/UAT v1.0 (PAY-001..022, UAT-001..016), UI Design Reference (screens 01–12)</li><li><strong>Backend:</strong> <code>backend/payroll/</code> (Django 5.1 + DRF) · <strong>Frontend:</strong> <code>frontend/src/app/(app)/payroll/**</code>, <code>frontend/src/components/payroll/**</code>, <code>frontend/src/lib/payroll/**</code> (Next.js 16)</li></ul>
+<hr/>
+<h2 id="1-what-the-module-does">1. What the module does</h2>
+<p>Monthly payroll for 4AT's India entities, end to end:</p>
+<ol><li><strong>Configure</strong> salary components (formula-based), salary structures (CTC breakup), pay groups and effective-dated statutory rules (PF, ESI, PT, LWF, TDS, Gratuity).</li><li><strong>Assign compensation</strong> to employees and revise it through maker-checker approval, keeping every historical version.</li><li><strong>Run payroll</strong> per period through a 7-step wizard: attendance → joiners/exits → revisions/bonus/OT → reimbursements/deductions → holds/arrears/adjustments → statutory → review.</li><li><strong>Calculate</strong> with a deterministic, Decimal-only engine that stores a per-line trace.</li><li><strong>Approve</strong> (Finance Review → Final Approval), <strong>finalize &amp; lock</strong>, <strong>reopen</strong> with reason.</li><li><strong>Produce outputs</strong>: payslips (released to employees), bank advice, statutory reports, journal, register, variance report and a full audit trail.</li></ol>
+<p>Employees see only their own released payslips (My Finances → My Pay), and can download them as PDF or Excel.</p>
+<hr/>
+<h2 id="2-architecture">2. Architecture</h2>
+<figure class="diagram"><pre class="mermaid">flowchart LR
+  subgraph Browser
+    UI["Next.js pages&lt;br/&gt;/payroll/** (staff)&lt;br/&gt;/payslips (employee)"]
+  end
+  subgraph NextServer["Next.js server"]
+    PX["API proxy routes&lt;br/&gt;/api/payroll/[...path]&lt;br/&gt;(cookie → Bearer JWT, refresh on 401)"]
+  end
+  subgraph Django["Django / DRF  (/api/v1/payroll/...)"]
+    V["views/*&lt;br/&gt;PayrollViewSet: permission + scope checks,&lt;br/&gt;PAY_* error envelope, idempotency"]
+    S["services/*&lt;br/&gt;config · people · periods · runs · outputs · reports"]
+    E["engine/*&lt;br/&gt;formula · breakup · calculator · statutory · money&lt;br/&gt;(pure functions, no DB)"]
+    I["integrations/*&lt;br/&gt;attendance_source · approvals_bridge · notify"]
+  end
+  subgraph Shared["Shared HRMS primitives"]
+    RB["core RBAC + scope"]
+    AU["audit.write_audit"]
+    AP["approvals.Request"]
+    NO["notifications.notify"]
+    AT["attendance · leave · org_calendar"]
+  end
+  DB[(PostgreSQL)]
+  UI --&gt; PX --&gt; V --&gt; S --&gt; E
+  S --&gt; I
+  V --&gt; RB
+  S --&gt; AU
+  I --&gt; AP
+  I --&gt; NO
+  I --&gt; AT
+  S --&gt; DB</pre></figure>
+<p><strong>Layering rule:</strong> views only authorize and shape responses; services hold every business rule (state transitions, locking, maker-checker, audit); the engine is pure and deterministic (same input → same output), so it is unit-tested without a database and results are reproducible.</p>
+<h3 id="code-map">Code map</h3>
+<div class="table"><table><thead><tr><th>Path</th><th>Responsibility</th></tr></thead><tbody><tr><td><code>payroll/models.py</code></td><td>Data model (§3). <code>TrackedModel</code> adds created/updated by/at + optimistic <code>version</code>.</td></tr><tr><td><code>payroll/rbac.py</code></td><td>Permission codes and default role grants (§8).</td></tr><tr><td><code>payroll/engine/money.py</code></td><td>Decimal helpers; money is never a float, 4 dp until rounding point.</td></tr><tr><td><code>payroll/engine/formula.py</code></td><td>Safe AST formula evaluator (whitelisted nodes, no <code>eval</code>).</td></tr><tr><td><code>payroll/engine/breakup.py</code></td><td>CTC → monthly/annual component breakup with balancing component.</td></tr><tr><td><code>payroll/engine/calculator.py</code></td><td><code>calculate_employee(ctx)</code> — the 10-step calculation + trace.</td></tr><tr><td><code>payroll/engine/statutory.py</code></td><td>Generic PF/ESI/PT/LWF/TDS/Gratuity shapes; values come from <code>StatutoryRule</code>.</td></tr><tr><td><code>payroll/services/config.py</code></td><td>Components &amp; structures, immutable version snapshots.</td></tr><tr><td><code>payroll/services/people.py</code></td><td>Payroll profile, compensation assignment &amp; revisions (maker-checker).</td></tr><tr><td><code>payroll/services/periods.py</code></td><td>Periods, wizard steps, attendance snapshot, inputs, OT, joiners/exits, holds, overrides.</td></tr><tr><td><code>payroll/services/runs.py</code></td><td>Calculate → validate → submit → approve → finalize → reopen.</td></tr><tr><td><code>payroll/services/outputs.py</code></td><td>Payslips, bank advice, statutory files, journal (finalized runs only).</td></tr><tr><td><code>payroll/services/reports.py</code></td><td>Dashboard + MVP reports (register, variance, statutory, audit trail…).</td></tr><tr><td><code>payroll/services/common.py</code></td><td><code>PAY_*</code> errors, audit helper, version checks, period locks.</td></tr><tr><td><code>payroll/integrations/attendance_source.py</code></td><td>Reads attendance/leave/calendar into payroll's attendance summary.</td></tr><tr><td><code>payroll/integrations/approvals_bridge.py</code></td><td>Mirrors payroll approval stages into the shared Approvals inbox.</td></tr><tr><td><code>payroll/integrations/notify.py</code></td><td>Payslip-released / run-finalized notifications.</td></tr><tr><td><code>payroll/views/*</code></td><td>DRF viewsets (config, people, processing, outputs). <code>base.py</code> = auth/scope helpers.</td></tr><tr><td><code>payroll/api_urls.py</code></td><td>Router (mounted under <code>/api/v1/</code>).</td></tr><tr><td><code>payroll/management/commands/seed_payroll.py</code></td><td>Seeds pay group, components, structure, statutory rules; <code>--demo</code> adds demo users/employees.</td></tr><tr><td><code>payroll/management/commands/verify_payroll.py</code></td><td>RBAC conformance check for the payroll endpoints.</td></tr><tr><td><code>frontend/src/lib/payroll/api.ts</code></td><td>Typed fetch wrapper for <code>/api/payroll/*</code>.</td></tr><tr><td><code>frontend/src/lib/payroll/meta.ts</code></td><td><code>usePayrollMeta()</code> — choice lists + caller's permissions (UI gating only).</td></tr><tr><td><code>frontend/src/components/payroll/ui.tsx</code></td><td>Shared payroll UI kit (cards, tables, badges, formatters, CSV).</td></tr><tr><td><code>frontend/src/components/payroll/run/*</code></td><td>Run-payroll wizard steps.</td></tr><tr><td><code>frontend/src/components/payroll/PayslipView.tsx</code></td><td>Payslip screen (UI 06) for staff and employees.</td></tr><tr><td><code>frontend/src/components/payroll/payslipDocument.ts</code></td><td>Standalone printable payslip (PDF download).</td></tr></tbody></table></div>
+<h3 id="frontend-routes">Frontend routes</h3>
+<div class="table"><table><thead><tr><th>Route</th><th>Screen</th><th>Who</th></tr></thead><tbody><tr><td><code>/payroll</code></td><td>Dashboard (UI 01)</td><td>payroll staff</td></tr><tr><td><code>/payroll/run</code>, <code>/payroll/run/&lt;periodId&gt;?step=…</code></td><td>Run wizard (UI 02–05, 07–08)</td><td>preparer; reviewers read-only</td></tr><tr><td><code>/payroll/configuration?tab=components|structures|history|pay-groups|statutory</code></td><td>Configuration (UI 09–10)</td><td><code>payroll.manage</code> (others read-only)</td></tr><tr><td><code>/payroll/configuration/structures/&lt;id|new&gt;</code></td><td>Structure builder</td><td><code>payroll.manage</code></td></tr><tr><td><code>/payroll/compensation</code>, <code>/payroll/compensation/&lt;employeeId&gt;[?tab=profile|loans]</code>, <code>/assign</code></td><td>Employee compensation (UI 11)</td><td><code>payroll.write</code></td></tr><tr><td><code>/payroll/approvals</code></td><td>Payroll approvals queue</td><td>reviewers / approvers</td></tr><tr><td><code>/payroll/reports[?tab=audit]</code></td><td>Reports &amp; audit (UI 12)</td><td><code>payroll.audit</code> / run readers</td></tr><tr><td><code>/payroll/payslips/&lt;id&gt;</code></td><td>Payslip (staff view)</td><td>run readers</td></tr><tr><td><code>/payslips?tab=pay</code>, <code>/payslips/view/&lt;id&gt;</code></td><td>My Finances → My Pay, own payslip</td><td>every employee</td></tr><tr><td><code>/payroll-setup</code>, <code>/payroll-inputs</code></td><td>Legacy URLs → redirect into <code>/payroll/*</code></td><td>—</td></tr></tbody></table></div>
+<p>The sidebar <strong>Payroll</strong> entry is shown only to users holding one of the 8 staff permissions (<code>PAYROLL_STAFF_PERMISSIONS</code> in <code>meta.ts</code>). UI gating is convenience only — the backend enforces every permission.</p>
+<hr/>
+<h2 id="3-data-model">3. Data model</h2>
+<figure class="diagram"><pre class="mermaid">erDiagram
+  PayGroup ||--o{ PayrollPeriod : has
+  PayGroup }o--|| LegalEntity : "belongs to"
+  SalaryComponent ||--o{ SalaryComponentVersion : versions
+  SalaryStructure ||--o{ SalaryStructureComponent : lines
+  SalaryStructure ||--o{ SalaryStructureVersion : versions
+  Employee ||--o| EmployeePayrollProfile : "payroll profile"
+  Employee ||--o{ EmployeeCompensation : "effective-dated"
+  CompensationRevision ||--o| EmployeeCompensation : creates
+  PayrollPeriod ||--o{ AttendancePayrollInput : attendance
+  PayrollPeriod ||--o{ PayrollInput : "bonus/OT/deductions"
+  PayrollPeriod ||--o{ PayrollRun : "run 1..n"
+  PayrollRun ||--|| InputSnapshot : freezes
+  PayrollRun ||--o{ EmployeePayrollResult : results
+  EmployeePayrollResult ||--o{ PayrollResultComponent : "lines + trace"
+  PayrollRun ||--o{ PayrollException : validations
+  PayrollRun ||--o{ PayrollApproval : stages
+  PayrollApproval }o--o| ApprovalsRequest : "mirrored in inbox"
+  EmployeePayrollResult ||--o| Payslip : "payslip"
+  PayrollRun ||--o{ PayrollOutput : "bank/statutory/journal"</pre></figure>
+<p>Key rules:</p>
+<ul><li><strong>Nothing a past payroll depended on is overwritten.</strong> Components and structures write immutable version rows; a component change re-versions active structures from the change date.</li><li><strong>Compensation is effective-dated.</strong> An approved revision closes the old version the day before the new <code>effective_from</code> (e.g. v1 ends 30 Sep, v2 starts 1 Oct).</li><li><strong>Runs are append-only.</strong> Recalculation creates run <em>n+1</em> and supersedes the draft; a finalized run is never modified — reopen marks it and its outputs <code>superseded</code>.</li><li><code>PayrollRun</code> freezes its inputs in an <code>InputSnapshot</code> so a result can always be re-explained.</li><li>Statuses — <strong>Period:</strong> draft → in_progress → ready_for_review → pending_approval → approved → finalized (locked) → reopened / completed. <strong>Run:</strong> created → calculating → calculated / validation_failed → ready → submitted → approved / returned / rejected → finalized → reopened / superseded. <strong>Payslip:</strong> generated → released → superseded.</li></ul>
+<hr/>
+<h2 id="4-monthly-payroll-lifecycle">4. Monthly payroll lifecycle</h2>
+<figure class="diagram"><pre class="mermaid">stateDiagram-v2
+  [*] --&gt; ready: calculate (new run n)
+  ready --&gt; submitted: submit (all warnings acknowledged, no blocking errors)
+  submitted --&gt; submitted: Finance Review approves (stage 2 opens)
+  submitted --&gt; returned: Finance returns / rejects (comment required)
+  returned --&gt; superseded: recalculate (run n+1)
+  submitted --&gt; approved: Final Approval approves
+  approved --&gt; finalized: finalize → period LOCKED
+  finalized --&gt; reopened: reopen (payroll.reopen + reason)
+  reopened --&gt; superseded: new run calculated
+  finalized --&gt; [*]: payslips, bank file, statutory, journal</pre></figure>
+<p>Wizard steps (<code>services/periods.py::STEPS</code>): <code>attendance</code>, <code>joiners_exits</code>, <code>revisions_variable</code>, <code>reimbursements</code>, <code>holds_adjustments</code>, <code>statutory</code>, <code>review</code> (+ <code>finalize</code>, <code>completed</code> screens).</p>
+<p>Pipeline (<code>services/runs.py</code>): <strong>open period → snapshot inputs → validate → calculate → store run/results → review → approve → finalize/lock → generate outputs.</strong></p>
+<p>Guards enforced in services:</p>
+<div class="table"><table><thead><tr><th>Guard</th><th>Error</th></tr></thead><tbody><tr><td>Any write to a finalized/completed period</td><td><code>409 PAY_PERIOD_LOCKED</code></td></tr><tr><td>Stale <code>version</code> on update</td><td><code>409 PAY_VERSION_CONFLICT</code></td></tr><tr><td>Submit with blocking errors or unacknowledged warnings</td><td><code>422 PAY_BLOCKING_VALIDATION</code></td></tr><tr><td>Wrong state for an action (e.g. finalize an unapproved run)</td><td><code>409 PAY_INVALID_STATE</code></td></tr><tr><td>Preparer approving own run; approver not holding the stage permission</td><td><code>403 PAY_FORBIDDEN</code></td></tr><tr><td>Duplicate import row / same source key</td><td><code>PAY_DUPLICATE_INPUT</code></td></tr><tr><td>Retried POST with same <code>Idempotency-Key</code></td><td>returns the original response, no second run</td></tr></tbody></table></div>
+<hr/>
+<h2 id="5-calculation-engine">5. Calculation engine</h2>
+<p><code>engine/calculator.py::calculate_employee(ctx)</code> is a pure function over plain data (Calculation Rules §2 canonical sequence):</p>
+<ol><li><strong>Eligibility &amp; payable window</strong> — period ∩ [joining / payroll start, exit / payroll end].</li><li><strong>Compensation segments</strong> — the effective compensation version(s) in the window; a mid-period revision splits the month into segments (policy per pay group).</li><li><strong>Monthly reference amounts</strong> — from the structure breakup of each segment's annual CTC.</li><li><strong>Proration</strong> — per pay group basis: <code>calendar</code>, <code>working</code>, or <code>fixed_30</code>; only components flagged proratable are prorated.</li><li><strong>LOP</strong> — loss-of-pay days reduce payable days for LOP-affected components.</li><li><strong>Variable inputs</strong> — approved bonus, OT (units × rate), reimbursements, arrears, adjustments.</li><li><strong>Statutory deductions</strong> on actual earned wages — PF, ESI, PT, LWF, TDS.</li><li><strong>Other deductions</strong> — loan recovery, recoveries, ad-hoc deductions.</li><li><strong>Employer contributions</strong> — PF/ESI/LWF employer, gratuity (not on the employee payslip).</li><li><strong>Validations</strong> — employee-level exceptions (missing structure, negative net, attendance not final, variance &gt; threshold, …).</li></ol>
+<p>Then <strong>overrides</strong> (Calc Rules §10: calculated value kept, override applied with mandatory reason and <code>payroll.override</code>) and <strong>rounding</strong> (component rounding, then pay-group net-pay rounding).</p>
+<p>Supporting pieces:</p>
+<ul><li><strong>Money:</strong> <code>Decimal</code> everywhere, 4 dp internally, rounded only at each component's rounding point.</li><li><strong>Formulas</strong> (<code>engine/formula.py</code>): numbers, component codes, <code>CTC</code>, <code>CTC_M</code>, <code>GROSS</code>, <code>PD</code>, <code>WD</code>, <code>LOP</code>, <code>U</code>, <code>RATE</code>; <code>+ - * / ( )</code>, comparisons, <code>a if c else b</code>, <code>min max round abs floor ceil</code>. Parsed with <code>ast</code>; unknown nodes/names are rejected at save time (<code>UAT-002</code>); cycles → <code>PAY_CIRCULAR_REFERENCE</code>.</li><li><strong>Breakup</strong> (<code>engine/breakup.py</code>): resolves components in dependency order; one <em>balancing</em> component absorbs the remainder so the breakup reconciles exactly to CTC (fixed-point iteration when statutory employer costs depend on the balancing amount). Over/under → <code>PAY_CTC_EXCEEDED</code> / <code>PAY_CTC_MISMATCH</code>.</li><li><strong>Statutory values</strong> come only from effective-dated <code>StatutoryRule</code> rows. The seeded rules are <strong>placeholders flagged "NOT compliance-reviewed"</strong> — each run raises a warning until reviewed.</li><li><strong>Trace:</strong> every result line stores source, rule/structure version, formula, inputs and rounded result — <code>GET /payroll/results/&lt;id&gt;/trace/</code> (UAT-009).</li><li><strong>Variance:</strong> each result is compared with the employee's previous finalized result; a change above <code>PayGroup.variance_threshold_pct</code> (default 10%) raises <code>NET_PAY_VARIANCE</code> with previous, current, change %, and the component drivers (UAT-011).</li></ul>
+<hr/>
+<h2 id="6-attendance-source">6. Attendance source</h2>
+<p><code>integrations/attendance_source.py</code> (used automatically when <code>attendance</code>, <code>leave</code> and <code>org_calendar</code> apps are installed; otherwise attendance is imported/keyed in):</p>
+<ul><li>Week-offs and holidays (org_calendar) are never working days.</li><li>Approved leave: paid or unpaid per <code>LeaveType.is_paid</code>; single-day half-day = 0.5.</li><li><code>absent</code> → LOP; <code>half_day</code> → ½ present + ½ LOP.</li><li><strong>An unmarked working day is not assumed absent</strong>: the row becomes <code>pending</code> and payroll raises <code>ATTENDANCE_NOT_FINAL</code> instead of silently cutting pay (UAT-005).</li><li>OT hours from attendance overtime feed the OT input generator (timesheets are approximated by attendance overtime — see §13).</li></ul>
+<hr/>
+<h2 id="7-approvals-maker-checker-and-the-shared-inbox">7. Approvals (maker-checker) and the shared inbox</h2>
+<p>Stages: <strong>Finance Review</strong> (<code>payroll.review</code>) → <strong>Final Approval</strong> (<code>payroll.approve</code>) for both payroll runs and compensation revisions. The preparer can never approve their own item.</p>
+<figure class="diagram"><pre class="mermaid">sequenceDiagram
+  participant Prep as Payroll Admin
+  participant Pay as payroll.services.runs
+  participant Br as approvals_bridge
+  participant Inbox as approvals.Request (shared inbox)
+  participant Rev as Finance Reviewer
+  Prep-&gt;&gt;Pay: submit(run)
+  Pay-&gt;&gt;Br: open_next_stage(run)
+  Br-&gt;&gt;Inbox: Request(type=payroll_run, approver=chosen reviewer)
+  Rev-&gt;&gt;Inbox: approve (from Approvals inbox)
+  Inbox--&gt;&gt;Br: request_decided signal
+  Br-&gt;&gt;Pay: decide(run, approve, from_inbox=True)
+  Pay-&gt;&gt;Br: open_next_stage → Final Approval request
+  Note over Br,Pay: If payroll refuses the decision (wrong permission, preparer, state),&lt;br/&gt;the inbox Request is reset to pending and the error is returned.</pre></figure>
+<p>Approver choice (<code>choose_approver</code>): the pay group's named <strong>Finance Reviewer / Final Approver</strong> (set in Configuration → Pay Groups), otherwise an active user holding the stage permission — preferring the dedicated role (<em>Finance Reviewer</em> / <em>Payroll Approver</em>), excluding the preparer and earlier approvers. Decisions made on the payroll screens close the mirrored inbox request, so both sides always agree. Cancelling a revision withdraws its inbox request.</p>
+<hr/>
+<h2 id="8-rbac-and-data-protection">8. RBAC and data protection</h2>
+<div class="table"><table><thead><tr><th>Permission</th><th>Employee</th><th>Manager</th><th>HR Admin</th><th>Finance</th><th>Payroll Admin</th><th>Finance Reviewer</th><th>Payroll Approver</th><th>Auditor</th></tr></thead><tbody><tr><td>payroll.read</td><td>self</td><td>team</td><td>all</td><td>all</td><td>all</td><td>all</td><td>all</td><td>all</td></tr><tr><td>payroll.write</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.manage</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.process</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.review</td><td></td><td></td><td></td><td>✓</td><td></td><td>✓</td><td></td><td></td></tr><tr><td>payroll.approve</td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr><tr><td>payroll.finalize</td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr><tr><td>payroll.reopen</td><td></td><td></td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr><tr><td>payroll.release</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.override</td><td></td><td></td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.sensitive.read</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr><tr><td>payroll.audit</td><td></td><td></td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td></tr></tbody></table></div>
+<p>(Defaults from <code>payroll/rbac.py</code>; admins can change grants — re-running migrate never overwrites their changes.) Every employee-keyed query is filtered by <code>resolve_employee_scope(user, code)</code>.</p>
+<p><strong>Payslip access guarantees</strong> (verified by tests and by manual probing, §12):</p>
+<ul><li><code>GET /payroll/my/payslips/</code> and <code>/my/payslips/&lt;id&gt;/</code> filter by <strong>caller's own employee + <code>status=released</code></strong> in the same query — another employee's ID returns 403.</li><li><code>GET /payroll/payslips/&lt;id&gt;/</code> (staff route) checks scope; a non-staff user can only open their own released slip there.</li><li><code>documents</code> access matrix: permission grants for employee-owned files (<code>payslip</code>, <code>id_document</code>, <code>employee_document</code>) are now <strong>scope-checked</strong> — before this fix any employee (who holds <code>payroll.read</code> at <em>self</em> scope) could open a colleague's payslip document.</li><li>Bank account / PAN / UAN are masked unless <code>payroll.sensitive.read</code>; payslips show <code>XXXXXX</code> + last 4 digits.</li><li>Employer-only lines (employer PF, gratuity) never appear on the employee payslip.</li></ul>
+<hr/>
+<h2 id="9-payslips-outputs">9. Payslips &amp; outputs</h2>
+<ul><li>Outputs only from a <strong>finalized</strong> run (<code>PAY-FR-026</code>); each has version, period, generated by/at; regeneration supersedes, never overwrites.</li><li><strong>Release</strong> makes payslips visible to employees and sends a notification.</li><li><strong>Employee download:</strong> My Finances → My Pay → <strong>Download payslip</strong>, or open the payslip → <strong>Download PDF / Download Excel</strong>. The PDF is a standalone document (<code>payslipDocument.ts</code>) printed from a hidden frame (browser "Save as PDF"), containing company, employee, period, pay date, working/payable days, masked bank, earnings, deductions, net pay and amount in words — identical figures to the staff view. Excel = CSV with the same details.</li><li>Bank advice (mark paid), statutory reports, journal and payroll register are generated from the Run → Completed step and Reports.</li></ul>
+<hr/>
+<h2 id="10-api">10. API</h2>
+<p>All endpoints under <code>/api/v1/payroll/</code> (trailing slash), JSON envelope <code>{"success": true, "data": …}</code> or <code>{"success": false, "error": {"code": "PAY_…", "message", "details"}}</code>.</p>
+<div class="table"><table><thead><tr><th>Area</th><th>Endpoints</th></tr></thead><tbody><tr><td>Config</td><td><code>components/</code>, <code>salary-structures/</code> (+ preview, versions), <code>statutory-rules/</code>, <code>pay-groups/</code></td></tr><tr><td>People</td><td><code>employees/</code> (profile), <code>compensations/</code> (assign, revisions, decide, cancel), <code>loans/</code></td></tr><tr><td>Self-service</td><td><code>my/payslips/</code>, <code>my/payslips/&lt;id&gt;/</code>, <code>my/summary/</code></td></tr><tr><td>Periods</td><td><code>periods/</code> + <code>steps</code>, <code>readiness</code>, <code>population</code>, <code>attendance</code> (row, import, sync, fill-missing), <code>snapshot-inputs</code>, <code>inputs</code> (decide, import), <code>generate-ot</code>, <code>generate-loans</code>, <code>joiners-exits</code>, <code>employee-actions</code>, <code>overrides</code>, <code>calculate</code>, <code>complete</code></td></tr><tr><td>Runs</td><td><code>runs/&lt;id&gt;/</code> + <code>results</code>, <code>exceptions</code>, <code>submit</code>, <code>approvals</code>, <code>finalize</code>, <code>reopen</code>, <code>payslips</code> (generate, release), <code>outputs</code>, <code>checklist</code></td></tr><tr><td>Results</td><td><code>results/&lt;id&gt;/trace/</code>, <code>exceptions/&lt;id&gt;/acknowledge/</code></td></tr><tr><td>Outputs</td><td><code>payslips/</code>, <code>outputs/&lt;id&gt;/download/</code>, <code>outputs/&lt;id&gt;/mark-paid/</code>, <code>reports/</code>, <code>reports/&lt;key&gt;/?period=&amp;format=csv</code>, <code>audit/</code>, <code>dashboard/</code>, <code>meta/</code></td></tr></tbody></table></div>
+<p>Mutating calls accept <code>Idempotency-Key</code>; updates send <code>version</code> for optimistic locking.</p>
+<hr/>
+<h2 id="11-features-copied-from-other-branches-and-why-copy-not-merge">11. Features copied from other branches (and why copy, not merge)</h2>
+<p>The payroll branch must stay standalone while teammates' branches are still in progress, so the features payroll depends on were <strong>copied</strong> (not merged) — no other branch is affected. All branches are to be combined into <code>main</code> later.</p>
+<div class="table"><table><thead><tr><th>Source branch</th><th>Copied</th></tr></thead><tbody><tr><td><code>leave_attendance_module</code></td><td><code>backend/{approvals, attendance, leave, org_calendar}</code> and their frontend pages/components (approvals, attendance, leave, calendar, change-password, admin role builder, notifications dropdown)</td></tr><tr><td><code>organization</code></td><td><code>backend/{notifications, documents}</code>, <code>audit/utils.py</code>, accounts migrations 0006–0009 + <code>provision_logins</code>, <code>employees/identity_numbers.py</code>, employees migrations 0005–0007, accounts/employees serializers, views, urls, rbac, settings</td></tr></tbody></table></div>
+<p>Files changed on more than one branch (<code>accounts/auth_views.py</code>, <code>employees/models.py</code>, <code>employees/views.py</code>, <code>core/scope.py</code>) were combined with a 3-way <code>git merge-file</code> (base = <code>origin/main</code>) with 0 conflicts; <code>employees/migrations/0008_merge_…</code> joins the migration graphs. Payroll-specific glue: <code>payroll/integrations/*</code>, <code>payroll/migrations/0006_approvals_engine_link.py</code> (pay-group named approvers + inbox link), Suspense wrapper in <code>(app)/layout.tsx</code>, and <code>createBackendProxyRoute(prefix, { trailingSlash: false })</code> for the attendance/leave/calendar/ requests routers (built without trailing slashes).</p>
+<p><strong>When merging to main:</strong> expect the copied files to be identical to (or newer on) their source branches — prefer the source branch version, then re-run the full test suite.</p>
+<hr/>
+<h2 id="12-running-it-locally">12. Running it locally</h2>
+<h3 id="database">Database</h3>
+<ul><li><strong>PostgreSQL 16</strong> (recommended; matches production). Local install used during development: <code>%LOCALAPPDATA%\pgsql16</code>, port <strong>5433</strong>, role <code>hrms</code>, databases <code>hrms</code> (tests) and <code>hrms_dump</code> (dev data restored from a private dump — <strong>never commit the dump; it contains real PII</strong>).</li></ul>
+<pre class="code"><code>  "$LOCALAPPDATA/pgsql16/pgsql/bin/pg_ctl.exe" -D "$LOCALAPPDATA/pgsql16/data" -l "$LOCALAPPDATA/pgsql16/server.log" start</code></pre>
+<ul><li><code>backend/.env</code> (git-ignored) sets <code>POSTGRES_HOST/PORT/DB/USER/PASSWORD</code>. Without <code>POSTGRES_HOST</code> dev settings fall back to SQLite (<code>db.sqlite3</code>).</li></ul>
+<h3 id="backend">Backend</h3>
+<pre class="code"><code>cd backend
+.venv/Scripts/python manage.py migrate
+.venv/Scripts/python manage.py seed_payroll            # config only
+.venv/Scripts/python manage.py seed_payroll --demo     # + demo users &amp; employees (prints logins)
+.venv/Scripts/python manage.py runserver 8000</code></pre>
+<p>Demo logins (<code>*.@demo.4at</code>, password printed by the seed command): <code>payroll.admin</code>, <code>finance.reviewer</code>, <code>payroll.approver</code>, <code>auditor</code>, <code>hr.admin</code>, and employees as <code>&lt;first&gt;.&lt;last&gt;@demo.4at</code> (e.g. <code>nikhil.kommineni@demo.4at</code>). Demo data only — never use on production.</p>
+<h3 id="frontend">Frontend</h3>
+<p><code>frontend/.env.local</code>: <code>BACKEND_API_URL=http://localhost:8000/api/v1</code>, <code>MOCK_AUTH=false</code>.</p>
+<pre class="code"><code>npm --prefix frontend run dev    # http://localhost:3001 (port per launch config)</code></pre>
+<h3 id="tests-quality-gates">Tests &amp; quality gates</h3>
+<pre class="code"><code>cd backend
+export POSTGRES_PORT=5433 POSTGRES_HOST=localhost POSTGRES_USER=hrms POSTGRES_PASSWORD=x POSTGRES_DB=hrms
+.venv/Scripts/python -m pytest -q -p no:cacheprovider --ds=config.settings.test core accounts employees audit example_leave approvals notifications documents attendance leave org_calendar payroll
+.venv/Scripts/python -m ruff check payroll &amp;&amp; .venv/Scripts/python -m black --check payroll
+.venv/Scripts/python manage.py verify_payroll          # RBAC conformance
+cd ../frontend &amp;&amp; npx tsc --noEmit &amp;&amp; npm run build</code></pre>
+<div class="table"><table><thead><tr><th>Test file</th><th>Covers</th></tr></thead><tbody><tr><td><code>payroll/tests/test_engine.py</code></td><td>Formula safety, breakup/balancing, proration bases, LOP, mid-period revision, statutory, rounding, parallel-payroll reconciliation (UAT-016)</td></tr><tr><td><code>payroll/tests/test_payroll_flow.py</code></td><td>UAT-001/002/003/004/007/010/011/012/013/014/015 through the real API as each role</td></tr><tr><td><code>payroll/tests/test_rbac_matrix.py</code></td><td>Every endpoint × role allow/deny matrix</td></tr><tr><td><code>payroll/tests/test_integrations.py</code></td><td>Attendance source (hand-calculated month), inbox approvals both ways, approver routing, consistency when payroll refuses an inbox decision</td></tr><tr><td><code>payroll/tests/test_conformance.py</code></td><td>Core scoped-endpoint conformance kit</td></tr><tr><td><code>documents/tests/test_documents.py</code></td><td>Includes the self-scope payslip-document regression test</td></tr></tbody></table></div>
+<h3 id="uat-status-jira-backlog-v1-0">UAT status (Jira Backlog v1.0)</h3>
+<div class="table"><table><thead><tr><th>UAT</th><th>Story</th><th>Status</th></tr></thead><tbody><tr><td>001 Create fixed earning component</td><td>PAY-001</td><td>✅ automated + manual UI</td></tr><tr><td>002 Invalid total/formula blocked</td><td>PAY-002</td><td>✅ automated + manual UI</td></tr><tr><td>003 Assign structure</td><td>PAY-004</td><td>✅ automated + manual UI</td></tr><tr><td>004 Approve revision (history kept)</td><td>PAY-005</td><td>✅ automated + manual UI (12L → 13.8L, v1 closed 30 Sep)</td></tr><tr><td>005 Attendance not finalized</td><td>PAY-007</td><td>✅ automated (pending ≠ LOP, warning raised)</td></tr><tr><td>006 Mid-month joiner proration</td><td>PAY-009</td><td>✅ automated</td></tr><tr><td>007 Duplicate bonus import</td><td>PAY-010</td><td>✅ automated</td></tr><tr><td>008 Full-month payroll reconciles</td><td>PAY-011</td><td>✅ automated</td></tr><tr><td>009 Calculation trace</td><td>PAY-012</td><td>✅ automated + manual UI</td></tr><tr><td>010 Missing structure blocks</td><td>PAY-013</td><td>✅ automated</td></tr><tr><td>011 Net pay variance flagged</td><td>PAY-014</td><td>✅ automated</td></tr><tr><td>012 Finance rejects</td><td>PAY-016</td><td>✅ automated + manual UI</td></tr><tr><td>013 Finalize locks</td><td>PAY-017</td><td>✅ automated + manual UI (409 <code>PAY_PERIOD_LOCKED</code>)</td></tr><tr><td>014 Reopen (privileged, reason)</td><td>PAY-017</td><td>✅ automated + manual UI</td></tr><tr><td>015 Employee sees only own payslip</td><td>PAY-018</td><td>✅ automated + manual (28 cross-employee probes → 403)</td></tr><tr><td>016 Parallel payroll reconciliation</td><td>PAY-021</td><td>✅ engine reconciliation test; real parallel run pending (needs trusted payroll data)</td></tr></tbody></table></div>
+<hr/>
+<h2 id="13-troubleshooting">13. Troubleshooting</h2>
+<div class="table"><table><thead><tr><th>Symptom</th><th>Likely cause / fix</th></tr></thead><tbody><tr><td>Backend can't connect to DB</td><td>Postgres not started (see §12) or <code>backend/.env</code> points to the wrong port.</td></tr><tr><td>Logged in as payroll staff but no Payroll menu / employee view</td><td>User's role lacks the staff permissions, or the user has no <code>Employee</code> record → empty scope. <code>seed_payroll --demo</code> always creates one.</td></tr><tr><td><code>404</code> from attendance/leave/calendar APIs via Next</td><td>Those routers have no trailing slash — the proxy route must use <code>{ trailingSlash: false }</code>.</td></tr><tr><td>Attendance rows stuck <code>pending</code></td><td>Working days with no attendance record. Mark attendance, sync, or use <em>fill-missing</em>; payroll never assumes absence.</td></tr><tr><td><code>409 PAY_PERIOD_LOCKED</code></td><td>Period finalized. Reopen (HR Admin, reason) to change anything.</td></tr><tr><td><code>409 PAY_VERSION_CONFLICT</code></td><td>Someone else saved first — reload and retry.</td></tr><tr><td>Submit fails with <code>PAY_BLOCKING_VALIDATION</code></td><td>Fix errors; acknowledge each warning (e.g. statutory rules not compliance-reviewed).</td></tr><tr><td>Wrong person gets the approval</td><td>Set named Finance Reviewer / Final Approver on the pay group.</td></tr><tr><td>Inbox approval shows an error "Payroll: …"</td><td>Payroll refused the decision (permission / maker-checker / state); the inbox item is back to pending.</td></tr><tr><td>Payslip not visible to employee</td><td>Not released yet, or superseded by a reopen — release the current run's payslips.</td></tr><tr><td><code>test_today_with_no_record_is_not_marked</code> fails</td><td>Date-dependent attendance test (fails on weekends); not payroll-related.</td></tr></tbody></table></div>
+<hr/>
+<h2 id="14-design-decisions-why">14. Design decisions (why)</h2>
+<ul><li><strong>Pure engine + service layer</strong> — determinism, reproducibility and DB-free unit tests; views stay thin so rules can't be bypassed by a new endpoint.</li><li><strong>Decimal only, round at the configured point</strong> — avoids paisa drift; matches Calc Rules §9.</li><li><strong>Immutable versions, append-only runs, supersede-not-overwrite outputs</strong> — every historical payslip can be re-explained exactly (audit/compliance).</li><li><strong>Separate permission per stage</strong> — maker-checker by construction; no single default role can prepare and approve.</li><li><strong>Mirror into the shared approvals inbox rather than replace it</strong> — payroll keeps its multi-stage rules; approvers still work from one inbox.</li><li><strong>Unmarked attendance ≠ absent</strong> — never silently cut pay; surface a warning instead.</li><li><strong>Statutory values as data</strong> — rates/slabs change by law and state; no code change needed.</li><li><strong>Copy, don't merge, other branches</strong> — keeps teammates' in-progress work untouched.</li><li><strong>Payslip PDF via print of a standalone document</strong> — no server PDF dependency; the same payload that the API already scope-checks is rendered, so there's no second data path to secure.</li></ul>
+<hr/>
+<h2 id="15-known-gaps-follow-ups">15. Known gaps / follow-ups</h2>
+<ul><li>Statutory rule values are seeded placeholders — must be compliance-reviewed before go-live.</li><li>Payroll keeps its own bank/PAN payment-info tables; migrate to <code>employees.BankDetails</code> / <code>IdentityDocument</code> from the organization branch when merged.</li><li>Timesheet OT is approximated from attendance overtime (no timesheet module yet).</li><li>Parallel payroll (UAT-016) needs a real month of trusted payroll data to reconcile against.</li><li>Shared Approvals page has no dedicated <em>Payroll</em> tab (items appear in the generic inbox).</li><li>One role per user: payroll-only roles (e.g. Finance Reviewer) lack employee self-service permissions such as attendance.</li><li>Server-side PDF (for emailing payslips) is not implemented; the download uses the browser's Save-as-PDF.</li></ul>
+</main>
+</div>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default', securityLevel: 'strict' });
+</script>
+</body>
+</html>

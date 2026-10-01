@@ -1,53 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyToBackend, clearAuthCookies, setAuthCookies } from '@/lib/api/proxy';
 
-function unauthorized() {
-  const resp = NextResponse.json(
-    { success: false, error: { message: 'Unauthorized' } },
-    { status: 401 }
-  );
-  clearAuthCookies(resp);
-  return resp;
-}
-
-/** The caller's own salary slips for the current year. */
+/** The caller's own released payslips, shaped for the My Finances page. */
 export async function GET(req: NextRequest) {
   try {
-    const profile = await proxyToBackend(req, '/ess/profile');
-
-    if (profile.sessionExpired || profile.status === 401) {
-      return unauthorized();
+    const { status, body, rotated, sessionExpired } = await proxyToBackend(req, '/payroll/my/payslips/');
+    if (sessionExpired || status === 401) {
+      const resp = NextResponse.json({ success: false, error: { message: 'Unauthorized' } }, { status: 401 });
+      clearAuthCookies(resp);
+      return resp;
     }
-    if (profile.status < 200 || profile.status >= 300 || !profile.body?.data?.id) {
-      return NextResponse.json(
-        profile.body ?? { success: false, error: { message: 'Failed to resolve employee profile' } },
-        { status: profile.status || 502 }
-      );
+    if (status < 200 || status >= 300 || !body?.success) {
+      return NextResponse.json(body ?? { success: false, error: { message: 'Failed to load payslips' } }, {
+        status: status || 502,
+      });
     }
-
-    const employeeId = profile.body.data.id;
-    const slips = await proxyToBackend(req, `/payroll/employee/${employeeId}/slips`);
-
-    if (slips.sessionExpired || slips.status === 401) {
-      return unauthorized();
-    }
-
-    const resp = NextResponse.json(
-      slips.body ?? { success: false, error: { message: 'Failed to load payslips' } },
-      { status: slips.status || 502 }
+    const slips = (body.data as any[]).map((slip) => ({
+      id: slip.id,
+      month: String(slip.period_label ? slip.released_at?.slice(0, 7) : ''),
+      periodLabel: slip.period_label,
+      grossAmount: 0,
+      totalDeductions: 0,
+      netAmount: Number(slip.net_pay),
+      status: slip.status === 'released' ? 'paid' : 'approved',
+    }));
+    // Month is the payroll period (YYYY-MM), not the release date.
+    const detailed = await Promise.all(
+      slips.map(async (slip) => {
+        const detail = await proxyToBackend(req, `/payroll/my/payslips/${slip.id}/`);
+        const payload = detail.body?.data?.payload;
+        if (payload) {
+          slip.month = String(payload.period?.start ?? '').slice(0, 7);
+          slip.grossAmount = Number(payload.gross);
+          slip.totalDeductions = Number(payload.total_deductions);
+        }
+        return slip;
+      }),
     );
-
-    const rotated = slips.rotated ?? profile.rotated;
-    if (rotated) {
-      setAuthCookies(resp, rotated.accessToken, rotated.refreshToken);
-    }
-
+    const resp = NextResponse.json({ success: true, data: detailed });
+    if (rotated) setAuthCookies(resp, rotated.accessToken, rotated.refreshToken);
     return resp;
   } catch (err) {
     console.error('[api/payroll/slips] failed:', err);
-    return NextResponse.json(
-      { success: false, error: { message: 'Failed to load payslips' } },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: { message: 'Failed to load payslips' } }, { status: 500 });
   }
 }

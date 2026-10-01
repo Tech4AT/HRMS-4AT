@@ -90,3 +90,8 @@ hrms_dump.sql
 # Confidential asset inventory (PII) — mounted at runtime like roster.xlsx, never committed
 docs/asset_laptops.csv
 docs/*.csv
+
+# PII rosters/imports can also land in backend/ during payroll work — never commit
+backend/*.csv
+backend/*.xlsx
+backend/roster_*

@@ -15,6 +15,7 @@ export interface User {
   role: string;
   permissions: string[];
   scope: ManagementScope;
+  is_superuser?: boolean;
   /** True when an admin issued a temporary password — the user must change
    * it before using the app (T06). Surfaced as `mustChangePassword` by the
    * backend login response and GET /users/me. */
