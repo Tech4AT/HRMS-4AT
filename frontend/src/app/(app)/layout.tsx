@@ -232,6 +232,7 @@ const navItems: NavItem[] = [
     children: [
       { label: 'Employee Directory', href: '/org?tab=directory' },
       { label: 'Organisation Chart', href: '/org?tab=chart' },
+      { label: 'Organisation Documents', href: '/org?tab=documents' },
     ],
   },
   // Assets: a standalone section for anyone who manages the inventory (IT / HR).
