@@ -26,6 +26,7 @@ export interface DirectoryEmployee {
   name: string;
   /** Department name, or "Unassigned" if the employee has none set. */
   department: string;
+  departmentId: string | null;
 }
 
 interface RawEmployee {
@@ -52,5 +53,10 @@ export async function getEmployeeDirectory(): Promise<DirectoryEmployee[]> {
     id: e.id,
     name: `${e.first_name} ${e.last_name}`.trim(),
     department: (e.department_id && departmentNames[e.department_id]) || 'Unassigned',
+    departmentId: e.department_id ?? null,
   }));
+}
+
+export async function getDepartments(): Promise<{ id: string; name: string }[]> {
+  return fetchJson<NamedEntity[]>('/api/departments');
 }

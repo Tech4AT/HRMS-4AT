@@ -16,8 +16,8 @@ from core.registry import PermissionSpec, register_permissions
 register_permissions(
     PermissionSpec(
         "calendar.manage",
-        "Manage the organisation-wide calendar (holidays, WFH days, events, "
-        "and the recurring WFH rule)",
+        "Manage calendars (their holidays, events, WFH days and weekly offs) "
+        "and who each calendar applies to",
         default_grants={"HR Admin": ScopeTier.ALL},
     ),
 )

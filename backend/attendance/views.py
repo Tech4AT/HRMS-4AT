@@ -28,7 +28,6 @@ from core.permissions import ScopedEmployeePermission
 from core.scope import resolve_employee_scope
 
 from . import conflicts
-from .comp_off import accrue_comp_off
 from .day_facts import get_day_facts_range
 from .day_view import build_day_view
 from .models import (
@@ -271,10 +270,6 @@ class AttendanceViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
             ]
         )
         write_audit(request.user, "AttendanceRecord.checked_out", "AttendanceRecord", record.pk)
-        # PLAN.md Step 7 — Comp Off accrual is evaluated right here, not by a
-        # scheduled job: overtime_minutes was just computed above, so there's
-        # nothing to gain from waiting for a periodic sweep to notice it.
-        accrue_comp_off(employee, record.overtime_minutes)
         return Response({"success": True, "data": AttendanceRecordSerializer(record).data})
 
 

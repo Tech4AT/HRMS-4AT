@@ -12,6 +12,17 @@ from notifications.service import notify
 from .models import Request, RequestStatus
 from .signals import request_decided
 
+# request_type -> fn(request, status, data). A module whose approval needs more
+# than yes/no (e.g. leave: which balance to credit) registers one to validate and
+# record the approver's extra input. It runs after the "already resolved" check
+# and before anything is persisted, so a ValidationError leaves the request
+# pending. `data` is whatever the approver sent alongside the decision (or {}).
+_decision_hooks = {}
+
+
+def register_decision_hook(request_type: str, hook) -> None:
+    _decision_hooks[request_type] = hook
+
 
 def _approver_for(requester_user):
     """The requester's manager's account, or None (→ unassigned, HR reassigns)."""
@@ -34,9 +45,12 @@ def create_request(requester_user, request_type: str, payload: dict, approver_us
     return request
 
 
-def _finalize(request: Request, actor, status: str, note: str) -> Request:
+def _finalize(request: Request, actor, status: str, note: str, data: dict | None = None) -> Request:
     if request.is_terminal:
         raise ValidationError("This request has already been resolved.")
+    hook = _decision_hooks.get(request.request_type)
+    if hook is not None:
+        hook(request, status, data or {})
     request.status = status
     request.decision_note = note or ""
     request.decided_by = actor
@@ -56,13 +70,15 @@ def _finalize(request: Request, actor, status: str, note: str) -> Request:
     return request
 
 
-def decide(request: Request, actor, status: str, note: str = "") -> Request:
+def decide(
+    request: Request, actor, status: str, note: str = "", data: dict | None = None
+) -> Request:
     """Approve or reject — only the named approver may, and only while pending."""
     if status not in (RequestStatus.APPROVED, RequestStatus.REJECTED):
         raise ValidationError("A decision must be approve or reject.")
     if request.approver_id != actor.pk:
         raise PermissionDenied("Only the assigned approver can decide this request.")
-    return _finalize(request, actor, status, note)
+    return _finalize(request, actor, status, note, data)
 
 
 def withdraw(request: Request, actor) -> Request:
@@ -83,8 +99,10 @@ def reassign(request: Request, new_approver) -> Request:
     return request
 
 
-def force_resolve(request: Request, actor, status: str, note: str = "") -> Request:
+def force_resolve(
+    request: Request, actor, status: str, note: str = "", data: dict | None = None
+) -> Request:
     """HR resolves directly, bypassing the approver — the escape hatch."""
     if status not in (RequestStatus.APPROVED, RequestStatus.REJECTED):
         raise ValidationError("A forced resolution must be approve or reject.")
-    return _finalize(request, actor, status, note or "Resolved by an administrator")
+    return _finalize(request, actor, status, note or "Resolved by an administrator", data)

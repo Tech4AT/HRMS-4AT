@@ -16,7 +16,9 @@ import {
   LeaveApiError,
   formatDays,
   formatDateRange,
+  formatDateList,
   statusLabel as leaveStatusLabel,
+  type CompOffRequest,
   type LeaveRequest,
   type LeaveType,
 } from '@/lib/api/leave';
@@ -104,6 +106,11 @@ interface ApprovalSectionProps {
   onSetApproving: (id: string | null) => void;
   onSetApproveRemarks: (v: string) => void;
   onDecide: (item: PendingItem, approve: boolean, note?: string) => void;
+  /** Extra input the approver must give when approving (e.g. which leave balance a
+   *  Comp Off is added to); rendered in the approve panel. */
+  approveExtra?: React.ReactNode;
+  /** Disables "Confirm approve" until that extra input is complete. */
+  approveBlocked?: boolean;
 }
 
 function ApprovalSection({
@@ -122,6 +129,8 @@ function ApprovalSection({
   onSetApproving,
   onSetApproveRemarks,
   onDecide,
+  approveExtra,
+  approveBlocked,
 }: ApprovalSectionProps) {
   const [view, setView] = useState<'pending' | 'history'>('pending');
 
@@ -189,7 +198,8 @@ function ApprovalSection({
                   </div>
 
                   {approvingId === item.approvalRequestId ? (
-                    <div className="flex items-center gap-2 mt-3">
+                    <div className="flex items-center gap-2 mt-3 flex-wrap">
+                      {approveExtra}
                       <input
                         type="text"
                         value={approveRemarks}
@@ -199,7 +209,7 @@ function ApprovalSection({
                       />
                       <button
                         onClick={() => onDecide(item, true, approveRemarks.trim() || undefined)}
-                        disabled={decidingId === item.approvalRequestId}
+                        disabled={decidingId === item.approvalRequestId || Boolean(approveBlocked)}
                         className="text-xs font-semibold px-3 py-2 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
                         Confirm approve
@@ -414,7 +424,7 @@ function PenalisationSection({
 
 /* ============================== page ============================== */
 
-type ApprovalTabId = 'wfh' | 'regularisation' | 'leave' | 'penalisation';
+type ApprovalTabId = 'wfh' | 'regularisation' | 'leave' | 'comp_off' | 'penalisation';
 
 export default function ApprovalsPage() {
   const router = useRouter();
@@ -438,6 +448,7 @@ export default function ApprovalsPage() {
       ? [{ id: 'regularisation', label: 'Regularisation', href: '/approvals?tab=regularisation' }]
       : []),
     ...(canApproveLeave ? [{ id: 'leave', label: 'Leave', href: '/approvals?tab=leave' }] : []),
+    ...(canApproveLeave ? [{ id: 'comp_off', label: 'Comp Off', href: '/approvals?tab=comp_off' }] : []),
     ...(canManagePenalisations
       ? [{ id: 'penalisation', label: 'Penalisation', href: '/approvals?tab=penalisation' }]
       : []),
@@ -448,6 +459,8 @@ export default function ApprovalsPage() {
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
   const [leavePending, setLeavePending] = useState<LeaveRequest[]>([]);
   const [leaveHistory, setLeaveHistory] = useState<LeaveRequest[]>([]);
+  const [compOffPending, setCompOffPending] = useState<CompOffRequest[]>([]);
+  const [compOffHistory, setCompOffHistory] = useState<CompOffRequest[]>([]);
   const [wfhPending, setWfhPending] = useState<AttendanceRequest[]>([]);
   const [wfhHistory, setWfhHistory] = useState<AttendanceRequest[]>([]);
   const [regPending, setRegPending] = useState<AttendanceRequest[]>([]);
@@ -463,6 +476,8 @@ export default function ApprovalsPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveRemarks, setApproveRemarks] = useState('');
+  // Comp Off: the leave balance the approver credits (chosen per approval).
+  const [compOffLeaveTypeId, setCompOffLeaveTypeId] = useState('');
 
   // Real backend since PLAN.md Step 8.
   const [penalisations, setPenalisations] = useState<PenalisationRecord[]>([]);
@@ -470,9 +485,18 @@ export default function ApprovalsPage() {
   const refresh = useCallback(async () => {
     const tasks: Promise<unknown>[] = [];
     if (canApproveLeave) {
-      tasks.push(leaveApi.getTypes().then(setLeaveTypes));
+      tasks.push(
+        leaveApi.getTypes().then((types) => {
+          setLeaveTypes(types);
+          // Pre-select the compensatory-offs type if there is one; the approver can change it.
+          const comp = types.find((t) => t.status === 'active' && t.category === 'Compensatory offs');
+          setCompOffLeaveTypeId((current) => current || comp?.id || '');
+        }),
+      );
       tasks.push(leaveApi.getPendingApprovals().then(setLeavePending));
       tasks.push(leaveApi.getApprovalHistory().then(setLeaveHistory));
+      tasks.push(leaveApi.getCompOffPendingApprovals().then(setCompOffPending));
+      tasks.push(leaveApi.getCompOffApprovalHistory().then(setCompOffHistory));
     }
     if (canApproveAttendance) {
       tasks.push(
@@ -530,7 +554,7 @@ export default function ApprovalsPage() {
   // through the approvals.manage escape hatch (resolve) instead, which is
   // exactly what it's for. Whoever the item is actually routed to still
   // decides through the normal path.
-  const decide = async (item: PendingItem, approve: boolean, note?: string) => {
+  const decide = async (item: PendingItem, approve: boolean, note?: string, data?: Record<string, unknown>) => {
     const { approvalRequestId, approverId } = item;
     const isAssignedApprover = !!user && approverId === user.id;
     setDecidingId(approvalRequestId);
@@ -538,10 +562,10 @@ export default function ApprovalsPage() {
     setActionMessage(null);
     try {
       if (isAssignedApprover) {
-        if (approve) await requestsApi.approve(approvalRequestId, note);
+        if (approve) await requestsApi.approve(approvalRequestId, note, data);
         else await requestsApi.reject(approvalRequestId, note);
       } else {
-        await requestsApi.resolve(approvalRequestId, approve ? 'approved' : 'rejected', note);
+        await requestsApi.resolve(approvalRequestId, approve ? 'approved' : 'rejected', note, data);
       }
       setActionMessage(approve ? 'Request approved.' : 'Request rejected.');
       clearDecisionState();
@@ -633,6 +657,63 @@ export default function ApprovalsPage() {
                 onSetApproving={setApprovingId}
                 onSetApproveRemarks={setApproveRemarks}
                 onDecide={decide}
+              />
+            ) : null}
+
+            {activeTab === 'comp_off' && canApproveLeave ? (
+              <ApprovalSection
+                title="Comp Off Requests"
+                emptyPendingLabel="No Comp Off requests awaiting your approval."
+                emptyHistoryLabel="No decided Comp Off requests yet."
+                pending={compOffPending
+                  .filter((r) => r.approval_request_id)
+                  .map((r) => ({
+                    approvalRequestId: r.approval_request_id!,
+                    approverId: r.approver_id ?? null,
+                    heading: `${r.employee_name || 'Employee'} — Comp Off`,
+                    detail: `${formatDays(r.days)} day(s) → ${r.leave_type_name ?? 'Comp Off'} · Worked ${formatDateList(r.worked_dates)}${r.reason ? ` · ${r.reason}` : ''}`,
+                  }))}
+                history={compOffHistory.map((r) => ({
+                  id: r.id,
+                  heading: `${r.employee_name || 'Employee'} — Comp Off`,
+                  detail: `${formatDays(r.days)} day(s)${r.leave_type_name ? ` → ${r.leave_type_name}` : ''} · Worked ${formatDateList(r.worked_dates)}${
+                    r.status === 'rejected' && r.rejection_reason ? ` · ${r.rejection_reason}` : ''
+                  }`,
+                  status: r.status,
+                  statusLabel: leaveStatusLabel(r.status),
+                  approverName: r.decided_by_name ?? r.approver_name,
+                  approverRemarks: r.approver_remarks,
+                }))}
+                decidingId={decidingId}
+                rejectingId={rejectingId}
+                rejectReason={rejectReason}
+                onSetRejecting={setRejectingId}
+                onSetRejectReason={setRejectReason}
+                approvingId={approvingId}
+                approveRemarks={approveRemarks}
+                onSetApproving={setApprovingId}
+                onSetApproveRemarks={setApproveRemarks}
+                onDecide={(item, approve, note) =>
+                  decide(item, approve, note, approve ? { leave_type_id: compOffLeaveTypeId } : undefined)
+                }
+                approveBlocked={!compOffLeaveTypeId}
+                approveExtra={
+                  <select
+                    value={compOffLeaveTypeId}
+                    onChange={(e) => setCompOffLeaveTypeId(e.target.value)}
+                    aria-label="Leave balance to credit"
+                    className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
+                  >
+                    <option value="">Add to balance…</option>
+                    {leaveTypes
+                      .filter((t) => t.status === 'active')
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                  </select>
+                }
               />
             ) : null}
 

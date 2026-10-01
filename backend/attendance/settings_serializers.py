@@ -55,11 +55,6 @@ class RuleConfigSerializer(serializers.Serializer):
     )
 
 
-class CompOffAccrualSerializer(serializers.Serializer):
-    enabled = serializers.BooleanField()
-    overtime_hours_per_comp_off = serializers.DecimalField(max_digits=5, decimal_places=1)
-
-
 class PolicySettingsSerializer(serializers.Serializer):
     """Plain Serializer, not ModelSerializer — the frontend's shape is nested
     (`noAttendance: {enabled, leaveDaysDeducted}`) but the model is flat
@@ -78,21 +73,10 @@ class PolicySettingsSerializer(serializers.Serializer):
         pk_field=serializers.CharField(),
         allow_null=True,
     )
-    # Symmetric with penalty_leave_type_id, opposite direction: the leave
-    # type a credited Comp Off actually lands in (`comp_off.py`). Null means
-    # "not configured yet" — the accrual tally still runs, but nothing is
-    # ever credited until HR sets one.
-    comp_off_leave_type_id = serializers.PrimaryKeyRelatedField(
-        source="comp_off_leave_type",
-        queryset=LeaveType.objects.filter(status=LeaveTypeStatus.ACTIVE),
-        pk_field=serializers.CharField(),
-        allow_null=True,
-    )
     no_attendance = RuleConfigSerializer()
     late_arrival = RuleConfigSerializer()
     early_leaving = RuleConfigSerializer()
     work_hours = RuleConfigSerializer()
-    comp_off_accrual = CompOffAccrualSerializer()
 
     def to_representation(self, instance: PolicySettings) -> dict:
         # Routed through the declared nested serializers' own
@@ -106,9 +90,6 @@ class PolicySettingsSerializer(serializers.Serializer):
             "absconding_threshold_days": instance.absconding_threshold_days,
             "penalty_leave_type_id": (
                 str(instance.penalty_leave_type_id) if instance.penalty_leave_type_id else None
-            ),
-            "comp_off_leave_type_id": (
-                str(instance.comp_off_leave_type_id) if instance.comp_off_leave_type_id else None
             ),
             "no_attendance": RuleConfigSerializer(
                 {
@@ -137,21 +118,12 @@ class PolicySettingsSerializer(serializers.Serializer):
                     "min_work_hours": instance.work_hours_min_work_hours,
                 }
             ).data,
-            "comp_off_accrual": CompOffAccrualSerializer(
-                {
-                    "enabled": instance.comp_off_accrual_enabled,
-                    "overtime_hours_per_comp_off": (
-                        instance.comp_off_accrual_overtime_hours_per_comp_off
-                    ),
-                }
-            ).data,
         }
 
     def update(self, instance: PolicySettings, validated_data: dict) -> PolicySettings:
         instance.regularisation_grace_days = validated_data["regularisation_grace_days"]
         instance.absconding_threshold_days = validated_data["absconding_threshold_days"]
         instance.penalty_leave_type = validated_data["penalty_leave_type"]
-        instance.comp_off_leave_type = validated_data["comp_off_leave_type"]
 
         na = validated_data["no_attendance"]
         instance.no_attendance_enabled = na["enabled"]
@@ -174,10 +146,6 @@ class PolicySettingsSerializer(serializers.Serializer):
         instance.work_hours_leave_days_deducted = wh["leave_days_deducted"]
         if wh.get("min_work_hours") is not None:
             instance.work_hours_min_work_hours = wh["min_work_hours"]
-
-        coa = validated_data["comp_off_accrual"]
-        instance.comp_off_accrual_enabled = coa["enabled"]
-        instance.comp_off_accrual_overtime_hours_per_comp_off = coa["overtime_hours_per_comp_off"]
 
         instance.save()
         return instance

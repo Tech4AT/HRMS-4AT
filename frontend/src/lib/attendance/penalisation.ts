@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { policySettingsApi } from '@/lib/api/policySettings';
 
 /** Policy Settings — what governs Penalisation (grace period, absconding
- *  threshold, per-violation rules, Comp Off accrual). Real backend since
+ *  threshold, per-violation rules). Real backend since
  *  PLAN.md Step 6/11. The `PenalisationRecord` data itself (auto-applied,
  *  HR-overturnable) is real too as of Step 8 — see `lib/api/penalisation.ts`,
  *  not this file. */
@@ -21,14 +21,6 @@ export interface PenalisationRuleConfig {
   minWorkHours?: number;
 }
 
-/** The reward counterpart to the penalty rules above - accrues a Comp Off
- *  (see the "Comp Offs" leave type in Leave Settings) once an employee's
- *  overtime hours cross a threshold, instead of deducting anything. */
-export interface CompOffAccrualConfig {
-  enabled: boolean;
-  overtimeHoursPerCompOff: number;
-}
-
 export interface PenalizationSettings {
   /** Days an employee has, after an unexplained absence, to submit a
    *  regularisation request before a penalisation is raised against them. */
@@ -41,37 +33,21 @@ export interface PenalizationSettings {
    *  which case a Penalisation still gets created but consumes no leave
    *  (`attendance/penalisation.py`'s `_deduct_leave`). */
   penaltyLeaveTypeId: string | null;
-  /** The leave type a credited Comp Off actually lands in, symmetric with
-   *  `penaltyLeaveTypeId` above (opposite direction). Null until HR
-   *  configures one, in which case overtime still accrues toward a credit
-   *  but nothing is ever applied (`attendance/comp_off.py`'s
-   *  `accrue_comp_off`). */
-  compOffLeaveTypeId: string | null;
   noAttendance: PenalisationRuleConfig;
   lateArrival: PenalisationRuleConfig;
   earlyLeaving: PenalisationRuleConfig;
   workHours: PenalisationRuleConfig;
-  compOffAccrual: CompOffAccrualConfig;
 }
 
 export const DEFAULT_PENALIZATION_SETTINGS: PenalizationSettings = {
   regularisationGraceDays: 3,
   abscondingThresholdDays: 5,
   penaltyLeaveTypeId: null,
-  compOffLeaveTypeId: null,
   noAttendance: { enabled: true, leaveDaysDeducted: 1 },
   lateArrival: { enabled: false, leaveDaysDeducted: 0.5, thresholdCount: 3 },
   earlyLeaving: { enabled: false, leaveDaysDeducted: 0.5, thresholdCount: 3 },
   workHours: { enabled: false, leaveDaysDeducted: 0.5, minWorkHours: 8 },
-  compOffAccrual: { enabled: true, overtimeHoursPerCompOff: 8 },
 };
-
-/** "1 Comp Off earned for every 8 overtime hour(s)." / "No Comp Offs earned
- *  from overtime." */
-export function compOffAccrualSentence(rule: CompOffAccrualConfig): string {
-  if (!rule.enabled) return 'No Comp Offs earned from overtime.';
-  return `1 Comp Off earned for every ${rule.overtimeHoursPerCompOff} overtime hour(s).`;
-}
 
 function fmtDays(n: number): string {
   return `${n} day${n === 1 ? '' : 's'}`;

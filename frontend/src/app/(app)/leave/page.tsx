@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
+import { CompOffRequestsCard } from '@/components/leave/CompOffRequestsCard';
+import { RequestCompOffModal } from '@/components/leave/RequestCompOffModal';
 import { penalisationApi, type PenalisationRecord, type PenalisationStatus } from '@/lib/api/penalisation';
 import {
   leaveApi,
@@ -11,6 +13,7 @@ import {
   formatDateShort,
   formatDateRange,
   statusLabel,
+  type CompOffRequest,
   type HalfDayOption,
   type LeaveBalanceItem,
   type LeaveRequest,
@@ -146,6 +149,9 @@ export default function LeaveManagementPage() {
   const [types, setTypes] = useState<LeaveType[]>([]);
   const [balances, setBalances] = useState<LeaveBalanceItem[]>([]);
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
+  const [compOffRequests, setCompOffRequests] = useState<CompOffRequest[]>([]);
+  const [compOffOpen, setCompOffOpen] = useState(false);
+  const [cancellingCompOffId, setCancellingCompOffId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -177,16 +183,18 @@ export default function LeaveManagementPage() {
   const [myPenalisations, setMyPenalisations] = useState<PenalisationRecord[]>([]);
 
   const refresh = useCallback(async () => {
-    const [t, b, r, p] = await Promise.all([
+    const [t, b, r, p, c] = await Promise.all([
       leaveApi.getTypes(),
       leaveApi.getBalance(),
       leaveApi.getRequests(),
       penalisationApi.getMine(),
+      leaveApi.getCompOffRequests(),
     ]);
     setTypes(t);
     setBalances(b);
     setRequests(r);
     setMyPenalisations(p);
+    setCompOffRequests(c);
   }, []);
 
   useEffect(() => {
@@ -316,6 +324,21 @@ export default function LeaveManagementPage() {
     }
   };
 
+  const handleCancelCompOff = async (id: string) => {
+    setCancellingCompOffId(id);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await leaveApi.cancelCompOffRequest(id);
+      setActionMessage('Comp Off request cancelled.');
+      await refresh();
+    } catch (e) {
+      setActionError(e instanceof LeaveApiError ? e.message : 'Could not cancel this request');
+    } finally {
+      setCancellingCompOffId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 font-['Inter']">
@@ -403,10 +426,22 @@ export default function LeaveManagementPage() {
             >
               Request Leave
             </button>
+            <button
+              onClick={() => setCompOffOpen(true)}
+              className="w-full px-4 py-2.5 bg-white text-blue-600 text-sm font-semibold rounded-lg border border-blue-600 hover:bg-blue-50 transition-colors"
+            >
+              Request Comp Off
+            </button>
             {actionMessage ? <p className="text-xs font-medium text-emerald-600">{actionMessage}</p> : null}
             {actionError ? <p className="text-xs font-medium text-red-600">{actionError}</p> : null}
           </div>
         </div>
+
+        <CompOffRequestsCard
+          requests={compOffRequests}
+          cancellingId={cancellingCompOffId}
+          onCancel={handleCancelCompOff}
+        />
 
         {/* Penalisations */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
@@ -565,6 +600,18 @@ export default function LeaveManagementPage() {
             </table>
           </div>
         </div>
+
+        {compOffOpen ? (
+          <RequestCompOffModal
+            onClose={() => setCompOffOpen(false)}
+            onSubmitted={async (days) => {
+              setCompOffOpen(false);
+              setActionError(null);
+              setActionMessage(`Comp Off requested for ${formatDays(days)} day(s) — Pending approval.`);
+              await refresh();
+            }}
+          />
+        ) : null}
 
         {/* Request Leave Modal */}
         {isModalOpen ? (

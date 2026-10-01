@@ -18,12 +18,10 @@ _FULL_PAYLOAD = {
     "regularisationGraceDays": 5,
     "abscondingThresholdDays": 7,
     "penaltyLeaveTypeId": None,
-    "compOffLeaveTypeId": None,
     "noAttendance": {"enabled": True, "leaveDaysDeducted": 1},
     "lateArrival": {"enabled": True, "leaveDaysDeducted": 0.5, "thresholdCount": 4},
     "earlyLeaving": {"enabled": False, "leaveDaysDeducted": 0.5, "thresholdCount": 3},
     "workHours": {"enabled": False, "leaveDaysDeducted": 0.5, "minWorkHours": 8},
-    "compOffAccrual": {"enabled": True, "overtimeHoursPerCompOff": 6},
 }
 
 
@@ -61,7 +59,6 @@ def test_get_lazily_creates_the_singleton_with_defaults():
     data = response.json()["data"]
     assert data["regularisationGraceDays"] == 3
     assert data["penaltyLeaveTypeId"] is None
-    assert data["compOffLeaveTypeId"] is None
     # noAttendance shares RuleConfigSerializer with the other three rules, so
     # thresholdCount/minWorkHours are always present, null when a rule
     # (like this one) doesn't use them — matches the frontend's own single
@@ -72,7 +69,7 @@ def test_get_lazily_creates_the_singleton_with_defaults():
         "thresholdCount": None,
         "minWorkHours": None,
     }
-    assert data["compOffAccrual"] == {"enabled": True, "overtimeHoursPerCompOff": "8.0"}
+    assert "compOffAccrual" not in data  # accrual was replaced by Comp Off requests
     assert PolicySettings.objects.count() == 1
 
 
@@ -91,7 +88,6 @@ def test_put_replaces_the_whole_settings_object():
         "thresholdCount": 4,
         "minWorkHours": None,
     }
-    assert data["compOffAccrual"] == {"enabled": True, "overtimeHoursPerCompOff": "6.0"}
     assert PolicySettings.objects.count() == 1  # still the one row
     assert AuditLog.objects.filter(action="PolicySettings.updated").exists()
 
@@ -128,36 +124,6 @@ def test_put_rejects_an_unknown_leave_type_id():
 def test_put_missing_penalty_leave_type_id_is_rejected():
     client, _ = _hr_client()
     payload = {k: v for k, v in _FULL_PAYLOAD.items() if k != "penaltyLeaveTypeId"}
-
-    response = client.put(URL, payload, format="json")
-
-    assert response.status_code == 400
-
-
-def test_put_sets_the_comp_off_leave_type():
-    leave_type = LeaveType.objects.create(name="Comp Offs", annual_allocation=Decimal("0"))
-    client, _ = _hr_client()
-    payload = {**_FULL_PAYLOAD, "compOffLeaveTypeId": str(leave_type.pk)}
-
-    response = client.put(URL, payload, format="json")
-
-    assert response.status_code == 200
-    assert response.json()["data"]["compOffLeaveTypeId"] == str(leave_type.pk)
-    assert PolicySettings.load().comp_off_leave_type_id == leave_type.pk
-
-
-def test_put_rejects_an_unknown_comp_off_leave_type_id():
-    client, _ = _hr_client()
-    payload = {**_FULL_PAYLOAD, "compOffLeaveTypeId": "999999"}
-
-    response = client.put(URL, payload, format="json")
-
-    assert response.status_code == 400
-
-
-def test_put_missing_comp_off_leave_type_id_is_rejected():
-    client, _ = _hr_client()
-    payload = {k: v for k, v in _FULL_PAYLOAD.items() if k != "compOffLeaveTypeId"}
 
     response = client.put(URL, payload, format="json")
 

@@ -5,6 +5,7 @@ from accounts.factories import UserFactory
 from accounts.models import Role
 from audit.models import AuditLog
 from employees.factories import EmployeeFactory
+from org_calendar.factories import make_calendar
 from org_calendar.models import RecurringWfhRule
 
 pytestmark = pytest.mark.django_db
@@ -39,10 +40,13 @@ def test_roles_without_calendar_manage_are_refused(role):
 def test_create_without_label_defaults_to_every_weekday():
     client, _ = _hr_client()
 
-    response = client.post(URL, {"weekday": 3}, format="json")
+    calendar = make_calendar()
+
+    response = client.post(URL, {"calendar_id": calendar.pk, "weekday": 3}, format="json")
 
     assert response.status_code == 201
     data = response.json()["data"]
+    assert data["calendar_id"] == str(calendar.pk)
     assert data["label"] == "Every Wednesday"
     assert data["active"] is True
     assert isinstance(data["id"], str)  # see test_calendar_entries.py's identical assertion
@@ -54,7 +58,11 @@ def test_create_without_label_defaults_to_every_weekday():
 def test_create_with_explicit_label():
     client, _ = _hr_client()
 
-    response = client.post(URL, {"weekday": 5, "label": "Half day Fridays"}, format="json")
+    response = client.post(
+        URL,
+        {"calendar_id": make_calendar().pk, "weekday": 5, "label": "Half day Fridays"},
+        format="json",
+    )
 
     assert response.status_code == 201
     assert response.json()["data"]["label"] == "Half day Fridays"
@@ -62,7 +70,9 @@ def test_create_with_explicit_label():
 
 def test_patch_toggles_active_only():
     client, _ = _hr_client()
-    rule = RecurringWfhRule.objects.create(weekday=2, label="Every Tuesday", active=True)
+    rule = RecurringWfhRule.objects.create(
+        calendar=make_calendar(), weekday=2, label="Every Tuesday", active=True
+    )
 
     response = client.patch(f"{URL}/{rule.pk}", {"active": False}, format="json")
 
@@ -78,7 +88,9 @@ def test_patch_toggles_active_only():
 
 def test_delete_returns_success_envelope_with_null_data():
     client, _ = _hr_client()
-    rule = RecurringWfhRule.objects.create(weekday=1, label="Every Monday")
+    rule = RecurringWfhRule.objects.create(
+        calendar=make_calendar(), weekday=1, label="Every Monday"
+    )
 
     response = client.delete(f"{URL}/{rule.pk}")
 
@@ -93,6 +105,35 @@ def test_delete_returns_success_envelope_with_null_data():
 def test_weekday_out_of_range_is_rejected():
     client, _ = _hr_client()
 
-    response = client.post(URL, {"weekday": 7}, format="json")
+    response = client.post(URL, {"calendar_id": make_calendar().pk, "weekday": 7}, format="json")
 
     assert response.status_code == 400
+
+
+def test_one_rule_per_weekday_per_calendar_but_other_calendars_may_repeat_it():
+    client, _ = _hr_client()
+    first, second = make_calendar(), make_calendar()
+
+    def post(calendar):
+        return client.post(URL, {"calendar_id": calendar.pk, "weekday": 3}, format="json")
+
+    assert post(first).status_code == 201
+    assert post(first).status_code == 400
+    assert post(second).status_code == 201
+
+
+def test_list_filters_by_calendar():
+    client, _ = _hr_client()
+    first, second = make_calendar(), make_calendar()
+    RecurringWfhRule.objects.create(calendar=first, weekday=1)
+    RecurringWfhRule.objects.create(calendar=second, weekday=2)
+
+    data = client.get(URL, {"calendar": second.pk}).json()["data"]
+
+    assert [r["weekday"] for r in data] == [2]
+
+
+def test_create_requires_a_calendar():
+    client, _ = _hr_client()
+
+    assert client.post(URL, {"weekday": 3}, format="json").status_code == 400

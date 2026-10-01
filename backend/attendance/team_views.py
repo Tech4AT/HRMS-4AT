@@ -231,9 +231,11 @@ class TeamSummaryView(APIView):
         members = list(
             team_group(me, group).select_related("user", "department").order_by("employee_code")
         )
-        detail_ids = manageable_employee_ids(request.user) if can_view_team_attendance(
-            request.user
-        ) else set()
+        detail_ids = (
+            manageable_employee_ids(request.user)
+            if can_view_team_attendance(request.user)
+            else set()
+        )
         detail_members = [m for m in members if m.pk in detail_ids]
         basic_members = [m for m in members if m.pk not in detail_ids]
 
@@ -248,9 +250,8 @@ class TeamSummaryView(APIView):
                 presence[row["employee_id"]] = presence_of(row)
 
         if basic_members:
-            # Organisation-wide facts (holiday / week off) plus today's clock-ins:
-            # nothing per-person about leave, so it cannot leak.
-            facts = get_day_facts(today)
+            # Each member's calendar facts (holiday / week off) plus today's
+            # clock-ins; leave is excluded so nothing about it can leak.
             records = {
                 r.employee_id: r
                 for r in AttendanceRecord.objects.filter(
@@ -259,7 +260,11 @@ class TeamSummaryView(APIView):
             }
             for member in basic_members:
                 view = build_day_view(
-                    today, records.get(member.pk), today=today, facts=facts, shift=None
+                    today,
+                    records.get(member.pk),
+                    today=today,
+                    facts=get_day_facts(today, employee=member, include_leave=False),
+                    shift=None,
                 )
                 presence[str(member.pk)] = presence_of(view)
 

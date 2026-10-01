@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import LeaveBalance, LeaveRequest, LeaveRequestStatus, LeaveType, LeaveTypeStatus
+from .models import (
+    CompOffRequest,
+    LeaveBalance,
+    LeaveRequest,
+    LeaveRequestStatus,
+    LeaveType,
+    LeaveTypeStatus,
+)
 
 
 def _display_name(employee) -> str:
@@ -195,3 +202,42 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
     def get_approver_remarks(self, obj):
         req = obj.approval_request
         return (req.decision_note or None) if req else None
+
+
+class CompOffRequestSerializer(LeaveRequestSerializer):
+    # The credited balance is chosen at approval, so these are null until then.
+    """Same shape as LeaveRequestSerializer (so the Approvals review UI can treat
+    both alike) with `worked_dates`/`days` in place of the leave date range."""
+
+    days = serializers.DecimalField(max_digits=5, decimal_places=1, read_only=True)
+
+    def get_leave_type_id(self, obj):
+        return str(obj.leave_type_id) if obj.leave_type_id else None
+
+    worked_dates = serializers.ListField(child=serializers.CharField(), read_only=True)
+
+    class Meta:
+        model = CompOffRequest
+        fields = [
+            "id",
+            "employee_id",
+            "employee_name",
+            "leave_type_id",
+            "leave_type_name",
+            "leave_type_code",
+            "worked_dates",
+            "days",
+            "reason",
+            "status",
+            "approval_request_id",
+            "approver_id",
+            "approver_name",
+            "decided_by_name",
+            "approved_at",
+            "rejection_reason",
+            "cancelled_at",
+            "approver_remarks",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields

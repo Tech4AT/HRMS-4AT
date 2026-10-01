@@ -6,6 +6,7 @@ from accounts.factories import UserFactory
 from accounts.models import Role
 from attendance.models import AttendanceRecord
 from employees.factories import EmployeeFactory
+from org_calendar.factories import make_calendar
 from org_calendar.models import CalendarEntry
 
 pytestmark = pytest.mark.django_db
@@ -21,6 +22,7 @@ BREAK_END = "/api/v1/attendance/break-end"
 def _client():
     user = UserFactory(role=Role.objects.get(name="Employee"))
     employee = EmployeeFactory(user=user)
+    make_calendar(employee)  # Saturday + Sunday off
     client = APIClient()
     client.force_authenticate(user=user)
     return client, employee
@@ -39,10 +41,11 @@ def test_today_with_no_record_is_not_marked():
 
 
 def test_today_reflects_a_holiday_and_keeps_events_independent():
-    client, _ = _client()
+    client, employee = _client()
     today = timezone.localdate().isoformat()
-    CalendarEntry.objects.create(type="holiday", date=today, name="Founders Day")
-    CalendarEntry.objects.create(type="event", date=today, name="Town Hall")
+    calendar = employee.calendars.get()
+    CalendarEntry.objects.create(calendar=calendar, type="holiday", date=today, name="Founders Day")
+    CalendarEntry.objects.create(calendar=calendar, type="event", date=today, name="Town Hall")
 
     response = client.get(TODAY_URL)
 
@@ -57,7 +60,9 @@ def test_today_reflects_a_holiday_and_keeps_events_independent():
 def test_holiday_status_does_not_hide_a_voluntary_clock_in():
     client, employee = _client()
     today = timezone.localdate().isoformat()
-    CalendarEntry.objects.create(type="holiday", date=today, name="Founders Day")
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date=today, name="Founders Day"
+    )
     client.post(CHECK_IN, {}, format="json")
 
     response = client.get(TODAY_URL)
@@ -96,7 +101,9 @@ def test_history_by_month():
 def test_summary_counts_weekends_holidays_and_present_days():
     client, employee = _client()
     # 2026-04-01 .. 2026-04-07: Wed..Tue. Weekend = Apr 4 (Sat), Apr 5 (Sun).
-    CalendarEntry.objects.create(type="holiday", date="2026-04-02", name="X")
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date="2026-04-02", name="X"
+    )
     AttendanceRecord.objects.create(
         employee=employee,
         attendance_date="2026-04-01",
@@ -153,8 +160,8 @@ def test_break_end_without_break_start_is_rejected():
 
 
 def test_history_query_count_does_not_scale_with_range_length(django_assert_max_num_queries):
-    """Regression test: get_day_facts_range() must fetch WeekOff/RecurringWfhRule/
-    CalendarEntry/LeaveRequest once for the whole range, not once per day — a
+    """Regression test: get_day_facts_range() must fetch the employee's calendars, WeekOff/
+    RecurringWfhRule/CalendarEntry and LeaveRequest once for the whole range, not once per day — a
     30-day history call used to issue 90+ queries before this was fixed
     (found during manual verification, reported as UI lag)."""
     client, _ = _client()

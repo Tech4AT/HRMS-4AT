@@ -11,13 +11,19 @@ every create/update instead of 404ing harmlessly - confirmed live, not
 theoretical. Scoped to this router only, not a project-wide APPEND_SLASH
 change in config/settings."""
 
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from org_calendar.views import CalendarEntryViewSet, RecurringWfhRuleViewSet, WeekOffViewSet
+from org_calendar.views import (
+    CalendarEntryViewSet,
+    CalendarViewSet,
+    MyEventsView,
+    RecurringWfhRuleViewSet,
+)
 
 router = DefaultRouter(trailing_slash=False)
 router.register("calendar/entries", CalendarEntryViewSet, basename="calendar-entry")
 router.register("calendar/recurring-wfh", RecurringWfhRuleViewSet, basename="recurring-wfh-rule")
-router.register("calendar/week-off", WeekOffViewSet, basename="week-off")
+router.register("calendar/calendars", CalendarViewSet, basename="calendar")
 
-urlpatterns = router.urls
+urlpatterns = [path("calendar/my-events", MyEventsView.as_view()), *router.urls]

@@ -1,20 +1,19 @@
-"""Org-wide calendar: holidays, special events, and WFH days (one-off dates or
-a recurring weekday rule). HR-admin-managed (calendar.manage); every
-employee's attendance view reads the same data, so a change here applies
-organisation-wide. Not employee-keyed - there is no `employee` FK here, so
-these are gated by the flat HasPermissionCode check (see views.py), not
-ScopedEmployeePermission.
+"""Calendars: holidays, special events, WFH days and weekly offs, each owned by
+one `Calendar`. Calendars are independent peers - there is no default or
+fallback calendar and no hierarchy between them. A calendar applies to the
+departments and/or individual employees listed on it, and an employee can be
+covered by any number of calendars; attendance/day_facts.py combines them
+additively (see org_calendar/resolution.py for the exact rules).
 
-Matches frontend/src/lib/api/calendar.ts's CalendarEntry/RecurringWfhRule
-contract field-for-field."""
+HR-admin-managed (calendar.manage). Not employee-keyed data, so these views use
+the flat HasPermissionCode check (see views.py), not ScopedEmployeePermission."""
 
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-# Matches WEEKDAY_NAMES in lib/api/calendar.ts - Sunday-first, not Python's
-# Monday-first date.weekday(). This is just a label lookup for the default
-# recurring-rule name; the stored `weekday` integer is never compared against
-# Python's own weekday() anywhere in this module.
+# Sunday-first, matching lib/api/calendar.ts - not Python's Monday-first
+# date.weekday(). A label lookup for the default recurring-rule name; the stored
+# `weekday` integer is converted at one point only (resolution.sunday_first).
 WEEKDAY_NAMES = (
     "Sunday",
     "Monday",
@@ -26,6 +25,23 @@ WEEKDAY_NAMES = (
 )
 
 
+class Calendar(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=300, blank=True)
+    departments = models.ManyToManyField(
+        "employees.Department", related_name="calendars", blank=True
+    )
+    employees = models.ManyToManyField("employees.Employee", related_name="calendars", blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
 class CalendarEntryType(models.TextChoices):
     HOLIDAY = "holiday", "Holiday"
     WFH = "wfh", "WFH"
@@ -33,10 +49,16 @@ class CalendarEntryType(models.TextChoices):
 
 
 class CalendarEntry(models.Model):
+    calendar = models.ForeignKey(Calendar, on_delete=models.CASCADE, related_name="entries")
     type = models.CharField(max_length=20, choices=CalendarEntryType.choices)
     date = models.DateField()
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True, default=None)
+    # Holiday flags (ignored for events/WFH). An optional holiday is one an
+    # employee may choose to take; it does not close the day. Special marks
+    # holidays that are called out (e.g. company-declared).
+    optional = models.BooleanField(default=False)
+    special = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,40 +70,43 @@ class CalendarEntry(models.Model):
 
 
 class WeekOff(models.Model):
-    """Which weekdays are org-wide non-working days — HR-admin-configurable
-    rather than a hardcoded Saturday/Sunday assumption, since not every
-    organisation's week-off pattern is the same. One row per weekday that's
-    ever been configured; `active` toggles it without losing the row (same
-    shape as RecurringWfhRule, for the same reason). A weekday with no row at
-    all is treated as a working day — see attendance/day_facts.py's consumer
-    side, which is the reason this model exists.
+    """A weekly off of one calendar: `weekday` is off every week when `weeks` is
+    empty, otherwise only on the listed occurrences within the month (1 = first
+    ... 5 = fifth), e.g. weekday=6, weeks=[2, 4] is the 2nd and 4th Saturday.
+    The row existing means the day is off; delete it to make it a working day. A
+    weekday with no row is a working day for that calendar."""
 
-    Deliberately simple: a single, org-wide, non-alternating weekly pattern.
-    A shift-based or team-specific week-off (e.g. alternate Saturdays) is out
-    of scope here — PLAN.md Step 6 (Shifts) is where a per-employee working
-    pattern would live, if one is ever needed."""
-
+    calendar = models.ForeignKey(Calendar, on_delete=models.CASCADE, related_name="week_offs")
     weekday = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(6)],
-        unique=True,
         help_text="0 = Sunday ... 6 = Saturday, matching WEEKDAY_NAMES.",
     )
-    active = models.BooleanField(default=True)
+    weeks = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Occurrences in the month that are off (1-5). Empty = every week.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["weekday"]
+        constraints = [
+            models.UniqueConstraint(fields=["calendar", "weekday"], name="uniq_weekoff_per_day")
+        ]
 
     def __str__(self):
-        return f"{WEEKDAY_NAMES[self.weekday]} ({'off' if self.active else 'working'})"
+        return f"{WEEKDAY_NAMES[self.weekday]} ({self.calendar_id})"
 
 
 class RecurringWfhRule(models.Model):
-    """A weekday-wide WFH rule, e.g. "every Wednesday". Independent of any
-    one-off CalendarEntry(type=wfh) - both are checked when deciding whether
-    a given date is a WFH day."""
+    """A weekday-wide WFH rule of one calendar, e.g. "every Wednesday".
+    Independent of any one-off CalendarEntry(type=wfh) - both are checked when
+    deciding whether a given date is a WFH day."""
 
+    calendar = models.ForeignKey(
+        Calendar, on_delete=models.CASCADE, related_name="recurring_wfh_rules"
+    )
     weekday = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(0), MaxValueValidator(6)],
         help_text="0 = Sunday ... 6 = Saturday, matching WEEKDAY_NAMES.",

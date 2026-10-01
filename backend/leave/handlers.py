@@ -9,7 +9,8 @@ from django.utils import timezone
 
 from approvals.signals import request_decided
 
-from .models import LeaveBalance, LeaveRequest, LeaveRequestStatus
+from .comp_off import credit_approved_request
+from .models import CompOffRequest, LeaveBalance, LeaveRequest, LeaveRequestStatus
 
 # approvals status -> our LeaveRequest.status
 _STATUS = {
@@ -60,3 +61,28 @@ def apply_leave_decision(sender, request, actor, status, **kwargs):
         if row.status == LeaveRequestStatus.APPROVED:
             balance.used += row.duration_days
         balance.save(update_fields=["pending", "used", "updated_at"])
+
+
+@receiver(request_decided)
+def apply_comp_off_decision(sender, request, actor, status, **kwargs):
+    """Marks the Comp Off request decided and, when approved, credits the days to
+    the employee's balance (leave/comp_off.py). Rejected/withdrawn change nothing
+    else - a Comp Off request never reserves anything while pending."""
+    if request.request_type != "comp_off":
+        return
+    try:
+        row_id = int((request.payload or {}).get("comp_off_request_id"))
+    except (TypeError, ValueError):
+        return
+    row = (
+        CompOffRequest.objects.select_related("employee__user", "leave_type")
+        .filter(pk=row_id)
+        .first()
+    )
+    if row is None:
+        return
+    row.status = _STATUS.get(status, row.status)
+    row.decided_at = timezone.now()
+    row.save(update_fields=["status", "decided_at", "updated_at"])
+    if row.status == LeaveRequestStatus.APPROVED:
+        credit_approved_request(row)

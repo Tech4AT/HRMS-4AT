@@ -119,10 +119,13 @@ export const requestsApi = {
     });
     return toApprovalRequest(raw);
   },
-  approve: async (id: string, note?: string): Promise<ApprovalRequest> => {
+  // `data` is extra input some request types need at approval time (a Comp Off
+  // needs `{ leave_type_id }`, the balance to credit); the backend refuses an
+  // approval that lacks what its type requires.
+  approve: async (id: string, note?: string, data?: Record<string, unknown>): Promise<ApprovalRequest> => {
     const raw = await request<RawRequest>(`/${id}/approve`, {
       method: 'POST',
-      body: JSON.stringify({ note: note ?? '' }),
+      body: JSON.stringify({ note: note ?? '', data: data ?? {} }),
     });
     return toApprovalRequest(raw);
   },
@@ -147,10 +150,11 @@ export const requestsApi = {
     id: string,
     status: 'approved' | 'rejected',
     note?: string,
+    data?: Record<string, unknown>,
   ): Promise<ApprovalRequest> => {
     const raw = await request<RawRequest>(`/${id}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ status, note: note ?? '' }),
+      body: JSON.stringify({ status, note: note ?? '', data: data ?? {} }),
     });
     return toApprovalRequest(raw);
   },

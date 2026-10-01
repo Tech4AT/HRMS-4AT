@@ -9,6 +9,7 @@ from attendance import conflicts
 from attendance.day_facts import get_day_facts
 from attendance.models import AttendanceRecord, AttendanceRequest
 from employees.factories import EmployeeFactory
+from org_calendar.factories import make_calendar
 from org_calendar.models import CalendarEntry, RecurringWfhRule
 
 pytestmark = pytest.mark.django_db
@@ -19,10 +20,16 @@ pytestmark = pytest.mark.django_db
 
 def test_holiday_and_event_coexist_as_independent_facts():
     # 2026-01-26 is a Monday.
-    CalendarEntry.objects.create(type="holiday", date="2026-01-26", name="Republic Day")
-    CalendarEntry.objects.create(type="event", date="2026-01-26", name="Town Hall")
+    employee = EmployeeFactory()
+    calendar = make_calendar(employee)
+    CalendarEntry.objects.create(
+        calendar=calendar, type="holiday", date="2026-01-26", name="Republic Day"
+    )
+    CalendarEntry.objects.create(
+        calendar=calendar, type="event", date="2026-01-26", name="Town Hall"
+    )
 
-    facts = get_day_facts_date("2026-01-26")
+    facts = get_day_facts_date("2026-01-26", employee)
 
     assert facts.is_holiday is True
     assert facts.holiday_name == "Republic Day"
@@ -32,40 +39,58 @@ def test_holiday_and_event_coexist_as_independent_facts():
 
 def test_recurring_wfh_rule_uses_sunday_first_weekday():
     # Wednesday, in org_calendar's Sunday-first indexing, is weekday=3.
-    RecurringWfhRule.objects.create(weekday=3, label="Every Wednesday")
+    employee = EmployeeFactory()
+    RecurringWfhRule.objects.create(
+        calendar=make_calendar(employee), weekday=3, label="Every Wednesday"
+    )
 
-    wednesday = get_day_facts_date("2026-01-28")  # a Wednesday
-    tuesday = get_day_facts_date("2026-01-27")  # a Tuesday
+    wednesday = get_day_facts_date("2026-01-28", employee)  # a Wednesday
+    tuesday = get_day_facts_date("2026-01-27", employee)  # a Tuesday
 
     assert wednesday.is_org_wfh_day is True
     assert wednesday.org_wfh_note == "Every Wednesday"
     assert tuesday.is_org_wfh_day is False
 
 
-def test_is_weekend_reflects_the_default_seeded_week_off():
-    saturday = get_day_facts_date("2026-01-31")
-    monday = get_day_facts_date("2026-01-26")
+def test_is_weekend_reflects_the_calendars_weekly_offs():
+    employee = EmployeeFactory()
+    make_calendar(employee)
+
+    saturday = get_day_facts_date("2026-01-31", employee)
+    monday = get_day_facts_date("2026-01-26", employee)
 
     assert saturday.is_weekend is True
     assert monday.is_weekend is False
 
 
-def test_is_weekend_is_hr_configurable_not_hardcoded():
-    """The whole point of WeekOff (org_calendar) existing: reconfiguring it
-    changes is_weekend, proving this isn't a hardcoded Sat/Sun check."""
-    from org_calendar.models import WeekOff
+def test_is_weekend_is_calendar_configurable_not_hardcoded():
+    """Reconfiguring a calendar's weekly offs changes is_weekend, proving this
+    isn't a hardcoded Sat/Sun check."""
+    employee = EmployeeFactory()
+    make_calendar(employee, week_offs=((5, []),))  # Friday only
 
-    WeekOff.objects.filter(weekday=6).update(active=False)  # Saturday no longer off
-    WeekOff.objects.create(weekday=5, active=True)  # Friday now off instead
-
-    friday = get_day_facts_date("2026-01-30")
-    saturday = get_day_facts_date("2026-01-31")
+    friday = get_day_facts_date("2026-01-30", employee)
+    saturday = get_day_facts_date("2026-01-31", employee)
 
     assert friday.is_weekend is True
     assert saturday.is_weekend is False
 
 
-def test_is_on_leave_only_populates_when_an_employee_is_given():
+def test_an_employee_with_no_calendar_has_no_calendar_facts():
+    employee = EmployeeFactory()
+    other = EmployeeFactory()
+    calendar = make_calendar(other)
+    CalendarEntry.objects.create(calendar=calendar, type="holiday", date="2026-01-31", name="X")
+
+    facts = get_day_facts_date("2026-01-31", employee)  # a Saturday and a holiday for `other`
+
+    assert facts.is_weekend is False
+    assert facts.is_holiday is False
+    assert facts.events == []
+    assert facts.is_org_wfh_day is False
+
+
+def test_leave_is_left_out_when_include_leave_is_false():
     from datetime import date
     from decimal import Decimal
 
@@ -83,30 +108,38 @@ def test_is_on_leave_only_populates_when_an_employee_is_given():
         status=LeaveRequestStatus.APPROVED,
     )
 
-    with_employee = get_day_facts(date(2026, 4, 1), employee=employee)
-    without_employee = get_day_facts(date(2026, 4, 1))
+    with_leave = get_day_facts(date(2026, 4, 1), employee=employee)
+    without_leave = get_day_facts(date(2026, 4, 1), employee=employee, include_leave=False)
 
-    assert with_employee.is_on_leave is True
-    assert with_employee.leave_type_name == "Casual Leave"
-    assert without_employee.is_on_leave is False
+    assert with_leave.is_on_leave is True
+    assert with_leave.leave_type_name == "Casual Leave"
+    assert without_leave.is_on_leave is False
 
 
-def get_day_facts_date(iso: str):
+def get_day_facts_date(iso: str, employee):
     from datetime import date
 
-    return get_day_facts(date.fromisoformat(iso))
+    return get_day_facts(date.fromisoformat(iso), employee=employee)
 
 
 # ------------------------------- conflicts ------------------------------------
 
 
 def _employee():
-    return EmployeeFactory()
+    employee = EmployeeFactory()
+    make_calendar(employee)  # Saturday + Sunday off
+    return employee
+
+
+def _holiday(employee, iso):
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date=iso, name="X"
+    )
 
 
 def test_wfh_blocked_on_a_holiday():
-    CalendarEntry.objects.create(type="holiday", date="2026-02-10", name="X")
     employee = _employee()
+    _holiday(employee, "2026-02-10")
 
     with pytest.raises(ValidationError):
         conflicts.validate_wfh_request(employee, _d("2026-02-10"), _d("2026-02-10"))
@@ -119,16 +152,18 @@ def test_wfh_blocked_on_a_weekend():
         conflicts.validate_wfh_request(employee, _d("2026-01-31"), _d("2026-01-31"))  # Saturday
 
 
-def test_wfh_allowed_on_an_org_wide_wfh_day():
-    RecurringWfhRule.objects.create(weekday=3, label="Every Wednesday")
+def test_wfh_allowed_on_a_calendar_wfh_day():
     employee = _employee()
+    RecurringWfhRule.objects.create(
+        calendar=employee.calendars.get(), weekday=3, label="Every Wednesday"
+    )
 
     conflicts.validate_wfh_request(employee, _d("2026-01-28"), _d("2026-01-28"))  # no raise
 
 
 def test_regularisation_blocked_on_a_holiday():
-    CalendarEntry.objects.create(type="holiday", date="2026-02-10", name="X")
     employee = _employee()
+    _holiday(employee, "2026-02-10")
 
     with pytest.raises(ValidationError):
         conflicts.validate_regularisation_request(employee, _d("2026-02-10"), _d("2026-02-10"))

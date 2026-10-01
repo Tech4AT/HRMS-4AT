@@ -152,11 +152,60 @@ function toLeaveRequest(raw: RawLeaveRequest): LeaveRequest {
   return { ...raw, duration_days: Number(raw.duration_days) };
 }
 
+/** A request to earn compensatory days for off days worked. Same lifecycle and
+ *  decision fields as LeaveRequest; `days` are credited to `leave_type_name`'s
+ *  balance once approved. */
+export interface CompOffRequest {
+  id: string;
+  employee_id: string;
+  employee_name: string | null;
+  /** The balance the approver chose when approving; null until then. */
+  leave_type_id: string | null;
+  leave_type_name: string | null;
+  /** ISO dates, oldest first - one day is credited per date. */
+  worked_dates: string[];
+  days: number;
+  reason: string | null;
+  status: LeaveStatus;
+  approver_id: string | null;
+  approver_name: string | null;
+  decided_by_name?: string | null;
+  approver_remarks?: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
+  cancelled_at: string | null;
+  /** The generic approvals engine's request id - decide through requestsApi. */
+  approval_request_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type RawCompOffRequest = Omit<CompOffRequest, 'days'> & { days: string };
+
+function toCompOffRequest(raw: RawCompOffRequest): CompOffRequest {
+  return { ...raw, days: Number(raw.days) };
+}
+
+/** An off day (weekly off or holiday) the caller could still claim. */
+export interface EligibleCompOffDay {
+  date: string;
+  /** e.g. "Weekly off" or "Holiday: Founders Day". */
+  reason: string;
+  /** Whether an attendance clock-in exists for that day. */
+  clocked_in: boolean;
+}
+
+export interface EligibleCompOffDays {
+  lookback_days: number;
+  days: EligibleCompOffDay[];
+}
+
 export interface Holiday {
   id: string;
   name: string;
   holiday_date: string;
   is_optional: boolean;
+  is_special?: boolean;
   description: string | null;
 }
 
@@ -267,6 +316,19 @@ export const leaveApi = {
         ),
       }),
     ),
+  getCompOffRequests: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off')).map(toCompOffRequest),
+  getEligibleCompOffDays: () => request<EligibleCompOffDays>('/comp-off/eligible-days'),
+  createCompOffRequest: async (input: { worked_dates: string[]; reason?: string }) =>
+    toCompOffRequest(
+      await request<RawCompOffRequest>('/comp-off', { method: 'POST', body: JSON.stringify(input) }),
+    ),
+  cancelCompOffRequest: async (id: string) =>
+    toCompOffRequest(await request<RawCompOffRequest>(`/comp-off/${id}/cancel`, { method: 'POST' })),
+  getCompOffPendingApprovals: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off/approvals/pending')).map(toCompOffRequest),
+  getCompOffApprovalHistory: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off/approvals/history')).map(toCompOffRequest),
   getHolidays: (year: number) => request<Holiday[]>(`/holidays?year=${year}`),
   getCalendar: async (from: string, to: string) =>
     (await request<RawLeaveRequest[]>(`/calendar?from=${from}&to=${to}`)).map(toLeaveRequest),
@@ -311,4 +373,18 @@ const STATUS_LABEL: Record<LeaveStatus, string> = {
 
 export function statusLabel(s: LeaveStatus): string {
   return STATUS_LABEL[s] ?? s;
+}
+
+/** "Sat 04 Oct 2026, Sun 05 Oct 2026" - for listing the days a Comp Off request covers. */
+export function formatDateList(dates: string[]): string {
+  return dates
+    .map((d) =>
+      new Date(`${d}T00:00:00`).toLocaleDateString('en-US', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
+    )
+    .join(', ');
 }

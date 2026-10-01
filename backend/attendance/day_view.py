@@ -85,6 +85,11 @@ def build_day_view(the_date, record, *, today, employee=None, facts=None, shift=
         "is_holiday": facts.is_holiday,
         "holiday_name": facts.holiday_name,
         "holiday_description": facts.holiday_description,
+        "holiday_is_special": facts.holiday_is_special,
+        "optional_holidays": [
+            {"name": h.name, "description": h.description, "special": h.special}
+            for h in facts.optional_holidays
+        ],
         "on_leave": facts.is_on_leave,
         "leave_type_name": facts.leave_type_name,
         "source": record.source if record else None,

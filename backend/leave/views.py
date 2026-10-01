@@ -23,11 +23,14 @@ entirely and auto-approves immediately, by direct analogy to Penalisation's
 existing exemption (no human decision being made, so nothing for the engine to
 route) — confirmed with the project owner rather than assumed.
 
-HolidayViewSet: `/leave/holidays` — reshapes org_calendar's holiday
-CalendarEntry rows into the frontend's separate `Holiday` type, for the
+HolidayViewSet: `/leave/holidays` — the signed-in employee's own holidays,
+merged across their calendars, in the frontend's separate `Holiday` type, for the
 pre-existing `/calendar` company page and Home's HolidaysWidget (PLAN.md §11 —
 their own UX is owned elsewhere, but this module's `/leave` prefix has to keep
 serving them from the same underlying data, not a second holiday list)."""
+
+from datetime import date
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Count
@@ -45,11 +48,13 @@ from core.api import FrontendEnvelopeMixin
 from core.exceptions import Conflict
 from core.permissions import HasPermissionCode, ScopedEmployeePermission
 from core.scope import resolve_employee_scope, user_has_permission
-from org_calendar.models import CalendarEntry, CalendarEntryType
+from employees.models import Employee
+from org_calendar.resolution import resolve_calendar_range
 
-from . import conflicts
+from . import comp_off, conflicts
 from .balances import get_or_seed_balance
 from .models import (
+    CompOffRequest,
     HalfDayOption,
     LeaveBalance,
     LeaveRequest,
@@ -57,7 +62,12 @@ from .models import (
     LeaveType,
     LeaveTypeStatus,
 )
-from .serializers import LeaveBalanceSerializer, LeaveRequestSerializer, LeaveTypeSerializer
+from .serializers import (
+    CompOffRequestSerializer,
+    LeaveBalanceSerializer,
+    LeaveRequestSerializer,
+    LeaveTypeSerializer,
+)
 
 
 def _employee_or_403(request):
@@ -178,8 +188,6 @@ class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         uses = []
         if policy.penalty_leave_type_id == instance.pk:
             uses.append("the No Attendance penalty")
-        if policy.comp_off_leave_type_id == instance.pk:
-            uses.append("compensatory-off credits")
         return uses
 
     def _refuse_if_policy_uses(self, instance):
@@ -197,7 +205,8 @@ class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         # Same pattern as employees/views.py's reference-table deletes: check
         # for blockers explicitly and raise a clear Conflict, rather than
         # letting a bare ProtectedError surface as an unhandled 500.
-        balances, requests_count = instance.balances.count(), instance.requests.count()
+        balances = instance.balances.count()
+        requests_count = instance.requests.count() + instance.comp_off_requests.count()
         if balances or requests_count:
             raise Conflict(
                 f"'{instance.name}' is referenced by {balances} balance(s) and "
@@ -213,24 +222,30 @@ class LeaveTypeViewSet(EnvelopeMixin, viewsets.ModelViewSet):
         instance = self.get_object()
         if (request.data.get("confirm_name") or "") != instance.name:
             raise ValidationError(
-                {"confirm_name": f"Type the leave type's exact name, '{instance.name}', to confirm."}
+                {
+                    "confirm_name": f"Type the leave type's exact name, '{instance.name}', to confirm."
+                }
             )
         with transaction.atomic():
             type_pk, name = instance.pk, instance.name
             requests_qs = instance.requests.all()
+            comp_off_qs = instance.comp_off_requests.all()
             # Approval rows raised for these leaves would otherwise linger in
             # approvers' queues pointing at leave that no longer exists.
-            approval_ids = list(
-                requests_qs.exclude(approval_request__isnull=True).values_list(
+            approval_ids = [
+                pk
+                for qs in (requests_qs, comp_off_qs)
+                for pk in qs.exclude(approval_request__isnull=True).values_list(
                     "approval_request_id", flat=True
                 )
-            )
+            ]
             counts = {
                 "balances": instance.balances.count(),
-                "requests": requests_qs.count(),
+                "requests": requests_qs.count() + comp_off_qs.count(),
                 "approvals": len(approval_ids),
             }
             requests_qs.delete()
+            comp_off_qs.delete()
             instance.balances.all().delete()
             if approval_ids:
                 from approvals.models import Request as ApprovalRequest
@@ -437,14 +452,139 @@ class LeaveRequestViewSet(
         return Response({"success": True, "data": serializer.data})
 
 
+class CompOffRequestViewSet(
+    FrontendEnvelopeMixin,
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """/leave/comp-off — request compensatory days for off days worked
+    (leave/comp_off.py). Same RBAC and lifecycle as LeaveRequestViewSet: the
+    caller sees only their own requests, every request is routed to their
+    manager through the approvals engine, and approving it credits the balance
+    (handlers.py)."""
+
+    serializer_class = CompOffRequestSerializer
+    permission_classes = [ScopedEmployeePermission]
+    required_permission = "leave.read"
+    write_permission = "leave.write"
+    action_permissions = {
+        "cancel": "leave.write",
+        "eligible_days": "leave.write",
+        "approvals_pending": "leave.approve",
+        "approvals_history": "leave.approve",
+    }
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_queryset(self):
+        base = CompOffRequest.objects.select_related(
+            "employee__user",
+            "leave_type",
+            "approval_request",
+            "approval_request__approver__employee__user",
+            "approval_request__decided_by__employee__user",
+        )
+        if self.action in ("approvals_pending", "approvals_history"):
+            employee = _employee_or_403(self.request)
+            scope = resolve_employee_scope(self.request.user, "leave.approve")
+            queryset = base.filter(employee_id__in=scope).exclude(employee=employee)
+            if self.action == "approvals_pending":
+                return queryset.filter(status=LeaveRequestStatus.SUBMITTED)
+            return queryset.exclude(status=LeaveRequestStatus.SUBMITTED).order_by(
+                "-decided_at", "-updated_at"
+            )
+        return base.filter(employee=_employee_or_403(self.request))
+
+    def create(self, request, *args, **kwargs):
+        employee = _employee_or_403(request)
+        today = timezone.localdate()
+        dates = comp_off.validate_comp_off_request(
+            employee, request.data.get("worked_dates"), today
+        )
+        reason = (request.data.get("reason") or "").strip()
+
+        with transaction.atomic():
+            # Locking the employee row serialises two simultaneous submissions so
+            # they cannot both claim the same date.
+            Employee.objects.select_for_update().get(pk=employee.pk)
+            dates = comp_off.validate_comp_off_request(
+                employee, [d.isoformat() for d in dates], today
+            )
+            row = CompOffRequest.objects.create(
+                employee=employee,
+                worked_dates=[d.isoformat() for d in dates],
+                days=Decimal(len(dates)),
+                reason=reason,
+            )
+            write_audit(
+                request.user,
+                "CompOffRequest.created",
+                "CompOffRequest",
+                row.pk,
+                {"dates": row.worked_dates},
+            )
+            approval = approvals.create_request(
+                request.user,
+                "comp_off",
+                {
+                    "comp_off_request_id": row.pk,
+                    "worked_dates": row.worked_dates,
+                    "days": str(row.days),
+                    "reason": reason,
+                },
+            )
+            row.approval_request = approval
+            row.save(update_fields=["approval_request"])
+
+        return Response({"success": True, "data": CompOffRequestSerializer(row).data}, status=201)
+
+    @action(detail=False, methods=["get"], url_path="eligible-days")
+    def eligible_days(self, request):
+        """Off days the caller could still claim. Which balance the credit goes to
+        is chosen by the approver, not here."""
+        employee = _employee_or_403(request)
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "lookback_days": comp_off.LOOKBACK_DAYS,
+                    "days": comp_off.eligible_days(employee, timezone.localdate()),
+                },
+            }
+        )
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        instance = self.get_object()
+        if instance.status != LeaveRequestStatus.SUBMITTED:
+            raise ValidationError("Only a pending request can be cancelled through this action.")
+        if instance.approval_request is None:
+            raise ValidationError("This request has no linked approval to withdraw.")
+        approvals.withdraw(instance.approval_request, request.user)
+        instance.refresh_from_db()
+        write_audit(request.user, "CompOffRequest.cancelled", "CompOffRequest", instance.pk)
+        return Response({"success": True, "data": CompOffRequestSerializer(instance).data})
+
+    @action(detail=False, methods=["get"], url_path="approvals/pending")
+    def approvals_pending(self, request):
+        serializer = self.get_serializer(self.filter_queryset(self.get_queryset()), many=True)
+        return Response({"success": True, "data": serializer.data})
+
+    @action(detail=False, methods=["get"], url_path="approvals/history")
+    def approvals_history(self, request):
+        serializer = self.get_serializer(self.filter_queryset(self.get_queryset()), many=True)
+        return Response({"success": True, "data": serializer.data})
+
+
 class HolidayViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
-    """/leave/holidays?year= — reshapes org_calendar's holidays into the
-    separate `Holiday` type the pre-existing `/calendar` page and
-    HolidaysWidget already expect. `is_optional` has no equivalent on
-    CalendarEntry (org_calendar has no such concept) — always False, a known,
-    stated contract gap rather than a silently invented field. Mixes in
-    FrontendEnvelopeMixin for its plain-JSON renderer/parser only, same
-    reasoning as LeaveBalanceViewSet above."""
+    """/leave/holidays?year= — the signed-in employee's own holidays for the
+    year, merged across every calendar that covers them (see
+    org_calendar/resolution.py), in the `Holiday` shape the pre-existing
+    `/calendar` page and HolidaysWidget expect. `is_optional`/`is_special`
+    come from the holiday's flags. Someone covered by no calendar (or with no
+    employee record) gets an empty list. Mixes in FrontendEnvelopeMixin for its
+    plain-JSON renderer/parser only, same reasoning as LeaveBalanceViewSet
+    above."""
 
     permission_classes = [IsAuthenticated]
 
@@ -457,19 +597,22 @@ class HolidayViewSet(FrontendEnvelopeMixin, viewsets.ViewSet):
                 raise ValidationError({"year": "Must be a whole number."}) from exc
         else:
             year = timezone.localdate().year
-        entries = CalendarEntry.objects.filter(
-            type=CalendarEntryType.HOLIDAY, date__year=year
-        ).order_by("date")
-        data = [
-            {
-                "id": str(e.pk),
-                "name": e.name,
-                "holiday_date": e.date.isoformat(),
-                "is_optional": False,
-                "description": e.description,
-            }
-            for e in entries
-        ]
+        employee = getattr(request.user, "employee", None)
+        data = []
+        if employee is not None:
+            days = resolve_calendar_range(employee, date(year, 1, 1), date(year, 12, 31))
+            for day, facts in days.items():
+                for holiday in [*facts.holidays, *facts.optional_holidays]:
+                    data.append(
+                        {
+                            "id": f"{day.isoformat()}:{holiday.name}",
+                            "name": holiday.name,
+                            "holiday_date": day.isoformat(),
+                            "is_optional": holiday.optional,
+                            "is_special": holiday.special,
+                            "description": holiday.description,
+                        }
+                    )
         return Response({"success": True, "data": data})
 
 

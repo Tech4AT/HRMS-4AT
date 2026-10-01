@@ -8,13 +8,16 @@ from employees.factories import EmployeeFactory
 from leave import conflicts
 from leave.duration import compute_duration_days
 from leave.models import HalfDayOption, LeaveBalance, LeaveRequest, LeaveType
+from org_calendar.factories import make_calendar
 from org_calendar.models import CalendarEntry
 
 pytestmark = pytest.mark.django_db
 
 
 def _employee():
-    return EmployeeFactory()
+    employee = EmployeeFactory()
+    make_calendar(employee)  # Saturday + Sunday off
+    return employee
 
 
 def _leave_type(**kwargs):
@@ -31,9 +34,11 @@ def _d(iso):
 
 
 def test_full_day_duration_excludes_week_off_and_holiday():
-    # 2026-02-02..2026-02-08 is Mon..Sun. Default week-off is Sat/Sun.
-    CalendarEntry.objects.create(type="holiday", date="2026-02-04", name="X")  # Wednesday
+    # 2026-02-02..2026-02-08 is Mon..Sun. The calendar's week-off is Sat/Sun.
     employee = _employee()
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date="2026-02-04", name="X"
+    )  # Wednesday
 
     duration = compute_duration_days(employee, _d("2026-02-02"), _d("2026-02-08"), "full_day")
 
@@ -54,8 +59,10 @@ def test_half_day_is_always_half_regardless_of_range():
 
 
 def test_leave_allowed_to_span_a_holiday():
-    CalendarEntry.objects.create(type="holiday", date="2026-02-04", name="X")
     employee = _employee()
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date="2026-02-04", name="X"
+    )
     leave_type = _leave_type()
 
     duration = conflicts.validate_leave_request(
@@ -71,7 +78,11 @@ def test_rejects_a_range_with_zero_working_days():
 
     with pytest.raises(ValidationError):
         conflicts.validate_leave_request(
-            employee, leave_type, _d("2026-01-31"), _d("2026-02-01"), "full_day"  # Sat, Sun
+            employee,
+            leave_type,
+            _d("2026-01-31"),
+            _d("2026-02-01"),
+            "full_day",  # Sat, Sun
         )
 
 

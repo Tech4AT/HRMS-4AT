@@ -33,7 +33,7 @@ function employeeNames(ids: string[], employees: DirectoryEmployee[]): string {
 /** Full-roster picker for assigning employees to a shift - a flat list of
  * pills doesn't scale once there are more than a handful of employees, so
  * this opens as a popup with search and per-department "select all" instead. */
-function AssignEmployeesModal({
+export function AssignEmployeesModal({
   employees,
   initialSelected,
   onCancel,
@@ -63,6 +63,18 @@ function AssignEmployeesModal({
       allSelected ? prev.filter((id) => !ids.includes(id)) : Array.from(new Set([...prev, ...ids])),
     );
   };
+
+  // Everyone matching the current search (all employees when the search is empty).
+  const visibleIds = employees
+    .filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
+    .map((e) => e.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id));
+  const toggleAllVisible = () =>
+    setSelected((prev) =>
+      allVisibleSelected
+        ? prev.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...prev, ...visibleIds])),
+    );
 
   const filteredByDepartment = departments
     .map((department) => ({
@@ -96,6 +108,19 @@ function AssignEmployeesModal({
             placeholder="Search employees"
             className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
           />
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-xs text-slate-500">
+              {search ? `${visibleIds.length} matching` : `${employees.length} employees`}
+            </span>
+            <button
+              type="button"
+              onClick={toggleAllVisible}
+              disabled={visibleIds.length === 0}
+              className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 disabled:opacity-40"
+            >
+              {allVisibleSelected ? 'Unselect all' : search ? 'Select all matching' : 'Select all employees'}
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">

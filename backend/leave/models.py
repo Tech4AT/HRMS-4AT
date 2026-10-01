@@ -162,3 +162,43 @@ class LeaveRequest(models.Model):
 
     def __str__(self):
         return f"{self.leave_type_id} [{self.status}] for {self.employee_id}"
+
+
+class CompOffRequest(models.Model):
+    """A request to earn compensatory days for working on days that were off
+    for the employee (a weekly off or a holiday on one of their calendars).
+    Follows the same lifecycle as LeaveRequest: always routed through the
+    approvals engine (request_type "comp_off"); when approved, `days` are added
+    to the balance of the `leave_type` the approver chooses, as `allocated`
+    (leave/handlers.py).
+
+    `worked_dates` is a list of ISO dates, one day credited per date. A date
+    that sits in another submitted or approved request cannot be claimed again
+    (leave/comp_off.py)."""
+
+    employee = models.ForeignKey(
+        "employees.Employee", on_delete=models.CASCADE, related_name="comp_off_requests"
+    )
+    # Chosen by the approver at the moment of approval; null while pending,
+    # rejected or cancelled.
+    leave_type = models.ForeignKey(
+        LeaveType, null=True, blank=True, on_delete=models.PROTECT, related_name="comp_off_requests"
+    )
+    worked_dates = models.JSONField(default=list)
+    days = models.DecimalField(max_digits=5, decimal_places=1)
+    reason = models.CharField(max_length=500, blank=True)
+    status = models.CharField(
+        max_length=20, choices=LeaveRequestStatus.choices, default=LeaveRequestStatus.SUBMITTED
+    )
+    approval_request = models.ForeignKey(
+        "approvals.Request", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    decided_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"comp off x{self.days} [{self.status}] for {self.employee_id}"

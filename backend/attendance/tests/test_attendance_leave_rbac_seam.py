@@ -732,12 +732,10 @@ _POLICY_PAYLOAD = {
     "regularisationGraceDays": 5,
     "abscondingThresholdDays": 7,
     "penaltyLeaveTypeId": None,
-    "compOffLeaveTypeId": None,
     "noAttendance": {"enabled": True, "leaveDaysDeducted": 1},
     "lateArrival": {"enabled": True, "leaveDaysDeducted": 0.5, "thresholdCount": 4},
     "earlyLeaving": {"enabled": False, "leaveDaysDeducted": 0.5, "thresholdCount": 3},
     "workHours": {"enabled": False, "leaveDaysDeducted": 0.5, "minWorkHours": 8},
-    "compOffAccrual": {"enabled": True, "overtimeHoursPerCompOff": 6},
 }
 
 

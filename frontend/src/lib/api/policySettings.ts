@@ -13,7 +13,7 @@
  * localStorage.
  */
 
-import type { CompOffAccrualConfig, PenalisationRuleConfig, PenalizationSettings } from '@/lib/attendance/penalisation';
+import type { PenalisationRuleConfig, PenalizationSettings } from '@/lib/attendance/penalisation';
 
 interface Envelope<T> {
   success: boolean;
@@ -38,21 +38,14 @@ interface RawRuleConfig {
   minWorkHours: string | null;
 }
 
-interface RawCompOffAccrual {
-  enabled: boolean;
-  overtimeHoursPerCompOff: string;
-}
-
 interface RawPolicySettings {
   regularisationGraceDays: number;
   abscondingThresholdDays: number;
   penaltyLeaveTypeId: string | null;
-  compOffLeaveTypeId: string | null;
   noAttendance: RawRuleConfig;
   lateArrival: RawRuleConfig;
   earlyLeaving: RawRuleConfig;
   workHours: RawRuleConfig;
-  compOffAccrual: RawCompOffAccrual;
 }
 
 function toRuleConfig(raw: RawRuleConfig): PenalisationRuleConfig {
@@ -64,21 +57,15 @@ function toRuleConfig(raw: RawRuleConfig): PenalisationRuleConfig {
   };
 }
 
-function toCompOffAccrual(raw: RawCompOffAccrual): CompOffAccrualConfig {
-  return { enabled: raw.enabled, overtimeHoursPerCompOff: Number(raw.overtimeHoursPerCompOff) };
-}
-
 function toPolicySettings(raw: RawPolicySettings): PenalizationSettings {
   return {
     regularisationGraceDays: raw.regularisationGraceDays,
     abscondingThresholdDays: raw.abscondingThresholdDays,
     penaltyLeaveTypeId: raw.penaltyLeaveTypeId,
-    compOffLeaveTypeId: raw.compOffLeaveTypeId,
     noAttendance: toRuleConfig(raw.noAttendance),
     lateArrival: toRuleConfig(raw.lateArrival),
     earlyLeaving: toRuleConfig(raw.earlyLeaving),
     workHours: toRuleConfig(raw.workHours),
-    compOffAccrual: toCompOffAccrual(raw.compOffAccrual),
   };
 }
 

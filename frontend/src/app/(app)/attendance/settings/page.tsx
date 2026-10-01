@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth/useAuth';
 import { SectionTabs, type SectionTab } from '@/components/SectionTabs';
-import { CalendarManagementPanel } from '@/components/attendance/CalendarManagementPanel';
+import { CalendarsSettingsPanel } from '@/components/attendance/CalendarsSettingsPanel';
 import { PenalizationSettingsPanel } from '@/components/attendance/PenalizationSettingsPanel';
 import { ShiftsSettingsPanel } from '@/components/attendance/ShiftsSettingsPanel';
 import { LeaveSettingsPanel } from '@/components/attendance/LeaveSettingsPanel';
@@ -13,8 +13,8 @@ type SettingsTabId = 'shifts' | 'leave' | 'calendar' | 'penalization';
 
 /** Org-level configuration for the Attendance & Leave section: Shifts, Leave
  *  Settings, Calendar Management (editing the org calendar - holidays, WFH
- *  days, events), and Policy Settings (penalisation + Comp Off accrual
- *  rules - see PenalizationSettingsPanel; the "Policy Settings" label is the
+ *  days, events), and Policy Settings (penalisation rules + the Comp Off leave
+ *  type - see PenalizationSettingsPanel; the "Policy Settings" label is the
  *  user-facing name, the internal tab id/component keep their old name). */
 export default function AttendanceSettingsPage() {
   const router = useRouter();
@@ -49,7 +49,7 @@ export default function AttendanceSettingsPage() {
       <SectionTabs tabs={tabs} active={activeTab} />
       <div className="p-4 sm:p-8">
         {activeTab === 'calendar' ? (
-          <CalendarManagementPanel />
+          <CalendarsSettingsPanel />
         ) : activeTab === 'penalization' ? (
           <PenalizationSettingsPanel />
         ) : activeTab === 'shifts' ? (

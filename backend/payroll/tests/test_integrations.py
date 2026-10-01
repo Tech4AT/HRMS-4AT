@@ -17,6 +17,7 @@ from attendance.models import AttendanceRecord
 from employees.models import Employee
 from leave.models import LeaveRequest, LeaveType
 from notifications.models import Notification
+from org_calendar.factories import make_calendar
 from org_calendar.models import CalendarEntry
 from payroll import models as m
 from payroll.services import periods as period_service
@@ -47,8 +48,9 @@ def test_attendance_source_builds_payable_days_and_lop(seeded):
     1 half day, the rest present -> LOP 2.5, paid leave 1, present 16.5."""
     admin_user = User.objects.get(email="payroll.admin@demo.4at")
     nikhil = Employee.objects.get(employee_code="4AT-002")
+    calendar = make_calendar(nikhil)  # Saturday + Sunday off
     CalendarEntry.objects.create(
-        type="holiday", date=datetime.date(2026, 8, 14), name="Test holiday"
+        calendar=calendar, type="holiday", date=datetime.date(2026, 8, 14), name="Test holiday"
     )
     unpaid = LeaveType.objects.create(name="Unpaid Leave", is_paid=False)
     paid = LeaveType.objects.create(name="Casual Leave", is_paid=True)

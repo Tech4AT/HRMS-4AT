@@ -54,7 +54,14 @@ class RequestViewSet(FrontendEnvelopeMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         return self._act(
-            pk, lambda r: service.decide(r, request.user, "approved", request.data.get("note", ""))
+            pk,
+            lambda r: service.decide(
+                r,
+                request.user,
+                "approved",
+                request.data.get("note", ""),
+                request.data.get("data") or {},
+            ),
         )
 
     @action(detail=True, methods=["post"])
@@ -94,6 +101,7 @@ class RequestViewSet(FrontendEnvelopeMixin, viewsets.ModelViewSet):
                 request.user,
                 request.data.get("status", "approved"),
                 request.data.get("note", ""),
+                request.data.get("data") or {},
             ),
         )
 

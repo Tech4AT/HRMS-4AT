@@ -19,6 +19,7 @@ from attendance.penalisation import apply_penalisations, apply_penalisations_for
 from audit.models import AuditLog
 from employees.factories import EmployeeFactory
 from notifications.models import Notification
+from org_calendar.factories import make_calendar
 from org_calendar.models import CalendarEntry
 
 pytestmark = pytest.mark.django_db
@@ -28,7 +29,9 @@ TODAY = date(2026, 3, 20)  # a Friday — not a weekend, keeps the math simple
 
 def _employee():
     user = UserFactory(role=Role.objects.get(name="Employee"))
-    return EmployeeFactory(user=user)
+    employee = EmployeeFactory(user=user)
+    make_calendar(employee)  # Saturday + Sunday off
+    return employee
 
 
 def test_creates_a_record_for_an_unexplained_absence_past_the_grace_period():
@@ -74,8 +77,8 @@ def test_does_not_penalise_a_day_the_employee_clocked_in():
 
 def test_does_not_penalise_a_weekend_day():
     employee = _employee()
-    # WeekOff seeds Sat/Sun active by default (org_calendar migration) — find
-    # a Sunday inside the lookback window instead of hardcoding an offset.
+    # The employee's calendar has Sat/Sun off — find a Sunday inside the lookback
+    # window instead of hardcoding an offset.
     sunday = TODAY - timedelta(days=10)
     while sunday.weekday() != 6:
         sunday -= timedelta(days=1)
@@ -88,7 +91,9 @@ def test_does_not_penalise_a_weekend_day():
 def test_does_not_penalise_a_holiday():
     employee = _employee()
     absent_day = TODAY - timedelta(days=10)
-    CalendarEntry.objects.create(type="holiday", date=absent_day, name="Test Holiday")
+    CalendarEntry.objects.create(
+        calendar=employee.calendars.get(), type="holiday", date=absent_day, name="Test Holiday"
+    )
 
     apply_penalisations_for(employee, today=TODAY)
 

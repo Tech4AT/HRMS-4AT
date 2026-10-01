@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import {
-  compOffAccrualSentence,
   penalisationRuleSentence,
   usePenalizationSettings,
-  type CompOffAccrualConfig,
   type PenalisationRuleConfig,
   type PenalizationSettings,
 } from '@/lib/attendance/penalisation';
@@ -110,64 +108,6 @@ function RuleRow({
   );
 }
 
-function CompOffAccrualRow({
-  rule,
-  onChange,
-}: {
-  rule: CompOffAccrualConfig;
-  onChange: (next: CompOffAccrualConfig) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-
-  return (
-    <div className="py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">Comp Offs</p>
-          <p className="text-xs text-slate-500 mt-1">{compOffAccrualSentence(rule)}</p>
-        </div>
-        <button
-          onClick={() => setEditing((v) => !v)}
-          className="text-xs font-semibold text-indigo-600 hover:text-indigo-700 shrink-0"
-        >
-          {editing ? 'Done' : 'Edit'}
-        </button>
-      </div>
-
-      {editing ? (
-        <div className="mt-3 space-y-3 bg-slate-50 rounded-lg p-3">
-          <label className="flex items-center gap-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={rule.enabled}
-              onChange={(e) => onChange({ ...rule, enabled: e.target.checked })}
-              className="rounded border-slate-300"
-            />
-            Earn Comp Offs from overtime
-          </label>
-
-          {rule.enabled ? (
-            <span className="flex items-center gap-2 text-xs text-slate-600">
-              1 Comp Off for every
-              <input
-                type="number"
-                min={1}
-                max={80}
-                value={rule.overtimeHoursPerCompOff}
-                onChange={(e) =>
-                  onChange({ ...rule, overtimeHoursPerCompOff: Math.max(1, Number(e.target.value) || 1) })
-                }
-                className="w-16 text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
-              />
-              overtime hour(s)
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 /** Settings > Policy Settings. Real data (PLAN.md Step 6/11) — settings
  *  persist via {@link usePenalizationSettings}, backed by
  *  `/api/attendance/policy-settings`, not localStorage. Configures the rules
@@ -176,10 +116,7 @@ function CompOffAccrualRow({
  *  period, the absconding threshold, which leave type a penalty actually
  *  consumes, a penalty (or "no penalization") for each of No Attendance,
  *  Late Arrival, Early Leaving, and Work Hours (only No Attendance is wired
- *  to a real auto-apply today - see `attendance/penalisation.py`), and the
- *  Comp Off accrual rate (the one reward rule alongside all the penalties -
- *  a Comp Off is earned from overtime hours instead of being deducted for a
- *  violation). The saved settings are also what the read-only "Attendance
+ *  to a real auto-apply today - see `attendance/penalisation.py`). The saved settings are also what the read-only "Attendance
  *  Policy" popup on My Attendance shows. */
 export function PenalizationSettingsPanel() {
   const [saved, setSaved, loaded] = usePenalizationSettings();
@@ -327,37 +264,6 @@ export function PenalizationSettingsPanel() {
           <RuleRow kind="lateArrival" rule={draft.lateArrival} onChange={(next) => setRule('lateArrival', next)} />
           <RuleRow kind="earlyLeaving" rule={draft.earlyLeaving} onChange={(next) => setRule('earlyLeaving', next)} />
           <RuleRow kind="workHours" rule={draft.workHours} onChange={(next) => setRule('workHours', next)} />
-        </div>
-      </div>
-
-      <div className="pt-2 border-t border-slate-100">
-        <label className="block text-sm font-semibold text-slate-800 mb-1">Comp Off accrual</label>
-        <p className="text-xs text-slate-500 mb-2">
-          The one reward rule here - grants a Comp Off once an employee's overtime hours cross this threshold.
-          Evaluated the moment an employee checks out, not on a schedule.
-        </p>
-        <CompOffAccrualRow
-          rule={draft.compOffAccrual}
-          onChange={(next) => setDraft((d) => ({ ...d, compOffAccrual: next }))}
-        />
-        <div className="mt-3">
-          <label className="block text-xs font-semibold text-slate-700 mb-1">Comp Off leave type</label>
-          <p className="text-xs text-slate-500 mb-2">
-            The leave type a credited Comp Off is added to. Leaving this unset means overtime still accrues, but no
-            leave is ever credited.
-          </p>
-          <select
-            value={draft.compOffLeaveTypeId ?? ''}
-            onChange={(e) => setDraft((d) => ({ ...d, compOffLeaveTypeId: e.target.value || null }))}
-            className="w-full sm:w-64 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/10"
-          >
-            <option value="">None — don&apos;t credit leave</option>
-            {leaveTypes.filter((t) => t.status === 'active').map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 

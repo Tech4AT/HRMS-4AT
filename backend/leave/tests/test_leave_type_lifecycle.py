@@ -132,14 +132,19 @@ def test_an_invalid_status_is_refused():
     hr, _, _ = _client("HR Admin")
     leave_type, _ = _used_type()
 
-    assert hr.put(f"{URL}/{leave_type.pk}", {"status": "archived"}, format="json").status_code == 400
+    assert (
+        hr.put(f"{URL}/{leave_type.pk}", {"status": "archived"}, format="json").status_code == 400
+    )
 
 
 def test_only_leave_admins_can_change_status():
     employee, _, _ = _client("Employee")
     leave_type, _ = _used_type()
 
-    assert employee.put(f"{URL}/{leave_type.pk}", {"status": "inactive"}, format="json").status_code == 403
+    assert (
+        employee.put(f"{URL}/{leave_type.pk}", {"status": "inactive"}, format="json").status_code
+        == 403
+    )
     leave_type.refresh_from_db()
     assert leave_type.status == "active"
 
@@ -167,15 +172,15 @@ def test_a_deactivated_type_cannot_be_used_for_a_new_request():
 
 def test_deactivation_is_refused_while_the_attendance_policy_uses_the_type():
     hr, _, _ = _client("HR Admin")
-    leave_type = LeaveType.objects.create(name="Comp Off", annual_allocation=0)
+    leave_type = LeaveType.objects.create(name="Penalty Leave", annual_allocation=0)
     policy = PolicySettings.load()
-    policy.comp_off_leave_type = leave_type
+    policy.penalty_leave_type = leave_type
     policy.save()
 
     response = hr.put(f"{URL}/{leave_type.pk}", {"status": "inactive"}, format="json")
 
     assert response.status_code == 409
-    assert "compensatory-off" in response.json()["error"]["message"]
+    assert "No Attendance penalty" in response.json()["error"]["message"]
     leave_type.refresh_from_db()
     assert leave_type.status == "active"
 
@@ -188,7 +193,9 @@ def test_purge_erases_the_type_its_balances_requests_and_approvals_and_audits_th
     leave_type, approval = _used_type("Casual Leave", balances=3)
     other, _ = _used_type("Sick Leave", balances=1)
 
-    response = hr.post(f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json")
+    response = hr.post(
+        f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json"
+    )
 
     assert response.status_code == 200
     assert response.json()["data"] == {
@@ -208,7 +215,9 @@ def test_purge_erases_the_type_its_balances_requests_and_approvals_and_audits_th
     assert entry.diff == {"name": "Casual Leave", "balances": 3, "requests": 1, "approvals": 1}
 
 
-@pytest.mark.parametrize("body", [{}, {"confirm_name": ""}, {"confirm_name": "casual leave"}, {"confirm_name": "Casual"}])
+@pytest.mark.parametrize(
+    "body", [{}, {"confirm_name": ""}, {"confirm_name": "casual leave"}, {"confirm_name": "Casual"}]
+)
 def test_purge_needs_the_exact_type_name(body):
     hr, _, _ = _client("HR Admin")
     leave_type, _ = _used_type("Casual Leave")
@@ -225,7 +234,9 @@ def test_only_leave_admins_can_purge(role):
     client, _, _ = _client(role)
     leave_type, _ = _used_type("Casual Leave")
 
-    response = client.post(f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json")
+    response = client.post(
+        f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json"
+    )
 
     assert response.status_code == 403
     assert LeaveType.objects.filter(pk=leave_type.pk).exists()
@@ -235,7 +246,9 @@ def test_purge_of_an_unused_type_works_too():
     hr, _, _ = _client("HR Admin")
     leave_type = LeaveType.objects.create(name="Sabbatical", annual_allocation=0)
 
-    response = hr.post(f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Sabbatical"}, format="json")
+    response = hr.post(
+        f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Sabbatical"}, format="json"
+    )
 
     assert response.status_code == 200
     assert response.json()["data"]["balances"] == 0
@@ -249,7 +262,9 @@ def test_purge_leaves_policy_settings_and_penalisation_history_intact_with_the_l
     policy.penalty_leave_type = leave_type
     policy.save()
 
-    response = hr.post(f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json")
+    response = hr.post(
+        f"{URL}/{leave_type.pk}/purge", {"confirm_name": "Casual Leave"}, format="json"
+    )
 
     assert response.status_code == 200
     policy.refresh_from_db()

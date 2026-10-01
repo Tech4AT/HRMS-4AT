@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { teamAttendanceApi, type TeamAttendanceDayView } from '@/lib/api/teamAttendance';
+import { attendanceCsv, downloadCsv } from '@/lib/attendance/exportCsv';
 import { PERIOD_LABEL, metricsForPeriod, periodDays, type EmployeePeriodMetrics, type Period } from '@/lib/attendance/dashboard';
 
 type MetricId = 'hours' | 'overtime' | 'leave' | 'late';
@@ -14,6 +15,7 @@ const METRICS: Record<MetricId, { label: string; unit: string; value: (m: Employ
 };
 
 const ALL_DEPARTMENTS = 'All Departments';
+const PAGE_SIZE = 10;
 
 /** The dashboard's configurable leaderboard - ranks the team/org by whichever
  *  metric and time period is selected. Real, scoped data as of PLAN.md Step 9
@@ -27,6 +29,7 @@ export function AttendanceLeaderboard() {
   const [rows, setRows] = useState<TeamAttendanceDayView[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const days = useMemo(() => periodDays(period), [period]);
 
@@ -61,7 +64,22 @@ export function AttendanceLeaderboard() {
     return [...metrics].sort((a, b) => METRICS[metric].value(b) - METRICS[metric].value(a));
   }, [rows, department, metric]);
 
+  // Back to the first page whenever the ranking itself changes.
+  useEffect(() => setPage(0), [metric, period, department]);
+
+  const pageCount = Math.max(1, Math.ceil(ranked.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const pageStart = currentPage * PAGE_SIZE;
+  const pageRows = ranked.slice(pageStart, pageStart + PAGE_SIZE);
+
   const config = METRICS[metric];
+
+  // The raw day-by-day rows behind the ranking, for the selected period and department.
+  const downloadReport = () => {
+    const scoped = department === ALL_DEPARTMENTS ? rows : rows.filter((r) => r.department === department);
+    const label = department === ALL_DEPARTMENTS ? 'all-departments' : department.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    downloadCsv(`attendance-${label}-${days[0]}-to-${days[days.length - 1]}.csv`, attendanceCsv(scoped));
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -102,6 +120,13 @@ export function AttendanceLeaderboard() {
               <option key={d}>{d}</option>
             ))}
           </select>
+          <button
+            onClick={downloadReport}
+            disabled={loading || rows.length === 0}
+            className="text-sm font-semibold border border-slate-200 rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Download report
+          </button>
         </div>
       </div>
 
@@ -136,9 +161,9 @@ export function AttendanceLeaderboard() {
                 </td>
               </tr>
             ) : (
-              ranked.map((m, i) => (
+              pageRows.map((m, i) => (
                 <tr key={m.employeeId} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-5 py-3 text-sm font-semibold text-slate-400 whitespace-nowrap">{i + 1}</td>
+                  <td className="px-5 py-3 text-sm font-semibold text-slate-400 whitespace-nowrap">{pageStart + i + 1}</td>
                   <td className="px-5 py-3 text-sm font-medium text-slate-900 whitespace-nowrap">{m.employeeName}</td>
                   <td className="px-5 py-3 text-sm text-slate-600 whitespace-nowrap">{m.department ?? '—'}</td>
                   <td className="px-5 py-3 text-sm font-semibold text-indigo-700 whitespace-nowrap">
@@ -152,6 +177,33 @@ export function AttendanceLeaderboard() {
           </tbody>
         </table>
       </div>
+
+      {!loading && !loadError && ranked.length > PAGE_SIZE ? (
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-200">
+          <p className="text-xs text-slate-500">
+            Showing {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, ranked.length)} of {ranked.length}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(currentPage - 1)}
+              disabled={currentPage === 0}
+              className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Previous 10
+            </button>
+            <span className="text-xs text-slate-500">
+              Page {currentPage + 1} of {pageCount}
+            </span>
+            <button
+              onClick={() => setPage(currentPage + 1)}
+              disabled={currentPage >= pageCount - 1}
+              className="text-xs font-semibold px-3 py-1.5 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next 10
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

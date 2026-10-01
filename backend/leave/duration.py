@@ -1,11 +1,12 @@
 """Leave day-counting — how many days a request actually draws from a balance.
 
 A full-day request's duration excludes any day that's a configured week-off
-or a declared holiday (attendance.day_facts's own overlays): the same "you
+or a declared (mandatory) holiday on one of that employee's calendars
+(attendance.day_facts's own overlays): the same "you
 weren't going to work that day anyway" reasoning the frontend's own estimate
 already applies to weekends (leave/page.tsx's estimateDays). Week-offs being
 excluded is directly confirmed (they must be HR-configurable, not assumed —
-see org_calendar.WeekOff). **Excluding holidays the same way is this app's own
+see org_calendar.WeekOff, per calendar). **Excluding holidays the same way is this app's own
 consistent extension of that reasoning, not separately confirmed the same
 way** — flagged here specifically, since it's the one part of this
 calculation that wasn't a direct instruction. Revisit here if a holiday inside
@@ -29,10 +30,9 @@ def compute_duration_days(employee, start_date, end_date, half_day_option: str) 
     if half_day_option != HalfDayOption.FULL_DAY:
         return HALF_DAY
 
-    # is_weekend/is_holiday are both employee-independent org-wide facts, so
-    # `employee` is intentionally omitted here — no need for the range
-    # function's extra LeaveRequest query on top of the two org-wide ones.
-    facts_by_day = get_day_facts_range(start_date, end_date)
+    # Week-offs and holidays come from the employee's own calendars; leave
+    # overlap is not needed to count days, so skip that query.
+    facts_by_day = get_day_facts_range(start_date, end_date, employee=employee, include_leave=False)
     return Decimal(
         sum(1 for facts in facts_by_day.values() if not facts.is_weekend and not facts.is_holiday)
     )
