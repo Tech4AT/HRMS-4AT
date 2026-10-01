@@ -9,7 +9,11 @@ from rest_framework.routers import DefaultRouter
 
 from attendance.penalisation_views import MyPenalisationsView, PenalisationViewSet
 from attendance.settings_views import PolicySettingsView, ShiftViewSet
-from attendance.team_views import TeamDailyAttendanceView, TeamSummaryView
+from attendance.team_views import (
+    TeamDailyAttendanceView,
+    TeamMemberAttendanceView,
+    TeamSummaryView,
+)
 from attendance.views import AttendanceRequestViewSet, AttendanceViewSet
 
 router = DefaultRouter(trailing_slash=False)
@@ -49,6 +53,13 @@ urlpatterns = [
         "attendance/team/summary",
         TeamSummaryView.as_view(),
         name="attendance-team-summary",
+    ),
+    # One person's day-by-day detail (times, breaks), for people the caller may
+    # read in full.
+    path(
+        "attendance/team/member/<int:pk>",
+        TeamMemberAttendanceView.as_view(),
+        name="attendance-team-member",
     ),
     *router.urls,
 ]

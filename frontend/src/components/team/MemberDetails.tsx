@@ -6,9 +6,10 @@ import { MailIcon } from '@/components/icons';
 import { EMPLOYMENT_TYPES, fmtDate, STATUS_LABELS, type EmployeeStatus } from '@/lib/admin/orgApi';
 import type { MyTeamData } from '@/lib/api/myTeam';
 import { fullName, type DirectoryPerson } from '@/lib/team/groups';
+import { MemberAttendanceDetail } from '@/components/attendance/MemberAttendanceDetail';
 import { Avatar, BADGE, type MemberBadge } from './MemberCard';
 
-type DetailTab = 'profile' | 'job';
+type DetailTab = 'profile' | 'job' | 'attendance';
 
 function Item({ label, value }: { label: string; value: string | null | undefined }) {
   return (
@@ -28,6 +29,7 @@ export function MemberDetails({
   data,
   badge,
   canOpenProfile,
+  canViewAttendance,
   onClose,
 }: {
   person: DirectoryPerson;
@@ -35,6 +37,9 @@ export function MemberDetails({
   badge: MemberBadge;
   /** Whether to offer the full profile page (it enforces access itself). */
   canOpenProfile: boolean;
+  /** Whether the viewer may read this person's attendance in full (check-in/out
+   *  times, breaks). Decided by the backend; false hides the Attendance tab. */
+  canViewAttendance: boolean;
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<DetailTab>('profile');
@@ -59,7 +64,7 @@ export function MemberDetails({
         role="dialog"
         aria-modal="true"
         aria-label={`Details for ${name}`}
-        className="bg-white rounded-lg shadow-xl w-full max-w-xl overflow-hidden"
+        className={`bg-white rounded-lg shadow-xl w-full overflow-hidden ${tab === 'attendance' ? 'max-w-3xl' : 'max-w-xl'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-3 bg-slate-100 border-b border-slate-200">
@@ -89,17 +94,16 @@ export function MemberDetails({
         </div>
 
         <div className="flex gap-6 px-5 border-b border-slate-200" role="tablist">
-          {(
-            [
-              ['profile', 'Profile'],
-              ['job', 'Job'],
-            ] as const
-          ).map(([id, label]) => (
+          {[
+            ['profile', 'Profile'],
+            ['job', 'Job'],
+            ...(canViewAttendance ? [['attendance', 'Attendance']] : []),
+          ].map(([id, label]) => (
             <button
               key={id}
               role="tab"
               aria-selected={tab === id}
-              onClick={() => setTab(id)}
+              onClick={() => setTab(id as DetailTab)}
               className={`py-3 text-sm font-medium border-b-2 -mb-px transition-colors ${
                 tab === id ? 'border-indigo-600 text-indigo-700' : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
@@ -128,6 +132,8 @@ export function MemberDetails({
                 <Item label="Business unit" value={lookup(data.businessUnits, person.business_unit_id)} />
               </div>
             </div>
+) : tab === 'attendance' && canViewAttendance ? (
+            <MemberAttendanceDetail employeeId={person.id} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
               <Item label="Employee code" value={person.employee_code} />

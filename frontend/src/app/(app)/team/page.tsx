@@ -265,6 +265,8 @@ export default function TeamPage() {
           badge={badgeFor(byId.get(selected.id), statusById.get(selected.id))}
           // A manager may open a direct report's profile, HR anyone's; the page itself enforces access.
           canOpenProfile={hasOrgScope() || tab === 'direct'}
+          // Times and breaks only for people the backend lets this viewer read in full.
+          canViewAttendance={byId.get(selected.id)?.level === 'detail'}
           onClose={() => setSelected(null)}
         />
       ) : null}

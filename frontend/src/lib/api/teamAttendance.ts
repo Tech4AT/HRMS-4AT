@@ -67,6 +67,11 @@ export const teamAttendanceApi = {
   /** Every employee in the caller's scope, for every date in [from, to]
    *  (inclusive), one row each. Empty array (not an error) if the caller's
    *  scope resolves to nobody. */
+  /** One person's day-by-day detail (times, hours, every break) for someone the
+   *  caller may read in full; 403 for anyone else. At most 31 days. */
+  getMember: (employeeId: string, from: string, to: string) =>
+    request<TeamMemberAttendance>(`member/${employeeId}?from=${from}&to=${to}`),
+
   getDaily: (from: string, to: string) =>
     request<TeamAttendanceDayView[]>(`daily?from=${from}&to=${to}`),
 
@@ -75,6 +80,13 @@ export const teamAttendanceApi = {
   getSummary: (group: TeamGroup, month?: string) =>
     request<TeamSummary>(`summary?group=${group}${month ? `&month=${month}` : ''}`),
 };
+
+export interface TeamMemberAttendance {
+  employee_id: string;
+  employee_name: string;
+  department: string | null;
+  rows: TeamAttendanceDayView[];
+}
 
 export type TeamGroup = 'direct' | 'indirect' | 'peers';
 

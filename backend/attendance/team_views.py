@@ -27,7 +27,7 @@ import calendar
 from datetime import date, timedelta
 
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
@@ -122,6 +122,53 @@ class TeamDailyAttendanceView(APIView):
 
         rows = build_day_rows(employees, start_date, end_date, timezone.localdate())
         return Response({"success": True, "data": rows})
+
+
+MAX_MEMBER_WINDOW_DAYS = 31
+
+
+class TeamMemberAttendanceView(APIView):
+    """`/attendance/team/member/<employee id>?month=YYYY-MM` or `?from=&to=` —
+    one person's day-by-day attendance (check-in/out, hours, late/early/overtime,
+    every break) for a manager or HR looking into someone, at most 31 days.
+
+    Only for people the caller may read in full (the same manageable-scope rule
+    as the Dashboard and My Team): anyone else, including a peer who could see
+    this person's presence, gets 403 and no data."""
+
+    renderer_classes = [JSONRenderer]
+    parser_classes = [JSONParser]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        if not can_view_team_attendance(request.user):
+            raise PermissionDenied("You don't have access to team attendance data.")
+        employee = Employee.objects.select_related("user", "department").filter(pk=pk).first()
+        if employee is None:
+            raise NotFound("No such employee.")
+        if employee.pk not in manageable_employee_ids(request.user):
+            raise PermissionDenied("You may not view this person's attendance.")
+
+        start_date, end_date = _resolve_window(request)
+        if end_date < start_date:
+            raise ValidationError({"to": "Must not be before the start date."})
+        if (end_date - start_date).days + 1 > MAX_MEMBER_WINDOW_DAYS:
+            raise ValidationError(
+                {"to": f"At most {MAX_MEMBER_WINDOW_DAYS} days can be viewed at once."}
+            )
+
+        rows = build_day_rows([employee], start_date, end_date, timezone.localdate())
+        return Response(
+            {
+                "success": True,
+                "data": {
+                    "employee_id": str(employee.pk),
+                    "employee_name": _display_name(employee),
+                    "department": employee.department.name if employee.department_id else None,
+                    "rows": rows,
+                },
+            }
+        )
 
 
 # What the caller learns about someone they may not read in full.

@@ -92,6 +92,15 @@ def build_day_view(the_date, record, *, today, employee=None, facts=None, shift=
         "record_id": str(record.pk) if record else None,
         "on_break": on_break,
         "break_minutes": break_minutes,
+        # Each break in the order taken; `end` is null for one still in progress.
+        "breaks": [
+            {
+                "start": b.start_time.isoformat(),
+                "end": b.end_time.isoformat() if b.end_time else None,
+                "minutes": b.minutes,
+            }
+            for b in breaks
+        ],
         "is_wfh_day": facts.is_org_wfh_day,
         "wfh_note": facts.org_wfh_note,
         "wfh_description": facts.org_wfh_description,
