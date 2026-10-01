@@ -118,10 +118,12 @@ const uniqueValues = (employees: Employee[], key: FilterKey) =>
 
 export default function OrgPage() {
   const searchParams = useSearchParams();
-  const { hasPermission } = useAuth();
+  const { hasPermission, hasOrgScope } = useAuth();
   // HR/managers who manage org documents get the full management section;
   // plain employees get the read/acknowledge view of docs pushed to them.
-  const canManageDocs = hasPermission('documents.write') || hasPermission('org.manage');
+  // Every employee holds documents.write at SELF scope, so org scope is what
+  // separates managers here (mirrors backend _can_manage_org_documents).
+  const canManageDocs = hasOrgScope() && (hasPermission('documents.write') || hasPermission('org.manage'));
   const [tab, setTab] = useState<'directory' | 'chart' | 'documents'>('directory');
 
   const [employees, setEmployees] = useState<Employee[]>([]);
