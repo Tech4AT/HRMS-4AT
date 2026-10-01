@@ -79,7 +79,7 @@ export default function PoliciesPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h3 className="text-sm font-bold text-gray-900">{p.title}</h3>
+                    <h3 className="text-sm font-bold text-slate-900">{p.title}</h3>
                     {!p.isActive && <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-500">Deactivated</span>}
                     {p.requiresAcknowledgment && <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-700">Requires acknowledgment</span>}
                   </div>
@@ -192,7 +192,7 @@ function CreatePolicyDialog({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-lg w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-4">New Policy</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-4">New Policy</h2>
         <form onSubmit={submit} className="space-y-4">
           <label className="block">
             <span className="block text-xs font-semibold text-gray-600 mb-1">Title *</span>
@@ -241,7 +241,7 @@ function AcknowledgmentsDialog({ policy, onClose }: { policy: CompanyPolicy; onC
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-lg w-full p-6 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-1">Acknowledgments</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-1">Acknowledgments</h2>
         <p className="text-sm text-gray-500 mb-4">{policy.title}</p>
         <div className="flex-1 overflow-y-auto">
           {acks === null ? (

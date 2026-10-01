@@ -190,7 +190,7 @@ export default function PerformancePage() {
                   <div className="p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-xl font-bold text-gray-900">{cycles[review.cycleId] ?? 'Performance Review'}</h3>
+                        <h3 className="text-base font-bold text-slate-900">{cycles[review.cycleId] ?? 'Performance Review'}</h3>
                         <p className="text-gray-600 mt-1">
                           {review.appraisalType.charAt(0).toUpperCase() + review.appraisalType.slice(1)} review • {statusLabel(review.status)}
                         </p>
@@ -230,7 +230,7 @@ export default function PerformancePage() {
                   <div className="p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
-                        <h3 className="text-sm font-semibold text-slate-900">{goal.goalTitle}</h3>
+                        <h3 className="text-sm font-bold text-slate-900">{goal.goalTitle}</h3>
                         {goal.targetDate && (
                           <p className="text-sm text-gray-600 mt-1">Due: {new Date(goal.targetDate).toLocaleDateString()}</p>
                         )}
@@ -299,7 +299,7 @@ export default function PerformancePage() {
 
             {feedbackType === 'give' && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
-                <h3 className="text-xl font-bold text-gray-900 mb-6">Give Feedback</h3>
+                <h3 className="text-base font-bold text-slate-900 mb-6">Give Feedback</h3>
                 <div className="space-y-5">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">To</label>
@@ -333,7 +333,7 @@ export default function PerformancePage() {
 
             {feedbackType === 'request' && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
-                <h3 className="text-xl font-bold text-gray-900 mb-6">Request Feedback</h3>
+                <h3 className="text-base font-bold text-slate-900 mb-6">Request Feedback</h3>
                 <div className="space-y-5">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">From</label>
@@ -394,7 +394,7 @@ export default function PerformancePage() {
         {activeTab === 'skills' && (
           <div className="space-y-6">
             <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-              <h3 className="text-xl font-bold text-gray-900 mb-6">Skills Assessment</h3>
+              <h3 className="text-base font-bold text-slate-900 mb-6">Skills Assessment</h3>
               <div className="space-y-6">
                 {[
                   { skill: 'TypeScript', selfRating: 4, managerRating: 4, importance: 'Critical' },
@@ -470,7 +470,7 @@ export default function PerformancePage() {
 
             {showMeetingForm && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-sm">
-                <h3 className="text-xl font-bold text-gray-900 mb-6">Schedule 1:1 Meeting</h3>
+                <h3 className="text-base font-bold text-slate-900 mb-6">Schedule 1:1 Meeting</h3>
                 <div className="space-y-5">
                   <div>
                     <label className="block text-sm font-semibold text-gray-900 mb-2">With</label>
