@@ -178,10 +178,7 @@ export default function AssetsPage() {
     >
       <div className="p-6">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">Assets</h1>
-            <p className="mt-1 text-sm text-gray-500">Company laptop inventory{total ? ` — ${total} total` : ''}</p>
-          </div>
+          <p className="text-sm text-gray-500">{total ? `${total} total` : ''}</p>
           <div className="flex gap-2">
             <a
               href={assetExportUrl(filters)}

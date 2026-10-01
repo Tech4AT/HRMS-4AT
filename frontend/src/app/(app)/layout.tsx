@@ -279,6 +279,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
+  '/assets': { title: 'Assets', subtitle: 'Company laptop inventory and allocation' },
   '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Find answers to common questions' },
