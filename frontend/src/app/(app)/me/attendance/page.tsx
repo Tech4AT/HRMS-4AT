@@ -745,7 +745,7 @@ function AttendanceTab() {
         {logSubTab === 'log' ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-              <h3 className="text-sm font-semibold text-slate-900">{logRangeLabel}</h3>
+              <h3 className="text-sm font-bold text-slate-900">{logRangeLabel}</h3>
               <div className="flex items-center gap-3">
                 <div className="relative">
                   <button

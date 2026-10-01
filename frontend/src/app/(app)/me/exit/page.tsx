@@ -91,7 +91,7 @@ export default function MyExitPage() {
               </svg>
             </div>
             <div>
-              <h2 className="text-lg font-bold text-gray-900">Submit Resignation</h2>
+              <h2 className="text-base font-bold text-slate-900">Submit Resignation</h2>
               <p className="text-sm text-gray-500">Notice period: {noticePeriodDays} days</p>
             </div>
           </div>
@@ -113,7 +113,7 @@ export default function MyExitPage() {
 
       {showForm && (
         <div className="bg-white rounded-2xl border border-gray-200 p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-1">Submit Resignation</h2>
+          <h2 className="text-base font-bold text-slate-900 mb-1">Submit Resignation</h2>
           <p className="text-xs text-gray-500 mb-5">Your notice period is {noticePeriodDays} days. HR will review and confirm your last working day.</p>
           <form onSubmit={handleResign} className="space-y-4">
             <label className="block">
@@ -166,7 +166,7 @@ export default function MyExitPage() {
           <div className="bg-white rounded-2xl border border-gray-200 p-6">
             <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
               <div>
-                <h2 className="text-base font-bold text-gray-900">Resignation</h2>
+                <h2 className="text-base font-bold text-slate-900">Resignation</h2>
                 <p className="text-xs text-gray-500">Submitted {formatDate(resignation.submittedAt)}</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-semibold ${RESIGNATION_STATUS_COLOR[resignation.status]}`}>

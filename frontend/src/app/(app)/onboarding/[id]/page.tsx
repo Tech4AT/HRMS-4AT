@@ -243,7 +243,7 @@ export default function OnboardingRecordDetailPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-xl font-bold text-gray-900">{record.employee.name}</h2>
+                  <h2 className="text-base font-bold text-slate-900">{record.employee.name}</h2>
                   <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STAGE_COLOR[record.stage]}`}>
                     {STAGE_LABEL[record.stage]}
                   </span>
@@ -311,7 +311,7 @@ export default function OnboardingRecordDetailPage() {
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-bold text-gray-900">Offer Letter</h3>
+                    <h3 className="text-base font-bold text-slate-900">Offer Letter</h3>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${OFFER_STATUS_COLOR[record.offerLetter.status]}`}>
                       {OFFER_STATUS_LABEL[record.offerLetter.status]}
                     </span>
@@ -449,7 +449,7 @@ export default function OnboardingRecordDetailPage() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <FingerprintIcon className="w-4 h-4 text-gray-400" />
-                    <h3 className="font-bold text-gray-900">Background Verification</h3>
+                    <h3 className="text-base font-bold text-slate-900">Background Verification</h3>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${BGV_STATUS_COLOR[record.backgroundVerification.status]}`}>
                       {BGV_STATUS_LABEL[record.backgroundVerification.status]}
                     </span>
@@ -517,7 +517,7 @@ export default function OnboardingRecordDetailPage() {
             return (
               <div key={category} className="bg-white rounded-2xl border border-gray-200 p-5 mb-4">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-bold text-gray-900">{category === 'preboarding' ? 'Preboarding checklist' : 'Onboarding checklist'}</h3>
+                  <h3 className="text-base font-bold text-slate-900">{category === 'preboarding' ? 'Preboarding checklist' : 'Onboarding checklist'}</h3>
                   {isHrAdmin && (
                     <button
                       onClick={() => setShowAddTask(true)}
@@ -694,7 +694,7 @@ function EditEmailModal({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-1">Edit candidate email</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-1">Edit candidate email</h2>
         <p className="text-xs text-gray-500 mb-4">
           Corrects the address on file — future offer sends/resends and notifications use the updated address.
           The login account&rsquo;s email is updated to match the work email.
@@ -791,7 +791,7 @@ function AddTaskModal({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-4">Add task</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-4">Add task</h2>
         <form onSubmit={submit} className="space-y-3">
           <input
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
@@ -1049,7 +1049,7 @@ function IdentityDocumentsSection({ recordId, employeeName }: { recordId: number
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="font-bold text-gray-900">Identity Documents</h3>
+        <h3 className="text-base font-bold text-slate-900">Identity Documents</h3>
       </div>
       <p className="text-xs text-gray-400 mb-3">HR Admin &amp; Finance can view; only HR Admin can verify. Showing a full number (eye icon) is audited.</p>
 
@@ -1242,7 +1242,7 @@ function EducationRecordsSection({ recordId, employeeName }: { recordId: number;
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
-      <h3 className="font-bold text-gray-900 mb-1">Degrees & Certificates</h3>
+      <h3 className="text-base font-bold text-slate-900 mb-1">Degrees & Certificates</h3>
       <p className="text-xs text-gray-400 mb-3">Visible to HR Admin, Finance, and this employee&apos;s manager.</p>
 
       {records.length === 0 ? (
@@ -1371,7 +1371,7 @@ function ResumeSection({ employeeId, employeeName }: { employeeId: number; emplo
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
-      <h3 className="font-bold text-gray-900 mb-1">Resume</h3>
+      <h3 className="text-base font-bold text-slate-900 mb-1">Resume</h3>
       <p className="text-xs text-gray-400 mb-3">Visible to HR Admin and this employee&apos;s manager.</p>
 
       {docs.length === 0 ? (
@@ -1446,7 +1446,7 @@ function EmployeeLettersSection({ recordId }: { recordId: number }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="font-bold text-gray-900">Employee Letters</h3>
+        <h3 className="text-base font-bold text-slate-900">Employee Letters</h3>
         {!adding && (
           <button onClick={() => setAdding(true)} className="flex items-center gap-1 text-purple-600 text-xs font-semibold hover:underline">
             <PlusIcon className="w-3.5 h-3.5" />
@@ -1633,7 +1633,7 @@ function BankDetailsSection({ recordId }: { recordId: number }) {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="font-bold text-gray-900">Bank Account Details</h3>
+        <h3 className="text-base font-bold text-slate-900">Bank Account Details</h3>
       </div>
       <p className="text-xs text-gray-400 mb-3">HR Admin &amp; Finance only. Showing the full number (eye icon) is audited.</p>
 
