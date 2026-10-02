@@ -341,7 +341,9 @@ export const adminApi = {
   ) =>
     request<Role>(`roles/${id}/`, { method: 'PATCH', body }),
   deleteRole: (id: number) => request<void>(`roles/${id}/`, { method: 'DELETE' }),
-  listPermissions: () => request<Page<Permission>>(`permissions/${qs({ pageSize: 100 })}`),
+  // Catalog is ~107 and grows slowly; 500 (max_page_size 1000) fetches all in
+  // one page. ponytail: single-page fetch, paginate if the catalog ever nears 500.
+  listPermissions: () => request<Page<Permission>>(`permissions/${qs({ pageSize: 500 })}`),
 
   // what a role grants
   addGrant: (role: number, permission: number, scopeTier: ScopeTier) =>

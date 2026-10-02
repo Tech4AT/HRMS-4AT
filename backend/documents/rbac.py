@@ -19,7 +19,7 @@ directly and consult the entity mapping for everyone else.
 """
 
 from core.enums import ScopeTier
-from core.registry import ModuleSpec, PermissionSpec, register_module
+from core.registry import ModuleSpec, PermissionSpec, register_module, register_permissions
 
 register_module(
     ModuleSpec(
@@ -52,4 +52,37 @@ register_module(
             ),
         ),
     )
+)
+
+
+# ---------------------------------------------------------------------------
+# Fine-grained Employee Document Privileges (catalog mirrored from the HR
+# reference UI). These cover employee personal-document management and are
+# namespaced employee_documents.* so they don't collide with the coarse
+# documents.read/write codes above (which cover org/shared documents).
+# ---------------------------------------------------------------------------
+_EDOC = {"HR Admin": ScopeTier.ALL, "Manager": ScopeTier.MANAGER}
+_EDOC_HR = {"HR Admin": ScopeTier.ALL}
+
+register_permissions(
+    PermissionSpec("employee_documents.view", "View employees' documents within the holder's scope.",
+                   label="View Employee Documents", group="Employee Document Privileges", default_grants=_EDOC),
+    PermissionSpec("employee_documents.write", "Add or edit an employee's documents.",
+                   label="Add / Edit Employee Documents", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.delete", "Delete an employee's documents.",
+                   label="Delete Employee Documents", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.download", "Download an employee's documents.",
+                   label="Download Employee Documents", group="Employee Document Privileges", default_grants=_EDOC),
+    PermissionSpec("employee_documents.remind", "Send an employee a reminder to submit a required document.",
+                   label="Remind Employee To Submit Document", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.verify", "Verify an employee's submitted document.",
+                   label="Verify Employee Documents", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.definitions.manage", "Create and manage document definitions (applies organisation-wide).",
+                   label="Manage Document Definitions", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.audit.view", "View the audit log of document actions.",
+                   label="View Document Audit Logs", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.bulk_upload.manage", "Upload and manage employee documents in bulk.",
+                   label="Manage Bulk Upload Documents", group="Employee Document Privileges", default_grants=_EDOC_HR),
+    PermissionSpec("employee_documents.bulk_upload.move", "Move bulk-uploaded documents into employee profiles.",
+                   label="Move Bulk Uploaded Documents in Profile", group="Employee Document Privileges", default_grants=_EDOC_HR),
 )
