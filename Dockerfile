@@ -40,17 +40,17 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN cd frontend && npm run build
 
 # --- Runtime configuration ---
+# This is a demo/dev convenience image. Secrets (DJANGO_SECRET_KEY, POSTGRES_PASSWORD,
+# INITIAL_ADMIN_PASSWORD) must be injected at runtime — they are NOT baked in.
+# See env.example for the full variable reference.
 ENV DJANGO_SETTINGS_MODULE=config.settings.dev \
-    DJANGO_SECRET_KEY=demo-only-change-me \
     DJANGO_DEBUG=true \
     DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0 \
     POSTGRES_DB=hrms \
     POSTGRES_USER=hrms \
-    POSTGRES_PASSWORD=hrms \
     POSTGRES_HOST=127.0.0.1 \
     POSTGRES_PORT=5432 \
     INITIAL_ADMIN_EMAIL=admin@hrms.local \
-    INITIAL_ADMIN_PASSWORD=Admin12345! \
     BACKEND_API_URL=http://localhost:3000/api/v1 \
     MOCK_AUTH=false \
     PGDATA=/var/lib/postgresql/data
