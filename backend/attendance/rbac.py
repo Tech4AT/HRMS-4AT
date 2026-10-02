@@ -54,3 +54,35 @@ register_permissions(
         default_grants={"HR Admin": ScopeTier.ALL},
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Fine-grained Attendance Privileges (catalog mirrored from the HR reference
+# UI). These give the role builder a granular "Attendance Privileges" group
+# for manager/HR self-service-on-behalf and approvals, alongside the coarse
+# attendance.read/write/approve codes above.
+# ---------------------------------------------------------------------------
+_ATT = {"HR Admin": ScopeTier.ALL, "Manager": ScopeTier.MANAGER}
+
+register_permissions(
+    PermissionSpec("attendance.details.view", "View employees' attendance details within the holder's scope.",
+                   label="View employees attendance details", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.regularization.apply_on_behalf", "Raise an attendance adjustment / regularization on an employee's behalf.",
+                   label="Apply for attendance adjustment / regularization on behalf of employees", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.regularization.approve", "Approve or reject attendance adjustment / regularization requests.",
+                   label="Approve/Reject attendance adjustment / regularization requests", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.wfh_od.apply_on_behalf", "Apply Work from Home (WFH) / On Duty (OD) on an employee's behalf.",
+                   label="Apply 'Work from Home (WFH) / On Duty (OD)' on behalf of employees", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.wfh_od.approve", "Approve or reject Work from Home (WFH) / On Duty (OD) requests.",
+                   label="Approve/Reject 'Work from Home (WFH) / On Duty (OD)' requests", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.wfh_od.cancel", "Cancel a Work from Home (WFH) / On Duty (OD) request.",
+                   label="Cancel 'Work from Home (WFH) / On Duty (OD)' requests", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.partial_day.apply_on_behalf", "Apply for a partial day on an employee's behalf.",
+                   label="Apply for partial day on behalf of employees", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.partial_day.approve", "Approve or reject partial day requests.",
+                   label="Approve/Reject partial day requests", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.partial_day.cancel", "Cancel a partial day request.",
+                   label="Cancel partial day request", group="Attendance Privileges", default_grants=_ATT),
+    PermissionSpec("attendance.ot.view", "View employees' overtime (OT) requests.",
+                   label="View employees' overtime (OT) requests", group="Attendance Privileges", default_grants=_ATT),
+)
