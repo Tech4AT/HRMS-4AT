@@ -20,10 +20,16 @@ if LMS_INTEGRATION_ENABLED:  # noqa: F405
         if not _lms_val:
             raise RuntimeError(f"{_lms_var} must be set when LMS_INTEGRATION_ENABLED=true in prod")
 
-SECURE_SSL_REDIRECT = True
+# TLS-dependent hardening. Defaults True (behind an ALB/Docker that terminates
+# TLS). On the bare-metal EC2 box served over plain HTTP, set
+# DJANGO_SECURE_SSL_REDIRECT=False and DJANGO_SECURE_COOKIES=False until a
+# domain + certificate exist — otherwise every request 301-loops to https (port
+# 443 is dead) and Secure-flagged cookies are dropped, breaking login. Flip both
+# to True the moment TLS is in front.
+SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)  # noqa: F405
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = env.bool("DJANGO_SECURE_COOKIES", default=True)  # noqa: F405
+CSRF_COOKIE_SECURE = env.bool("DJANGO_SECURE_COOKIES", default=True)  # noqa: F405
 
 # WhiteNoise: serve /admin static files without a CDN. Insert after SecurityMiddleware.
 MIDDLEWARE = [  # noqa: F405
@@ -31,7 +37,7 @@ MIDDLEWARE = [  # noqa: F405
     "whitenoise.middleware.WhiteNoiseMiddleware",
 ] + MIDDLEWARE[1:]  # noqa: F405
 
-STATIC_ROOT = "/app/staticfiles"
+STATIC_ROOT = env("DJANGO_STATIC_ROOT", default="/app/staticfiles")  # noqa: F405
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 LOGGING = {

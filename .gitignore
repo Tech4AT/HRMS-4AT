@@ -50,6 +50,14 @@ backend/verification-reports/
 backend/**/management/commands/data/
 backend/**/fixtures/*.real.*
 
+# ---- PII / DB dumps / local exports (never commit; EC2 never receives these
+# either — the Jenkins rsync ships only backend/ and frontend/) ----
+docs/*.csv
+docs/*.xlsx
+docs/*.xls
+*.sql
+hrms_dump.sql
+
 # ---- General build artifacts ----
 dist/
 build/

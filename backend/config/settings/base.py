@@ -93,6 +93,9 @@ DATABASES = {
         "PASSWORD": env("POSTGRES_PASSWORD", default="hrms"),
         "HOST": env("POSTGRES_HOST", default="localhost"),
         "PORT": env("POSTGRES_PORT", default="5432"),
+        # RDS enforces TLS; set POSTGRES_SSLMODE=require on EC2. Default "prefer"
+        # keeps local/docker Postgres (no SSL) connecting unchanged.
+        "OPTIONS": {"sslmode": env("POSTGRES_SSLMODE", default="prefer")},
     }
 }
 
