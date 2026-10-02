@@ -5,12 +5,16 @@ import { PermissionGate } from '@/components/PermissionGate';
 import { useAuth } from '@/lib/auth/useAuth';
 import {
   Asset,
+  AssetFilters,
   AssetInput,
+  AssetStats,
   AssetStatus,
   AssetsApiError,
+  assetExportUrl,
   assignAsset,
   createAsset,
   deleteAsset,
+  fetchAssetStats,
   importAssets,
   listAssets,
   updateAsset,
@@ -48,6 +52,11 @@ export default function AssetsPage() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<AssetStatus | ''>('');
   const [assigned, setAssigned] = useState<'true' | 'false' | ''>('');
+  const [category, setCategory] = useState('');
+  const [brand, setBrand] = useState('');
+  const [hasBag, setHasBag] = useState<'true' | 'false' | ''>('');
+  const [allottedYear, setAllottedYear] = useState('');
+  const [stats, setStats] = useState<AssetStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [directory, setDirectory] = useState<OrgEmployee[]>([]);
@@ -115,23 +124,36 @@ export default function AssetsPage() {
     }
   };
 
+  const filters: AssetFilters = {
+    search: search || undefined,
+    status: status || undefined,
+    assigned: assigned || undefined,
+    category: category || undefined,
+    brand: brand || undefined,
+    hasBag: hasBag || undefined,
+    allottedYear: allottedYear || undefined,
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [result, dir] = await Promise.all([
-        listAssets({ search: search || undefined, status: status || undefined, assigned: assigned || undefined, page, pageSize: 20 }),
+      const [result, dir, s] = await Promise.all([
+        listAssets({ ...filters, page, pageSize: 20 }),
         canWrite ? orgApi.listDirectory().catch(() => [] as OrgEmployee[]) : Promise.resolve([] as OrgEmployee[]),
+        fetchAssetStats(filters).catch(() => null),
       ]);
       setItems(result.items);
       setTotal(result.total);
       setDirectory(dir);
+      setStats(s);
     } catch (e) {
       setError(e instanceof AssetsApiError ? e.message : 'Failed to load assets');
     } finally {
       setLoading(false);
     }
-  }, [search, status, assigned, page, canWrite]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, status, assigned, category, brand, hasBag, allottedYear, page, canWrite]);
 
   useEffect(() => {
     load();
@@ -156,12 +178,17 @@ export default function AssetsPage() {
     >
       <div className="p-6">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold">Assets</h1>
-            <p className="mt-1 text-sm text-gray-500">Company laptop inventory{total ? ` — ${total} total` : ''}</p>
-          </div>
-          {canWrite && (
-            <div className="flex gap-2">
+          <p className="text-sm text-gray-500">{total ? `${total} total` : ''}</p>
+          <div className="flex gap-2">
+            <a
+              href={assetExportUrl(filters)}
+              className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              title="Download the filtered inventory as a CSV"
+            >
+              Download CSV
+            </a>
+            {canWrite && (
+              <>
               <input
                 ref={fileRef}
                 type="file"
@@ -183,9 +210,27 @@ export default function AssetsPage() {
               >
                 Add asset
               </button>
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
+
+        {stats && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {([
+              ['Total', stats.total],
+              ['Assigned', stats.assigned],
+              ['Available', stats.available],
+              ['Recovered', stats.recovered],
+              ['Issued this year', stats.issuedThisYear],
+            ] as const).map(([label, value]) => (
+              <div key={label} className="border border-gray-200 rounded-lg px-4 py-3 bg-white">
+                <div className="text-xs uppercase text-gray-500">{label}</div>
+                <div className="mt-1 text-2xl font-semibold">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {notice && <div className="mt-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{notice}</div>}
 
@@ -215,6 +260,38 @@ export default function AssetsPage() {
             <option value="true">Assigned only</option>
             <option value="false">Unassigned only</option>
           </select>
+          <select
+            value={category}
+            onChange={(e) => { setCategory(e.target.value); setPage(1); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">All categories</option>
+            {Object.keys(stats?.byCategory ?? {}).map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <input
+            value={brand}
+            onChange={(e) => { setBrand(e.target.value); setPage(1); }}
+            placeholder="Brand…"
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-40 focus:outline-none focus:border-indigo-500"
+          />
+          <select
+            value={hasBag}
+            onChange={(e) => { setHasBag(e.target.value as 'true' | 'false' | ''); setPage(1); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Bag: any</option>
+            <option value="true">With bag</option>
+            <option value="false">No bag</option>
+          </select>
+          <input
+            type="number"
+            value={allottedYear}
+            onChange={(e) => { setAllottedYear(e.target.value); setPage(1); }}
+            placeholder="Allotted year"
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-32 focus:outline-none focus:border-indigo-500"
+          />
         </div>
 
         {error && <div className="mt-4 text-sm text-red-600">{error}</div>}

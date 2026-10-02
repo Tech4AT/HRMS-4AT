@@ -91,7 +91,7 @@ export default function MyOnboardingPage() {
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8">
       <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
         <div className="flex items-center gap-3 mb-2">
-          <h1 className="text-xl font-bold text-gray-900">Welcome, {data.employee.name.split(' ')[0]}!</h1>
+          <h2 className="text-base font-bold text-slate-900">Welcome, {data.employee.name.split(' ')[0]}!</h2>
           <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${STAGE_COLOR[data.stage]}`}>
             {STAGE_LABEL[data.stage]}
           </span>
@@ -112,7 +112,7 @@ export default function MyOnboardingPage() {
 
       <div id="identity-documents" className="bg-white rounded-2xl border border-gray-200 p-5 mb-4 scroll-mt-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-bold text-gray-900 mb-1">Documents</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Documents</h3>
           <p className="text-xs text-gray-500">Identity documents, degrees &amp; certificates and your offer letter now live on your profile.</p>
         </div>
         <Link href="/profile?tab=documents" className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
@@ -129,7 +129,7 @@ export default function MyOnboardingPage() {
         if (tasks.length === 0) return null;
         return (
           <div key={category} className="bg-white rounded-2xl border border-gray-200 p-5 mb-4">
-            <h3 className="font-bold text-gray-900 mb-4">{category === 'preboarding' ? 'Before you join' : 'Getting started'}</h3>
+            <h3 className="text-base font-bold text-slate-900 mb-4">{category === 'preboarding' ? 'Before you join' : 'Getting started'}</h3>
             <div className="space-y-2">
               {tasks.map((task) => {
                 const isMine = task.owner === data.myOwnerRole;
@@ -419,7 +419,7 @@ function BankDetailsCard({ onSaved }: { onSaved: () => void }) {
   return (
     <div id="bank-details" className="bg-white rounded-2xl border border-gray-200 p-5 mb-4 scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
-        <h3 className="font-bold text-gray-900">Bank Account Details</h3>
+        <h3 className="text-base font-bold text-slate-900">Bank Account Details</h3>
         {existing && !editing && (
           <button onClick={() => setEditing(true)} className="text-purple-600 text-xs font-semibold hover:underline">
             Edit

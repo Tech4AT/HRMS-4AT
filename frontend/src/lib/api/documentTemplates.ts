@@ -78,6 +78,29 @@ export interface TemplateFilters {
   workflowEnabled?: boolean;
 }
 
+export interface TemplatePayload {
+  name: string;
+  folder?: number | null;
+  actionType?: string;
+  workflowEnabled?: boolean;
+  body?: string;
+}
+
+/** JSON when there is no file; multipart (so the .docx rides along) otherwise. */
+function buildInit(method: string, payload: Partial<TemplatePayload>, file?: File | null): RequestInit {
+  if (!file) {
+    return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+  }
+  const form = new FormData();
+  if (payload.name !== undefined) form.append('name', payload.name);
+  if (payload.folder != null) form.append('folder', String(payload.folder));
+  if (payload.actionType !== undefined) form.append('actionType', payload.actionType);
+  if (payload.workflowEnabled !== undefined) form.append('workflowEnabled', String(payload.workflowEnabled));
+  if (payload.body !== undefined) form.append('body', payload.body);
+  form.append('file', file);
+  return { method, body: form };
+}
+
 export const documentTemplatesApi = {
   list: (filters: TemplateFilters = {}) => {
     const params = new URLSearchParams();
@@ -89,12 +112,11 @@ export const documentTemplatesApi = {
     return request<DocumentTemplate[]>(qs ? `?${qs}` : '').then((v) => v ?? []);
   },
   folders: () => request<TemplateFolder[]>('/folders').then((v) => v ?? []),
-  create: (payload: { name: string; folder?: number | null; actionType?: string; workflowEnabled?: boolean; body?: string }) =>
-    request<DocumentTemplate>('', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).then((v) => v as DocumentTemplate),
+  create: (payload: TemplatePayload, file?: File | null) =>
+    request<DocumentTemplate>('', buildInit('POST', payload, file)).then((v) => v as DocumentTemplate),
+  update: (id: number, payload: Partial<TemplatePayload>, file?: File | null) =>
+    request<DocumentTemplate>(`/${id}`, buildInit('PATCH', payload, file)).then((v) => v as DocumentTemplate),
+  remove: (id: number) => request<unknown>(`/${id}`, { method: 'DELETE' }),
   generate: (id: number) =>
     request<GeneratedDocument>(`/${id}/generate`, { method: 'POST' }).then((v) => v as GeneratedDocument),
 };

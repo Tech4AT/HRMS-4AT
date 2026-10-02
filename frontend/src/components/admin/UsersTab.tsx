@@ -98,7 +98,7 @@ export function UsersTab() {
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Users</h2>
+          <h2 className="text-base font-bold text-slate-900">Users</h2>
           <p className="text-sm text-gray-600 max-w-2xl mt-1">
             Everyone with access. Change a person&apos;s roles or manage their personal
             exceptions from the Actions menu on their row.

@@ -19,11 +19,6 @@ export default function AdminEmployeesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900">👨‍💼 Employee Administration</h1>
-        <p className="text-gray-600 mt-2">Manage employees, departments, and designations</p>
-      </div>
-
       <EmployeeBulkUpload />
     </div>
   );

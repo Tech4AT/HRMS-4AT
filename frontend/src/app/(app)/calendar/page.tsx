@@ -61,7 +61,7 @@ export default function CalendarPage() {
     <div className="min-h-screen bg-gray-50 font-['Inter']">
       <div className="p-4 sm:p-8 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Upcoming Events</h2>
+          <h2 className="text-sm font-bold text-slate-900 mb-4">Upcoming Events</h2>
           <div className="space-y-4">
             {events.map((event) => (
               <div key={event.title} className="flex gap-4">
@@ -80,7 +80,7 @@ export default function CalendarPage() {
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Upcoming Holidays</h2>
+          <h2 className="text-sm font-bold text-slate-900 mb-4">Upcoming Holidays</h2>
           {holidays === null ? (
             <p className="text-xs text-gray-400">Loading…</p>
           ) : holidays.length === 0 ? (
@@ -112,7 +112,7 @@ export default function CalendarPage() {
         </div>
 
         <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">On Leave (this &amp; next month)</h2>
+          <h2 className="text-sm font-bold text-slate-900 mb-4">On Leave (this &amp; next month)</h2>
           {onLeave === null ? (
             <p className="text-xs text-gray-400">Loading…</p>
           ) : onLeave.length === 0 ? (

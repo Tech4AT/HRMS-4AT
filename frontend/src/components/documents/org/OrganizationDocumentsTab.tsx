@@ -17,9 +17,7 @@ import {
   type OrgDocument,
   type AudienceRole,
 } from '@/lib/api/documents';
-import { adminApi, type Role } from '@/lib/admin/api';
 import { BTN_OUTLINE, BTN_PRIMARY, EmptyRow, FolderIcon, SectionHeader, SELECT, TH } from './shared';
-import { PendingAcknowledgements } from './PendingAcknowledgements';
 
 const COLS = ['Document title', 'Description', 'Acknowledgement required', 'Views/Acknowledge', 'Expiration date', 'Size', 'Last updated', 'Actions'];
 
@@ -122,7 +120,7 @@ export function OrganizationDocumentsTab() {
   const [audience, setAudience] = useState<OrgDocAudience>('all_employees');
   const [ack, setAck] = useState(false);
   // Role-based audience: which roles may see the doc + per-role view/ack.
-  const [roles, setRoles] = useState<Role[]>([]);
+  const [roles, setRoles] = useState<{ id: number; name: string }[]>([]);
   const [audRoles, setAudRoles] = useState<AudienceRole[]>([]);
   const [expiryOn, setExpiryOn] = useState(false);
   const [expiry, setExpiry] = useState('');
@@ -243,14 +241,15 @@ export function OrganizationDocumentsTab() {
     if (docs) void loadStatuses(docs);
   }, [docs, loadStatuses]);
 
-  // Roles for the audience picker (HR only — the picker is HR-gated anyway).
+  // Roles for the audience picker. Uses the document-manager-readable
+  // active-roles endpoint (gated by org.manage / HR), NOT the roles.manage
+  // admin list — an HR doc-manager without roles.manage still needs role names.
   useEffect(() => {
-    if (!isHr) return;
-    adminApi
-      .listRoles()
-      .then((p) => setRoles((p.results ?? []).filter((r) => r.isActive)))
+    documentsApi
+      .audienceRoles()
+      .then(setRoles)
       .catch(() => setRoles([]));
-  }, [isHr]);
+  }, []);
 
   /** "Remind pending acknowledgements" notifies every in-scope employee still
    * pending on each ack-required document in the current view, then refreshes
@@ -262,19 +261,23 @@ export function OrganizationDocumentsTab() {
     try {
       const targets = docs.filter(orgDocAckRequired);
       let notified = 0;
+      let failed = 0;
       for (const d of targets) {
         try {
           const r = await documentsApi.remindAcknowledgement(d.id);
           notified += r.notified;
         } catch {
-          /* skip a doc that can't be reminded (e.g. no longer ack-required) */
+          // Don't hide the failure as a "0 sent" — count it and report below.
+          failed += 1;
         }
       }
       await loadStatuses(docs);
       setRemindNote(
         targets.length === 0
           ? 'No acknowledgement-required documents here.'
-          : `Reminder sent to ${notified} employee${notified === 1 ? '' : 's'}.`,
+          : failed === targets.length
+            ? "Couldn't send reminders — you may not have permission."
+            : `Reminder sent to ${notified} employee${notified === 1 ? '' : 's'}.${failed ? ` (${failed} document${failed === 1 ? '' : 's'} couldn't be reminded.)` : ''}`,
       );
     } finally {
       setReminding(false);
@@ -386,9 +389,6 @@ export function OrganizationDocumentsTab() {
         subtitle="Documents in these folders can be uploaded/filled by admin. All these documents are available for viewing by all employees."
         actions={isHr ? <button type="button" onClick={() => setFolderForm((v) => !v)} className={BTN_PRIMARY}>+ Add document folder</button> : undefined}
       />
-
-      {/* Employee-side acknowledgement inbox (all roles). */}
-      <PendingAcknowledgements onChanged={loadDocs} />
 
       <div className="flex gap-4 items-start">
         <aside className="w-64 shrink-0 bg-white rounded-2xl border border-gray-200 shadow-sm p-3 space-y-3">

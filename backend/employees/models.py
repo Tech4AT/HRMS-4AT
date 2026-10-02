@@ -1101,3 +1101,29 @@ class CustomReport(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.base_type})"
+
+
+class EmployeeRosterInfo(models.Model):
+    """Roster-export attributes (Keka "EE & Reporting") that have no first-class
+    home on Employee: dotted-line / L2 manager, attendance setup and the raw
+    worker/time type labels. Filled by ``import_roster``; read by the Employee
+    Reports engine so the "EE & Reporting" report and custom reports can show
+    the original roster values. Blank means the roster had no value."""
+
+    employee = models.OneToOneField(
+        Employee, on_delete=models.CASCADE, related_name="roster_info"
+    )
+    employment_status = models.CharField(max_length=40, blank=True, default="")
+    dotted_line_manager = models.CharField(max_length=200, blank=True, default="")
+    reporting_manager_email = models.EmailField(blank=True, default="")
+    l2_manager = models.CharField(max_length=200, blank=True, default="")
+    worker_type = models.CharField(max_length=40, blank=True, default="")
+    time_type = models.CharField(max_length=40, blank=True, default="")
+    attendance_number = models.CharField(max_length=50, blank=True, default="")
+    attendance_capture_scheme = models.CharField(max_length=100, blank=True, default="")
+    attendance_tracking_policy = models.CharField(max_length=100, blank=True, default="")
+    exit_status = models.CharField(max_length=60, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Roster info for {self.employee_id}"

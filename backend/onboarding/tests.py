@@ -50,6 +50,25 @@ from .models import (
 User = get_user_model()
 
 
+
+def _fake_offer_salary(annual_package, *, structure_id=None, bonus=0, extra_allowance=0, as_of=None):
+    """Stands in for the payroll engine: 50% basic, 20% HRA, rest other allowances."""
+    from decimal import Decimal
+    package = Decimal(str(annual_package))
+    bonus, extra = Decimal(str(bonus or 0)), Decimal(str(extra_allowance or 0))
+    basic, hra = package * Decimal('0.5'), package * Decimal('0.2')
+    return {
+        'structure': {'id': 'test', 'code': 'TEST', 'name': 'Test structure'},
+        'annual_package': package, 'bonus': bonus, 'extra_allowance': extra,
+        'total_compensation': package + bonus + extra,
+        'breakup': {'valid': True, 'lines': [], 'totals': {}, 'errors': []},
+        'components': {
+            'basic_salary': basic, 'hra': hra,
+            'other_allowances': package - basic - hra, 'other_components': bonus + extra,
+        },
+    }
+
+
 class _FakeAsyncSignatureProvider(SignatureProvider):
     """A minimal `is_async=True` provider, registered only for the duration
     of the webhook tests below (see `patch.dict(esignature._PROVIDERS, ...)`)
@@ -72,6 +91,9 @@ class _FakeAsyncSignatureProvider(SignatureProvider):
 
 class OfferWorkflowTestCase(TestCase):
     def setUp(self):
+        _p = patch('onboarding.salary.compute_offer_salary', side_effect=_fake_offer_salary)
+        _p.start()
+        self.addCleanup(_p.stop)
         self.hr_role, _ = Role.objects.get_or_create(name=ROLE_HR_ADMIN, defaults={'permissions': ['scope.all']})
         self.hr_user = User.objects.create_user(
             email='hr@example.com', password='pw', first_name='Hana', last_name='Ryan', role=self.hr_role,
@@ -102,7 +124,7 @@ class OfferWorkflowTestCase(TestCase):
         payload = {
             'firstName': 'Cara', 'lastName': 'Diaz', 'workEmail': 'cara.diaz@example.com',
             'personalEmail': 'cara.personal@example.com', 'joiningDate': str(date.today() + timedelta(days=14)),
-            'basicSalary': 600000, 'hra': 200000,
+            'annualPackage': 800000,
         }
         payload.update(overrides)
         return self.hr_client.post('/api/v1/onboarding/records', payload, format='json')
@@ -492,7 +514,7 @@ class OfferWorkflowTestCase(TestCase):
         raw_v1 = self._get_raw_token(offer_v1)
 
         # HR edits the offer after sending -> new version, old token dead.
-        resp = self.hr_client.patch(f'/api/v1/onboarding/records/{profile_id}/offer-letter', {'basicSalary': 700000}, format='json')
+        resp = self.hr_client.patch(f'/api/v1/onboarding/records/{profile_id}/offer-letter', {'annualPackage': 900000}, format='json')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data['data']['version'], 2)
 
@@ -665,6 +687,9 @@ class OfferWorkflowTestCase(TestCase):
 
 class OfferVersioningTestCase(TestCase):
     def setUp(self):
+        _p = patch('onboarding.salary.compute_offer_salary', side_effect=_fake_offer_salary)
+        _p.start()
+        self.addCleanup(_p.stop)
         self.hr_role, _ = Role.objects.get_or_create(name=ROLE_HR_ADMIN, defaults={'permissions': ['scope.all']})
         self.hr_user = User.objects.create_user(email='hr2@example.com', password='pw', role=self.hr_role)
         OfferLetterTemplate.objects.create(
@@ -677,11 +702,11 @@ class OfferVersioningTestCase(TestCase):
         resp = self.hr_client.post('/api/v1/onboarding/records', {
             'firstName': 'Dev', 'lastName': 'Kapoor', 'workEmail': 'dev.k@example.com',
             'personalEmail': 'dev.personal@example.com', 'joiningDate': str(date.today() + timedelta(days=10)),
-            'basicSalary': 500000,
+            'annualPackage': 500000,
         }, format='json')
         profile_id = resp.data['data']['id']
 
-        patch = self.hr_client.patch(f'/api/v1/onboarding/records/{profile_id}/offer-letter', {'basicSalary': 550000}, format='json')
+        patch = self.hr_client.patch(f'/api/v1/onboarding/records/{profile_id}/offer-letter', {'annualPackage': 550000}, format='json')
         self.assertEqual(patch.status_code, 200, patch.data)
         self.assertEqual(patch.data['data']['version'], 1, 'still-draft edits mutate in place')
 

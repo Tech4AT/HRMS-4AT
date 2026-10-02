@@ -142,7 +142,7 @@ export default function PayrollDashboardPage() {
           <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-3">
-                <h2 className="text-3xl font-bold text-slate-900">{monthLong(period.year, period.month)} Payroll</h2>
+                <h2 className="text-base font-bold text-slate-900">{monthLong(period.year, period.month)} Payroll</h2>
                 <Badge status={period.status} label={period.status_label} />
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-slate-600">
@@ -171,7 +171,7 @@ export default function PayrollDashboardPage() {
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
             {/* Run payroll checklist */}
             <Card className="xl:col-span-2">
-              <h3 className="text-xl font-semibold text-slate-900">Run Payroll</h3>
+              <h3 className="text-base font-bold text-slate-900">Run Payroll</h3>
               <p className="text-sm text-slate-500">Complete the steps below to process {monthLong(period.year, period.month)} payroll</p>
               <ol className="mt-4 divide-y divide-slate-100">
                 {data.steps.map((s: any, i: number) => {
@@ -210,7 +210,7 @@ export default function PayrollDashboardPage() {
             <div className="space-y-6">
               <Card>
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-slate-900">Payroll Health</h3>
+                  <h3 className="text-base font-bold text-slate-900">Payroll Health</h3>
                   <span className="text-xs text-slate-500">As on {fmtDateTime(data.run?.calculated_at ?? new Date().toISOString())}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
@@ -236,7 +236,7 @@ export default function PayrollDashboardPage() {
               </Card>
 
               <Card>
-                <h3 className="mb-3 text-lg font-semibold text-slate-900">Approval Status</h3>
+                <h3 className="text-base font-bold text-slate-900 mb-3">Approval Status</h3>
                 {data.approvals.length === 0 ? (
                   <p className="text-sm text-slate-500">Not yet submitted for approval.</p>
                 ) : (

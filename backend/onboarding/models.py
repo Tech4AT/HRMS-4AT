@@ -210,6 +210,8 @@ OFFER_LETTER_PLACEHOLDERS = [
     'hra', 'hra_monthly',
     'other_allowances', 'other_allowances_monthly',
     'other_components', 'other_components_monthly',
+    # Optional extras added on top of the payroll-engine package.
+    'bonus', 'extra_allowance',
 ]
 
 
@@ -294,6 +296,11 @@ class OfferLetter(models.Model):
     other_allowances = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     other_components = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     annual_ctc = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+    # Optional extras layered on the payroll-engine package (already included in
+    # other_components / annual_ctc), plus the full engine breakup HR can review.
+    bonus_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    extra_allowance_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    salary_breakup = models.JSONField(default=dict, blank=True)
     currency = models.CharField(max_length=3, default='INR')
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES, default=EMPLOYMENT_FULL_TIME)
     probation_period_months = models.PositiveSmallIntegerField(default=3)

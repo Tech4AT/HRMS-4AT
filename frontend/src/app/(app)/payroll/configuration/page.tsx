@@ -97,7 +97,7 @@ function ComponentsTab() {
     <div>
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Salary Components</h2>
+          <h2 className="text-base font-bold text-slate-900">Salary Components</h2>
           <p className="text-sm text-slate-500">Create and manage earning, deduction and employer contribution components used in salary structures.</p>
         </div>
         {manage && (
@@ -385,7 +385,7 @@ function StructuresTab() {
     <div>
       <div className="mb-5 flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Salary Structures</h2>
+          <h2 className="text-base font-bold text-slate-900">Salary Structures</h2>
           <p className="text-sm text-slate-500">Reusable, effective-dated structures built from active components.</p>
         </div>
         {can('payroll.manage') && <LinkButton variant="primary" href="/payroll/configuration/structures/new"><Icons.plus className="h-4 w-4" /> Create Structure</LinkButton>}
@@ -467,7 +467,7 @@ function PayGroupsTab() {
   return (
     <div>
       <div className="mb-5 flex items-start justify-between">
-        <div><h2 className="text-2xl font-bold text-slate-900">Pay Groups</h2><p className="text-sm text-slate-500">Payroll calendar and the policies the calculation uses (proration, revisions, approvals).</p></div>
+        <div><h2 className="text-base font-bold text-slate-900">Pay Groups</h2><p className="text-sm text-slate-500">Payroll calendar and the policies the calculation uses (proration, revisions, approvals).</p></div>
         {can('payroll.manage') && <Button variant="primary" onClick={() => open({})}><Icons.plus className="h-4 w-4" /> Create Pay Group</Button>}
       </div>
       <ErrorBanner error={error} />
@@ -548,7 +548,7 @@ function StatutoryTab() {
   return (
     <div>
       <div className="mb-4 flex items-start justify-between">
-        <div><h2 className="text-2xl font-bold text-slate-900">Statutory Rules</h2><p className="text-sm text-slate-500">Rates, ceilings and slabs are configuration, effective-dated, never hard-coded.</p></div>
+        <div><h2 className="text-base font-bold text-slate-900">Statutory Rules</h2><p className="text-sm text-slate-500">Rates, ceilings and slabs are configuration, effective-dated, never hard-coded.</p></div>
         {can('payroll.manage') && <Button variant="primary" onClick={() => open({})}><Icons.plus className="h-4 w-4" /> Add Rule</Button>}
       </div>
       <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

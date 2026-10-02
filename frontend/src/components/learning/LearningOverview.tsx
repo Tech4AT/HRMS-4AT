@@ -236,7 +236,7 @@ export function LearningOverview({
 
       {summary.learningPaths.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <h3 className="font-bold text-gray-900 mb-3">Learning paths</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-3">Learning paths</h3>
           <ul className="space-y-3">
             {summary.learningPaths.map((path) => (
               <li key={path.pathId}>

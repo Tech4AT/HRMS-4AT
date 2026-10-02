@@ -53,11 +53,7 @@ export default function ExitsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter'] p-4 sm:p-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Exits</h1>
-          <p className="text-sm text-gray-500">Review resignations and record employee exits.</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-6">
         <button
           onClick={() => setInitiating(true)}
           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-purple-600 text-white font-semibold text-sm hover:bg-purple-700"
@@ -194,7 +190,7 @@ function DecisionDialog({
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-1">
+        <h2 className="text-base font-bold text-slate-900 mb-1">
           {action === 'accept' ? 'Accept resignation' : 'Reject resignation'} — {resignation.employee.name}
         </h2>
         <p className="text-xs text-gray-500 mb-4">The employee is emailed your decision.</p>
@@ -267,7 +263,7 @@ function InitiateExitDialog({ onClose, onDone }: { onClose: () => void; onDone: 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 mb-1">Initiate exit</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-1">Initiate exit</h2>
         <p className="text-xs text-gray-500 mb-4">
           For exits HR starts (contract end, termination…). The employee is emailed, and their access ends after the last working day.
         </p>

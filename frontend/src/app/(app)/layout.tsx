@@ -233,6 +233,7 @@ const navItems: NavItem[] = [
     children: [
       { label: 'Employee Directory', href: '/org?tab=directory' },
       { label: 'Organisation Chart', href: '/org?tab=chart' },
+      { label: 'Organisation Documents', href: '/org?tab=documents' },
     ],
   },
   // Assets: a standalone section for anyone who manages the inventory (IT / HR).
@@ -271,6 +272,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/inbox': { title: 'Inbox', subtitle: 'Review messages, requests, and notifications that need your attention' },
   '/approvals': { title: 'Approvals', subtitle: 'Review WFH, regularisation, leave, and penalisation requests routed to you' },
   '/me/attendance': { title: 'Attendance', subtitle: 'Track your attendance, timings, and attendance requests' },
+  '/me/onboarding': { title: 'My Onboarding', subtitle: 'Your onboarding tasks and progress' },
   '/leave': { title: 'Leave Management', subtitle: 'View your leave balance, requests, and time off' },
   '/attendance/dashboard': { title: 'Dashboard', subtitle: 'Attendance and leave analytics for your team or organisation' },
   '/attendance/settings': { title: 'Settings', subtitle: 'Shifts, leave, calendar, and penalization configuration for the organisation' },
@@ -280,18 +282,24 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/employees': { title: 'Organization', subtitle: 'Manage employees and organizational documents' },
   '/manage-org': { title: 'Manage organisation', subtitle: 'Employees, reporting lines and the organisation structure' },
   '/admin': { title: 'Access control', subtitle: 'Manage roles, permissions, people and the activity log' },
+  '/admin/employees': { title: 'Employee Administration', subtitle: 'Manage employees, departments, and designations' },
   '/org': { title: 'Organisation', subtitle: 'Browse the employee directory and organisation chart' },
+  '/assets': { title: 'Assets', subtitle: 'Company laptop inventory and allocation' },
   '/org-module': { title: 'Organization', subtitle: '' },
   '/settings': { title: 'Settings', subtitle: 'Manage your account preferences' },
   '/help': { title: 'Help & Support', subtitle: 'Raise a ticket, track its progress and find answers' },
   '/performance': { title: 'Performance', subtitle: 'Track reviews, goals, feedback, and career development' },
   '/payroll': { title: 'Payroll', subtitle: 'Configure, process, approve and release payroll' },
   '/attendance': { title: 'Attendance', subtitle: 'Attendance, leave and shift overview' },
+  '/attendance/wfh': { title: 'Request Work From Home', subtitle: 'Submit a WFH request for manager approval' },
+  '/attendance/regularize': { title: 'Regularize Attendance', subtitle: 'Request a day be marked Present' },
   '/payslips': { title: 'My Finances', subtitle: 'View your payslips, salary, taxes, and expenses' },
   '/me': { title: 'Me', subtitle: 'Access your personal information and records' },
   '/me/policies': { title: 'Policies', subtitle: 'Review and acknowledge company policies' },
   '/me/exit': { title: 'My Exit', subtitle: 'Submit or manage your resignation' },
   '/exits': { title: 'Exits', subtitle: 'Review resignations and record employee exits' },
+  '/onboarding': { title: 'Onboarding', subtitle: 'New-hire onboarding progress and tasks' },
+  '/onboarding/work': { title: 'Onboarding tasks', subtitle: 'Work HR has assigned to you for new hires' },
   '/policies': { title: 'Policies', subtitle: 'Manage company policies and track employee acknowledgments' },
   '/engage': { title: 'Engage', subtitle: 'Connect with colleagues and stay updated with your organization' },
   '/calendar': { title: 'Calendar', subtitle: 'Upcoming company events and holidays' },
@@ -461,6 +469,12 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
   const activeSection = filteredNavItems.find((item) => item.children?.length && isActive(item));
   const activeSectionChildren = activeSection?.children?.filter(canAccess);
 
+  // Inside a section that groups sub-pages (Organization, Attendance, Payroll,
+  // ...), the top heading stays the SECTION name no matter which subsection is
+  // open — the subsection is shown by the tab row below, not by swapping the
+  // title. Standalone pages keep their own title.
+  const headerTitle = (activeSection ? getPageTitle(activeSection.href) : null) ?? currentPageTitle;
+
   const sidebarContent = (
     <>
       <div className={`flex items-center gap-3 px-5 pb-4 ${collapsed ? 'md:justify-center md:px-0' : ''}`}>
@@ -560,12 +574,12 @@ function AppLayoutInner({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col overflow-hidden pt-14 md:pt-0 min-w-0">
         {/* Shared top bar, visible on every page */}
         <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4 shrink-0">
-          {currentPageTitle ? (
+          {headerTitle ? (
             <div className="min-w-0 shrink-0 flex items-center gap-1.5">
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{currentPageTitle.title}</h1>
-                {currentPageTitle.subtitle ? (
-                  <p className="text-xs text-slate-500 truncate hidden sm:block">{currentPageTitle.subtitle}</p>
+                <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight truncate">{headerTitle.title}</h1>
+                {headerTitle.subtitle ? (
+                  <p className="text-xs text-slate-500 truncate hidden sm:block">{headerTitle.subtitle}</p>
                 ) : null}
               </div>
             </div>

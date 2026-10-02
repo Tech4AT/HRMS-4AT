@@ -117,7 +117,7 @@ export function MemberDetails({
           {tab === 'profile' ? (
             <div className="space-y-5">
               <div>
-                <h3 className="text-base font-semibold text-slate-900 mb-3">Contact Details</h3>
+                <h3 className="text-base font-bold text-slate-900 mb-3">Contact Details</h3>
                 <div className="flex items-center gap-2 text-sm text-slate-800 min-w-0">
                   <MailIcon className="w-4 h-4 text-slate-400 shrink-0" />
                   <a href={`mailto:${person.work_email}`} className="hover:text-indigo-700 hover:underline truncate">

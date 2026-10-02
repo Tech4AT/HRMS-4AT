@@ -7,6 +7,8 @@ import { orgApi } from '@/lib/api/org';
 import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
 import { DocumentUploadModal, formatBytes } from '@/components/documents/DocumentUploadModal';
 import { OrgDocumentsSection } from '@/components/documents/org/OrgDocumentsSection';
+import { MyOrgDocuments } from '@/components/documents/org/MyOrgDocuments';
+import { PendingAcknowledgements } from '@/components/documents/org/PendingAcknowledgements';
 import { DocumentViewerModal } from '@/components/documents/DocumentViewerModal';
 
 /* ------------------------------ data ------------------------------ */
@@ -116,6 +118,12 @@ const uniqueValues = (employees: Employee[], key: FilterKey) =>
 
 export default function OrgPage() {
   const searchParams = useSearchParams();
+  const { hasPermission, hasOrgScope } = useAuth();
+  // HR/managers who manage org documents get the full management section;
+  // plain employees get the read/acknowledge view of docs pushed to them.
+  // Every employee holds documents.write at SELF scope, so org scope is what
+  // separates managers here (mirrors backend _can_manage_org_documents).
+  const canManageDocs = hasOrgScope() && (hasPermission('documents.write') || hasPermission('org.manage'));
   const [tab, setTab] = useState<'directory' | 'chart' | 'documents'>('directory');
 
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -183,7 +191,16 @@ export default function OrgPage() {
           the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
+          <div className="space-y-4">
+            {/* Shown to every role above the document area: the docs this user
+                must still acknowledge, each with an Acknowledge button. */}
+            <PendingAcknowledgements />
+            {canManageDocs ? (
+              <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
+            ) : (
+              <MyOrgDocuments />
+            )}
+          </div>
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (

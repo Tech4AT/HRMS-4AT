@@ -510,7 +510,7 @@ function HelpPageContent() {
                 design's heading + primary action + support-area picker IA. */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Employee support</span>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-2">How can we help today?</h1>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-2">How can we help today?</h2>
               <p className="text-sm text-slate-500 mt-2 max-w-xl">
                 Report an issue or request help from the right internal team. You can follow every update from this
                 workspace.

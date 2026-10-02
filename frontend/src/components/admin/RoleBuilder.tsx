@@ -171,7 +171,7 @@ export function RoleBuilder({
         <div>
           <div className="flex items-center justify-between gap-4 mb-3">
             <div>
-              <h2 className="font-bold text-gray-900">Permissions</h2>
+              <h2 className="text-base font-bold text-slate-900">Permissions</h2>
               <p className="text-sm text-gray-500">
                 Tick the permissions this role should grant. {checked.size} selected.
                 {role ? ' Each granted permission keeps its own reach, changeable here.' : ' Newly-ticked permissions use the reach chosen above.'}

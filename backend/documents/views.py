@@ -603,6 +603,16 @@ def _can_manage_folders(user) -> bool:
     return is_hr_admin(user)
 
 
+def _can_manage_org_documents(user) -> bool:
+    """Who may manage the Organization Documents tab (remind, read the audience
+    role list). The actual HR document-manager role may hold `org.manage` without
+    the name-based HR Admin flag, so admit `org.manage` holders too. NOT
+    `documents.write` — every employee holds it at SELF, and user_has_permission
+    ignores tier, so it would admit everyone. Mirrors the frontend's
+    `canManageDocs = documents.write || org.manage` minus the SELF trap."""
+    return is_hr_admin(user) or user_has_permission(user, 'org.manage')
+
+
 def _org_doc_dict(d):
     return {
         'id': d.id,
@@ -627,6 +637,23 @@ def _folder_dict(f, doc_count):
         'description': f.description or '',
         'documentCount': doc_count,
     }
+
+
+class AudienceRolesView(APIView):
+    """`GET /documents/audience-roles` — active roles as `[{id, name}]` for the
+    org-document audience picker. Gated by org-document management (org.manage /
+    HR Admin), NOT the `roles.manage`-gated admin RoleViewSet — a document
+    manager needs to read role names without being a role administrator."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from accounts.models import Role
+        if not _can_manage_org_documents(request.user):
+            return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
+        data = [{'id': r.id, 'name': r.name}
+                for r in Role.objects.filter(is_active=True).order_by('name')]
+        return Response({'success': True, 'data': data})
 
 
 class FolderListCreateView(APIView):
@@ -742,12 +769,15 @@ class DocumentRemindAcknowledgementView(APIView):
             doc = Document.objects.get(pk=pk)
         except Document.DoesNotExist:
             return Response({'success': False, 'error': {'code': 'NOT_FOUND', 'message': 'Document not found'}}, status=404)
-        if not _can_manage_folders(request.user):
+        if not _can_manage_org_documents(request.user):
             return Response({'success': False, 'error': {'code': 'FORBIDDEN', 'message': 'Not permitted'}}, status=403)
         if not doc.acknowledgement_required:
             return Response({'success': False, 'error': {'code': 'VALIDATION_ERROR', 'message': 'This document does not require acknowledgement.'}}, status=400)
 
-        if is_hr_admin(request.user):
+        # Reminding is an org-wide admin action on an org policy document, so an
+        # org-document manager reminds every pending employee (not just their
+        # own reporting scope). can_access below still gates per-audience.
+        if _can_manage_org_documents(request.user):
             scope_ids = set(Employee.objects.values_list('pk', flat=True))
         else:
             scope_ids = set(visible_employee_ids(request.user, 'employees.read'))

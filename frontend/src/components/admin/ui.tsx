@@ -109,7 +109,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
       <div role="dialog" aria-modal="true" aria-label={title} className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-        <h2 className="font-bold text-gray-900 text-lg mb-3">{title}</h2>
+        <h2 className="text-base font-bold text-slate-900 mb-3">{title}</h2>
         {children}
       </div>
     </div>
@@ -179,7 +179,7 @@ export function Pager({ page, pageSize, total, onPage }: { page: number; pageSiz
 export function SectionTitle({ children, hint }: { children: ReactNode; hint?: string }) {
   return (
     <div className="mb-2">
-      <h3 className="font-bold text-gray-900">{children}</h3>
+      <h3 className="text-base font-bold text-slate-900">{children}</h3>
       {hint && <p className="text-sm text-gray-500">{hint}</p>}
     </div>
   );

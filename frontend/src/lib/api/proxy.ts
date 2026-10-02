@@ -169,7 +169,10 @@ export function createBackendProxyRoute(
       const { path = [] } = (await ctx.params) ?? {};
       const pathStr = path.length > 0 ? path.join('/') : '';
       const base = pathStr ? `/${backendPrefix}/${pathStr}` : `/${backendPrefix}`;
-      const backendPath = `${base}${trailingSlash || !pathStr ? '/' : ''}${req.nextUrl.search}`;
+      // The admin proxy passes a trailing '' segment, so `base` may already end
+      // in '/'; adding another would produce '//', which Django 404s.
+      const needsSlash = (trailingSlash || !pathStr) && !base.endsWith('/');
+      const backendPath = `${base}${needsSlash ? '/' : ''}${req.nextUrl.search}`;
 
       const init: RequestInit = { method };
       if (method !== 'GET') {

@@ -54,6 +54,50 @@ def _convert_via_word(docx_path: str, pdf_path: str) -> None:
         raise RuntimeError(result.stderr or "docx2pdf subprocess failed")
 
 
+def _expand_salary_table(docx_path: Path, rows: list) -> None:
+    """Templates written before the payroll engine have a fixed salary table
+    (Basic Salary / HRA / Other Allowances / Other Components / Total CTC).
+    Swap its component rows for the real breakup rows so the letter shows what
+    payroll will actually pay. The template file itself is never modified —
+    this runs on the temporary copy. Tables that don't match are left alone."""
+    import copy
+
+    from docx import Document
+    from docx.table import _Row
+
+    document = Document(str(docx_path))
+    changed = False
+    for table in document.tables:
+        labels = [row.cells[0].text.strip() for row in table.rows]
+        if 'Basic Salary' not in labels or 'Total CTC' not in labels:
+            continue
+        start, end = labels.index('Basic Salary'), labels.index('Total CTC')
+        if end <= start or len(table.rows[start].cells) < 3:
+            continue
+        proto = table.rows[start]._tr
+        anchor = table.rows[end]._tr
+        old = [row._tr for row in table.rows[start:end]]
+        for name, monthly, annual in rows:
+            tr = copy.deepcopy(proto)
+            anchor.addprevious(tr)
+            for cell, text in zip(_Row(tr, table).cells, (name, monthly, annual)):
+                paragraphs = cell.paragraphs
+                runs = paragraphs[0].runs
+                if runs:
+                    runs[0].text = text
+                    for extra in runs[1:]:
+                        extra.text = ''
+                else:
+                    paragraphs[0].add_run(text)
+                for extra in paragraphs[1:]:
+                    extra._p.getparent().remove(extra._p)
+        for tr in old:
+            tr.getparent().remove(tr)
+        changed = True
+    if changed:
+        document.save(str(docx_path))
+
+
 def _append_signature_block(docx_path: Path, context: dict) -> None:
     """Mirrors `_render_text_template_pdf`'s post-signature block for the
     reportlab path (offer_letter.py) — an uploaded .docx template has no
@@ -75,7 +119,16 @@ def render_docx_template_to_pdf(source_path: str, context: dict, *, signed: bool
     with tempfile.TemporaryDirectory(prefix='offer_letter_') as tmp_dir:
         tmp_dir_path = Path(tmp_dir)
         try:
-            tpl = DocxTemplate(source_path)
+            source = source_path
+            rows = context.get('salary_rows') or []
+            if rows:
+                prepared = tmp_dir_path / 'prepared.docx'
+                import shutil
+
+                shutil.copyfile(source_path, prepared)
+                _expand_salary_table(prepared, rows)
+                source = str(prepared)
+            tpl = DocxTemplate(source)
             tpl.render(context)
         except Exception as exc:  # docxtpl/Jinja2 raise several distinct types
             raise DocxRenderError(f'Could not fill the Word template: {exc}') from exc

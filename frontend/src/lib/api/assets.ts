@@ -26,12 +26,50 @@ export interface Asset {
   status: AssetStatus;
 }
 
-export interface AssetListParams {
+/** The query-param filters the backend applies to list, export and stats. */
+export interface AssetFilters {
   search?: string;
   status?: AssetStatus | '';
   assigned?: 'true' | 'false' | '';
+  category?: string;
+  brand?: string;
+  hasBag?: 'true' | 'false' | '';
+  allottedFrom?: string;
+  allottedTo?: string;
+  allottedYear?: string;
+  recoveredFrom?: string;
+  recoveredTo?: string;
+}
+
+export interface AssetListParams extends AssetFilters {
   page?: number;
   pageSize?: number;
+}
+
+export interface AssetStats {
+  total: number;
+  assigned: number;
+  available: number;
+  recovered: number;
+  byCategory: Record<string, number>;
+  issuedThisYear: number;
+}
+
+/** Build the shared filter querystring (snake_case keys the backend reads). */
+function filterQuery(f: AssetFilters): URLSearchParams {
+  const q = new URLSearchParams();
+  if (f.search) q.set('search', f.search);
+  if (f.status) q.set('status', f.status);
+  if (f.assigned) q.set('assigned', f.assigned);
+  if (f.category) q.set('category', f.category);
+  if (f.brand) q.set('brand', f.brand);
+  if (f.hasBag) q.set('has_bag', f.hasBag);
+  if (f.allottedFrom) q.set('allotted_from', f.allottedFrom);
+  if (f.allottedTo) q.set('allotted_to', f.allottedTo);
+  if (f.allottedYear) q.set('allotted_year', f.allottedYear);
+  if (f.recoveredFrom) q.set('recovered_from', f.recoveredFrom);
+  if (f.recoveredTo) q.set('recovered_to', f.recoveredTo);
+  return q;
 }
 
 export interface AssetListResult {
@@ -72,10 +110,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function listAssets(params: AssetListParams = {}): Promise<AssetListResult> {
-  const query = new URLSearchParams();
-  if (params.search) query.set('search', params.search);
-  if (params.status) query.set('status', params.status);
-  if (params.assigned) query.set('assigned', params.assigned);
+  const query = filterQuery(params);
   if (params.page) query.set('page', String(params.page));
   if (params.pageSize) query.set('pageSize', String(params.pageSize));
   const suffix = query.toString();
@@ -86,6 +121,18 @@ export async function listAssets(params: AssetListParams = {}): Promise<AssetLis
     pageSize: number;
   }>(`/api/assets${suffix ? `?${suffix}` : ''}`);
   return { items: json.results ?? [], total: json.total ?? 0, page: json.page ?? 1, pageSize: json.pageSize ?? 20 };
+}
+
+/** KPI counts over the scoped + filtered queryset (backend camelCases keys). */
+export async function fetchAssetStats(filters: AssetFilters = {}): Promise<AssetStats> {
+  const suffix = filterQuery(filters).toString();
+  return request<AssetStats>(`/api/assets/stats${suffix ? `?${suffix}` : ''}`);
+}
+
+/** URL of the CSV export for the current filters — point a link/button at it. */
+export function assetExportUrl(filters: AssetFilters = {}): string {
+  const suffix = filterQuery(filters).toString();
+  return `/api/assets/export${suffix ? `?${suffix}` : ''}`;
 }
 
 /** Assign (or unassign with null) an asset. Requires assets.write. */

@@ -21,17 +21,48 @@ class DocumentSerializer(serializers.ModelSerializer):
     uploaded_by = serializers.SerializerMethodField()
     verified_by = serializers.SerializerMethodField()
     verified_by_name = serializers.SerializerMethodField()
+    # Per-request acknowledgement state for the signed-in employee, so the
+    # employee-facing Organisation Documents view knows what to render without
+    # a second round-trip. Read-only, derived — no model change.
+    must_acknowledge = serializers.SerializerMethodField()
+    acknowledged = serializers.SerializerMethodField()
+    acknowledged_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = [
             'id', 'entity_type', 'entity_id', 'employee_id', 'original_filename',
+            'title', 'description',
             'content_type', 'size', 'audience', 'acknowledgement_required',
+            'must_acknowledge', 'acknowledged', 'acknowledged_at',
             'verification_status', 'verified_by', 'verified_by_name',
             'verified_at', 'rejection_reason',
             'url', 'view_url', 'download_url', 'uploaded_at', 'expiry_date', 'is_expired',
             'file_size', 'uploaded_by', 'uploaded_by_name',
         ]
+
+    def _request_employee(self):
+        request = self.context.get('request')
+        return getattr(getattr(request, 'user', None), 'employee', None)
+
+    def _ack_row(self, obj):
+        employee = self._request_employee()
+        if employee is None:
+            return None
+        return obj.acknowledgements.filter(employee=employee).first()
+
+    def get_must_acknowledge(self, obj):
+        from .access import user_must_acknowledge
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return bool(user and user_must_acknowledge(user, obj))
+
+    def get_acknowledged(self, obj):
+        return self._ack_row(obj) is not None
+
+    def get_acknowledged_at(self, obj):
+        row = self._ack_row(obj)
+        return row.acknowledged_at.isoformat() if row else None
 
     def _file_endpoint(self, obj, mode: str | None = None):
         """Relative to the *frontend's* own origin, not this Django server —

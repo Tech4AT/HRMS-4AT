@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import serializers
 
+from . import salary
+
 from accounts.models import ROLE_EMPLOYEE, Role
 from core.scope import is_finance, is_hr_admin
 from employees import identity_numbers
@@ -170,7 +172,7 @@ class OfferLetterSerializer(serializers.ModelSerializer):
         model = OfferLetter
         fields = [
             'id', 'offer_number', 'version', 'is_current', 'basic_salary', 'hra', 'other_allowances',
-            'other_components', 'annual_ctc', 'currency', 'employment_type', 'employment_type_display',
+            'other_components', 'bonus_amount', 'extra_allowance_amount', 'salary_breakup', 'annual_ctc', 'currency', 'employment_type', 'employment_type_display',
             'probation_period_months', 'notice_period_days', 'status', 'status_display', 'document_url',
             'template_id', 'template_name', 'generated_at', 'sent_at', 'viewed_at', 'expires_at',
             'signed_at', 'accepted_at', 'rejected_at', 'cancelled_at', 'signature_name',
@@ -614,6 +616,33 @@ class OnboardingProfileListSerializer(serializers.ModelSerializer):
         return _offer_letter_for(obj, self.context)
 
 
+# country dial code -> pattern the national number must match
+PHONE_RULES = {
+    '+91': (r'[6-9]\d{9}', 'India: 10 digits, starting with 6-9'),
+    '+1': (r'[2-9]\d{2}[2-9]\d{6}', 'US: 10 digits (area code + number)'),
+    '+44': (r'[1-9]\d{9}', 'UK: 10 digits, without the leading 0'),
+    '+971': (r'5\d{8}', 'UAE: 9 digits, starting with 5'),
+}
+
+
+def validate_phone_number(value):
+    """Blank is allowed. Otherwise '+<dial> <national number>' with the
+    right digit count for that country."""
+    import re
+    value = (value or '').strip()
+    if not value:
+        return ''
+    compact = re.sub(r'[\s\-().]', '', value)
+    for dial in sorted(PHONE_RULES, key=len, reverse=True):
+        if compact.startswith(dial):
+            pattern, hint = PHONE_RULES[dial]
+            national = compact[len(dial):]
+            if re.fullmatch(pattern, national):
+                return f'{dial} {national}'
+            raise serializers.ValidationError(f'Invalid phone number — {hint}.')
+    raise serializers.ValidationError('Phone must start with a supported country code (+91, +1, +44, +971).')
+
+
 class CreateNewHireSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=150)
     last_name = serializers.CharField(max_length=150)
@@ -639,14 +668,21 @@ class CreateNewHireSerializer(serializers.Serializer):
     joining_date = serializers.DateField()
     temporary_password = serializers.CharField(required=False, allow_blank=True, default='')
 
+    def validate_phone(self, value):
+        return validate_phone_number(value)
+
     # The salary structure — annual figures; Total CTC is always their sum,
     # never entered directly (see OfferLetter.save()). Generates the draft
     # offer letter immediately; see onboarding/services.py::create_offer_letter.
     # Sensitive (salary) — this endpoint is already HR-Admin-only at the view level.
-    basic_salary = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), default=Decimal('0'))
-    hra = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), default=Decimal('0'))
-    other_allowances = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), default=Decimal('0'))
-    other_components = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), default=Decimal('0'))
+    # HR enters only the annual package; the breakup is calculated by the payroll
+    # engine (see onboarding/salary.py). Bonus / extra allowance are optional extras.
+    annual_package = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    salary_structure_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    include_bonus = serializers.BooleanField(required=False, default=False)
+    bonus_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), required=False, default=Decimal('0'))
+    include_extra_allowance = serializers.BooleanField(required=False, default=False)
+    extra_allowance_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0'), required=False, default=Decimal('0'))
     currency = serializers.CharField(required=False, max_length=3, default='INR')
     employment_type = serializers.ChoiceField(choices=EMPLOYMENT_TYPE_CHOICES, required=False, default='full_time')
     probation_period_months = serializers.IntegerField(required=False, min_value=0, max_value=24, default=3)
@@ -666,9 +702,16 @@ class CreateNewHireSerializer(serializers.Serializer):
         return value
 
     def validate(self, attrs):
-        total = attrs.get('basic_salary', 0) + attrs.get('hra', 0) + attrs.get('other_allowances', 0) + attrs.get('other_components', 0)
-        if total <= 0:
-            raise serializers.ValidationError({'basic_salary': 'Enter a salary — at least one component must be greater than 0.'})
+        try:
+            attrs['_salary'] = salary.compute_offer_salary(
+                attrs['annual_package'],
+                structure_id=attrs.get('salary_structure_id'),
+                bonus=attrs.get('bonus_amount') if attrs.get('include_bonus') else 0,
+                extra_allowance=attrs.get('extra_allowance_amount') if attrs.get('include_extra_allowance') else 0,
+                as_of=attrs.get('joining_date'),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({'annual_package': str(exc)}) from exc
         return attrs
 
     @transaction.atomic
@@ -681,8 +724,8 @@ class CreateNewHireSerializer(serializers.Serializer):
             password=data.get('temporary_password') or _generate_temporary_password(),
             first_name=data['first_name'],
             last_name=data['last_name'],
-            role=role,
         )
+        user.roles.add(role)
 
         employee = Employee.objects.create(
             user=user,
@@ -723,10 +766,13 @@ class CreateNewHireSerializer(serializers.Serializer):
         try:
             create_offer_letter(
                 profile,
-                basic_salary=data.get('basic_salary') or 0,
-                hra=data.get('hra') or 0,
-                other_allowances=data.get('other_allowances') or 0,
-                other_components=data.get('other_components') or 0,
+                basic_salary=data['_salary']['components']['basic_salary'],
+                hra=data['_salary']['components']['hra'],
+                other_allowances=data['_salary']['components']['other_allowances'],
+                other_components=data['_salary']['components']['other_components'],
+                bonus_amount=data['_salary']['bonus'],
+                extra_allowance_amount=data['_salary']['extra_allowance'],
+                salary_breakup=salary.stored_breakup(data['_salary']),
                 currency=data.get('currency') or 'INR',
                 employment_type=data.get('employment_type') or 'full_time',
                 probation_period_months=data.get('probation_period_months') or 3,
