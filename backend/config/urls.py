@@ -17,6 +17,8 @@ def healthz(request):
 
 urlpatterns = [
     path("healthz", healthz),
-    path("admin/", admin.site.urls),
+    # Django admin lives under /django-admin/ so it doesn't collide with the
+    # frontend's own /admin Access Control route (nginx: /django-admin/ -> :8000).
+    path("django-admin/", admin.site.urls),
     path("api/v1/", include("config.api_urls")),
 ]
