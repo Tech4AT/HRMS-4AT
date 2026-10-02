@@ -1,43 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyFormDataToBackend, setAuthCookies, clearAuthCookies } from '@/lib/api/proxy';
 
 export async function POST(req: NextRequest) {
   try {
-    const accessToken = req.cookies.get('accessToken')?.value;
+    const formData = await req.formData();
+    const { status, body, rotated, sessionExpired } = await proxyFormDataToBackend(
+      req,
+      '/employees/bulk-upload/',
+      formData,
+    );
 
-    if (!accessToken) {
-      return NextResponse.json(
+    if (sessionExpired || status === 401) {
+      const resp = NextResponse.json(
         { success: false, error: { message: 'Unauthorized' } },
-        { status: 401 }
+        { status: 401 },
       );
+      clearAuthCookies(resp);
+      return resp;
     }
 
-    // Read the body as blob
-    const body = await req.blob();
-
-    // Forward directly to backend
-    const response = await fetch('http://localhost:8000/api/v1/employees/bulk-upload/', {
-      method: 'POST',
-      body: body,
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': req.headers.get('content-type') || 'application/octet-stream',
-      },
-    });
-
-    const responseText = await response.text();
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch {
-      data = { success: false, error: 'Invalid response from server' };
-    }
-
-    return NextResponse.json(data, { status: response.status });
+    const resp = NextResponse.json(
+      body ?? { success: false, error: { message: 'Upload failed' } },
+      { status: status || 502 },
+    );
+    if (rotated) setAuthCookies(resp, rotated.accessToken, rotated.refreshToken);
+    return resp;
   } catch (err) {
     console.error('[api/employees/bulk-upload] error:', err);
     return NextResponse.json(
       { success: false, error: { message: String(err) } },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
