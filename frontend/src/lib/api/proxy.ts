@@ -9,7 +9,7 @@ const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days — matches the refresh-toke
 function cookieBase() {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.SECURE_COOKIES === 'true',
     sameSite: 'lax' as const,
     path: '/',
   };
