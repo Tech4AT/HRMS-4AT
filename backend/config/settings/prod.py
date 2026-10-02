@@ -21,6 +21,7 @@ if LMS_INTEGRATION_ENABLED:  # noqa: F405
             raise RuntimeError(f"{_lms_var} must be set when LMS_INTEGRATION_ENABLED=true in prod")
 
 SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
