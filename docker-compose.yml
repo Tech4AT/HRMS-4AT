@@ -26,7 +26,12 @@ services:
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      # Pin the dev stage: backend/Dockerfile is multi-stage (dev then prod) and
+      # Docker builds the LAST stage by default (prod), which runs collectstatic
+      # under dev settings (no STATIC_ROOT) and crashes. Prod uses docker-compose.prod.yml.
+      target: dev
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.dev
       DJANGO_SECRET_KEY: demo-only-change-me
