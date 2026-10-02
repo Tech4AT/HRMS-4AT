@@ -204,7 +204,7 @@ pipeline {
       echo '❌ Deployment failed — rolled back where possible.'
     }
     success {
-      echo "✅ Deployed $(cat .gitsha 2>/dev/null || echo unknown)"
+      sh 'echo "✅ Deployed $(cat .gitsha 2>/dev/null || echo unknown)"'
     }
   }
 }
