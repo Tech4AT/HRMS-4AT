@@ -8,7 +8,10 @@ superadmin plus a few real demo logins so the app is usable immediately.
 
 The xlsx is real PII and gitignored; pass its path (default: the DIRECTORY_XLSX
 env var, else /data/roster.xlsx, which docker-compose mounts read-only).
-Re-runnable: it wipes first.
+
+IMPORTANT: requires --force to run. Refuses if employees already exist unless
+--force is passed, to prevent accidental data wipe on container restart.
+Run this once as an explicit operator step, never on automatic startup.
 """
 
 import os
@@ -69,8 +72,25 @@ class Command(BaseCommand):
             default=os.environ.get("DIRECTORY_XLSX", "/data/roster.xlsx"),
             help="Path to the HR export .xlsx",
         )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Required to actually run. Wipes all users/employees and reloads from xlsx.",
+        )
 
     def handle(self, *args, **opts):
+        if Employee.objects.exists() and not opts["force"]:
+            raise CommandError(
+                "Employees already exist in the database.\n"
+                "This command wipes ALL users, employees and org structure before reloading.\n"
+                "Pass --force to confirm you intend to overwrite a populated database.\n"
+                "Do NOT run this on automatic startup."
+            )
+        if not opts["force"]:
+            raise CommandError(
+                "load_real_directory is a destructive one-time operator step.\n"
+                "Pass --force to confirm you intend to wipe all users/employees and reload from xlsx."
+            )
         path = opts["xlsx"]
         if not os.path.exists(path):
             raise CommandError(f"xlsx not found: {path}")

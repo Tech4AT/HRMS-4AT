@@ -25,13 +25,12 @@ su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${POSTGRES_
 echo "==> Migrating and seeding"
 cd /app/backend
 python manage.py migrate --noinput
-if [ -f /data/docs/roster.xlsx ]; then
-  echo "==> Loading REAL directory from docs/roster.xlsx"
-  python manage.py load_real_directory /data/docs/roster.xlsx || true
-else
-  python manage.py createinitialadmin || true
-  python manage.py seed_demo_org || true
-fi
+python manage.py createinitialadmin || true
+python manage.py seed_demo_org || true
+
+# NOTE: Do NOT run load_real_directory here — it wipes all users and org data.
+# To import a real roster run explicitly after startup:
+#   docker exec <container> python /app/backend/manage.py load_real_directory /data/docs/roster.xlsx --force
 
 echo "==> Starting Django on :3000 and Next.js on :3001"
 cd /app/backend && python manage.py runserver 0.0.0.0:3000 &
