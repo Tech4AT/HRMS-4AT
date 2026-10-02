@@ -99,6 +99,14 @@ pipeline {
       }
     }
 
+    stage('Bootstrap admin') {
+      // Idempotent: creates the first HR Admin from INITIAL_ADMIN_EMAIL/
+      // INITIAL_ADMIN_PASSWORD (must be set in the box .env); no-op if it exists.
+      steps {
+        sh 'cd "$BACKEND_DIR" && "$PY" manage.py createinitialadmin'
+      }
+    }
+
     stage('Collect static') {
       steps {
         sh 'cd "$BACKEND_DIR" && "$PY" manage.py collectstatic --noinput'
