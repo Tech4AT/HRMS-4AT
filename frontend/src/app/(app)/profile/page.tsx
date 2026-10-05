@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { DashboardCard } from '@/components/dashboard/DashboardCard';
 import { Employee360, type ExtraTab } from '@/components/employee360/Employee360';
 import { PackageIcon } from '@/components/icons';
+import { LearningOverview } from '@/components/learning/LearningOverview';
 import { exitsApi, ExitsApiError, MyResignationState, RESIGNATION_STATUS_COLOR, ResignationStatus } from '@/lib/api/exits';
 
 function EmptyPanel({
@@ -215,6 +216,7 @@ function ExitTab() {
 }
 
 const SELF_TABS: ExtraTab[] = [
+  { id: 'learning', label: 'Learning', content: <LearningOverview employeeId="me" showLaunch /> },
   { id: 'exit', label: 'Exit', content: <ExitTab /> },
   {
     id: 'assets',

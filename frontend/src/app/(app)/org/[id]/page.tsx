@@ -9,7 +9,8 @@ import type { Lookups, Named } from '@/components/admin/org/useOrgData';
 import { EmployeeDrawer } from '@/components/admin/org/EmployeeDrawer';
 import { Notice } from '@/components/admin/ui';
 import { EditIcon } from '@/components/icons';
-import { Employee360 } from '@/components/employee360/Employee360';
+import { Employee360, type ExtraTab } from '@/components/employee360/Employee360';
+import { LearningOverview } from '@/components/learning/LearningOverview';
 
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'include' });
@@ -42,6 +43,9 @@ export default function EmployeeProfilePage() {
   const canWrite = hasPermission('employees.write');
   // A Manager may change who someone in their team reports to, and nothing else.
   const canEditReportingLine = hasPermission('employees.reporting_line.write');
+
+  // Courses, certifications and skills from the LMS.
+  const learningTabs: ExtraTab[] = [{ id: 'learning', label: 'Learning', content: <LearningOverview employeeId={id} /> }];
 
   const [editData, setEditData] = useState<EditData | null>(null);
   const [loadingEdit, setLoadingEdit] = useState(false);
@@ -109,7 +113,7 @@ export default function EmployeeProfilePage() {
         {editError && <Notice tone="error">{editError}</Notice>}
       </div>
 
-      <Employee360 employeeId={id} headerActions={headerActions} reloadKey={reloadKey} />
+      <Employee360 employeeId={id} headerActions={headerActions} reloadKey={reloadKey} extraTabs={learningTabs} />
 
       {editData && (
         <EmployeeDrawer
