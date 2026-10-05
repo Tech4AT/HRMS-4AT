@@ -50,6 +50,14 @@ backend/verification-reports/
 backend/**/management/commands/data/
 backend/**/fixtures/*.real.*
 
+# ---- PII / DB dumps / local exports (never commit; EC2 never receives these
+# either — the Jenkins rsync ships only backend/ and frontend/) ----
+docs/*.csv
+docs/*.xlsx
+docs/*.xls
+*.sql
+hrms_dump.sql
+
 # ---- General build artifacts ----
 dist/
 build/
@@ -68,3 +76,30 @@ docs/*.xlsx
 
 # God-agent orchestration playbook — local workflow aid, not project state
 docs/GOD-AGENT-ORCHESTRATION.md
+
+# Local dev environment (Docker) — kept locally for the maintainer's dev stack,
+# not shared. Peers run each module natively (manage.py / next dev), so these
+# are intentionally untracked. CI runs pytest directly and does not use Docker.
+/.dockerignore
+/Dockerfile
+/docker-compose.yml
+/docker-entrypoint.sh
+/backend/.dockerignore
+/backend/Dockerfile
+/backend/docker-compose.yml
+/backend/docker-entrypoint.sh
+/frontend/.dockerignore
+/frontend/Dockerfile
+
+# Local DB dumps (data reproducible from roster.xlsx at startup)
+hrms_dump.sql
+*.sql
+
+# Confidential asset inventory (PII) — mounted at runtime like roster.xlsx, never committed
+docs/asset_laptops.csv
+docs/*.csv
+
+# PII rosters/imports can also land in backend/ during payroll work — never commit
+backend/*.csv
+backend/*.xlsx
+backend/roster_*

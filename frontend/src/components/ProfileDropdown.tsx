@@ -108,7 +108,7 @@ export function ProfileDropdown() {
               User Preferences
             </button>
             <button
-              onClick={() => {}}
+              onClick={() => handleNavigation('/change-password')}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left"
             >
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">

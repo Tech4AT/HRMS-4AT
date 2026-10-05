@@ -24,7 +24,7 @@ def test_creates_the_eight_people_with_working_logins():
 
     assert _demo_employees().count() == 8
     hana = User.objects.get(email="demo.hana@hrms.local")
-    assert hana.check_password("DemoPass123!") and hana.role.name == "HR Admin"
+    assert hana.check_password("DemoPass123!") and list(hana.roles.values_list("name", flat=True)) == ["HR Admin"]
 
 
 def test_rebuilds_the_reporting_lines():
@@ -45,15 +45,20 @@ def test_is_idempotent():
 
 
 def test_the_demo_org_behaves_under_rbac():
-    """Dana is a Manager: she reaches herself and her direct report Maya only."""
+    """Dana is a Manager. She can see her whole team (herself, Maya, and Maya's
+    reports Eli and Eve), and change who they report to, but not edit them."""
     _run()
 
     dana = User.objects.get(email="demo.dana@hrms.local")
-    reach = set(
-        resolve_employee_scope(dana, "employees.read").values_list("employee_code", flat=True)
-    )
 
-    assert reach == {"DEMO-DANA", "DEMO-MAYA"}
+    def reach(code):
+        return set(resolve_employee_scope(dana, code).values_list("employee_code", flat=True))
+
+    team = {"DEMO-DANA", "DEMO-MAYA", "DEMO-ELI", "DEMO-EVE"}
+    assert reach("employees.read") == team
+    assert reach("employees.reporting_line.write") == team
+    assert reach("employees.write") == set()  # no general edit rights
+    assert "DEMO-SAM" not in reach("employees.read")  # another team stays invisible
 
 
 def test_remove_deletes_exactly_what_it_created():

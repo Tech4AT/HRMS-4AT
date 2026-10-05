@@ -4,3 +4,5 @@ pytest-django>=4.9,<4.10
 factory-boy>=3.3,<3.4
 ruff>=0.6,<0.7
 black>=24.8,<24.9
+# S3-path storage tests run against moto (mock AWS, no real credentials).
+moto>=5,<6

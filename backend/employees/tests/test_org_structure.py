@@ -12,7 +12,7 @@ from employees.models import (
     BusinessUnit,
     CostCenter,
     Department,
-    Designation,
+    JobTitle,
     LegalEntity,
     Location,
 )
@@ -21,7 +21,8 @@ pytestmark = pytest.mark.django_db
 
 KINDS = {
     "departments": Department,
-    "designations": Designation,
+    "designations": JobTitle,
+    "job-titles": JobTitle,
     "locations": Location,
     "legal-entities": LegalEntity,
     "business-units": BusinessUnit,

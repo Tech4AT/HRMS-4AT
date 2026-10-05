@@ -43,10 +43,12 @@ function handler(method: Method) {
       );
     }
 
-    // The backend's routes end with a slash (e.g. /roles/5/); the trailing ''
-    // segment produces it.
+    // createBackendProxyRoute already appends the backend's trailing slash
+    // (e.g. /roles/5/). Forward the subpath as-is — adding our own '' segment
+    // here double-slashes any multi-segment path (employees/me/profile -> //),
+    // which the backend 404s.
     return createBackendProxyRoute(resource)[method](req, {
-      params: Promise.resolve({ path: [...rest, ''] }),
+      params: Promise.resolve({ path: rest }),
     });
   };
 }

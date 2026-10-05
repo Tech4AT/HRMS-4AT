@@ -45,6 +45,86 @@ export interface Page<T> {
   pageSize: number;
 }
 
+/** Employee Reports (Org Dashboard > Employee Reports). Shapes mirror the
+ * backend's snake_case {success, data} envelope, unwrapped by `request`. */
+export interface ReportCard {
+  id: string;
+  title: string;
+  description: string;
+  wired: boolean;
+  unavailable?: string | null;
+  customizable?: boolean;
+}
+
+export interface ReportCategory {
+  id: string;
+  label: string;
+  reports: ReportCard[];
+}
+
+export interface ReportFieldGroup {
+  name: string;
+  fields: { key: string; label: string }[];
+  count: number;
+}
+
+export interface ReportCatalog {
+  categories: ReportCategory[];
+  field_groups: ReportFieldGroup[];
+}
+
+export interface ReportColumn {
+  key: string;
+  label: string;
+}
+
+export interface ReportPayload {
+  type: string;
+  title: string;
+  description: string;
+  category: string;
+  wired: boolean;
+  columns: ReportColumn[];
+  rows: Record<string, string | number | null>[];
+  total: number;
+  unavailable: string | null;
+  custom?: { id: number; name: string };
+}
+
+export interface SavedReport {
+  id: number;
+  name: string;
+  base_type: string;
+  selected_fields: string[];
+  filters: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ReportFilters = {
+  business_unit?: string;
+  department?: string;
+  location?: string;
+  cost_center?: string;
+  legal_entity?: string;
+  band?: string;
+};
+
+/** Rows -> CSV text (client-side download; the backend also serves CSV at
+ * org/reports/export/ for API users). */
+export function reportRowsToCsv(
+  columns: ReportColumn[],
+  rows: Record<string, string | number | null>[],
+): string {
+  const cell = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [columns.map((c) => cell(c.label)).join(',')];
+  for (const row of rows) lines.push(columns.map((c) => cell(row[c.key])).join(','));
+  return lines.join('\n');
+}
+
 export interface RoleGrant {
   id: number;
   role: number;
@@ -56,16 +136,23 @@ export interface RoleGrant {
 export interface Role {
   id: number;
   name: string;
+  description: string;
   archetype: Archetype;
   isActive: boolean;
   userCount: number;
+  /** Membership list (user ids) — reflects current M2M membership. */
+  users: number[];
   permissions: RoleGrant[];
 }
 
 export interface Permission {
   id: number;
   code: string;
+  /** Short row text (from the module's rbac.py; may be blank on old rows). */
+  label: string;
   description: string;
+  /** Feature area for grouping (from the module's rbac.py). */
+  group: string;
 }
 
 export interface AdminUser {
@@ -73,8 +160,11 @@ export interface AdminUser {
   email: string;
   firstName: string;
   lastName: string;
-  role: number | null;
-  roleName: string | null;
+  /** Every role membership (ordered by name). A user may hold zero, one, or many. */
+  roles: { id: number; name: string }[];
+  /** Size of the user's true effective permission set (union across active
+   * roles + overrides + baseline − denies), as computed by the backend. */
+  permissionCount: number;
   employeeCode: string | null;
   isActive: boolean;
 }
@@ -111,6 +201,93 @@ export interface AuditEntry {
   actorEmail: string | null;
   actorName: string | null;
   diff: Record<string, unknown>;
+}
+
+/** One bucket of GET org/analytics/summary/ or headcount?by=. `id` null = Unassigned. */
+export interface HeadcountBucket {
+  id: string | null;
+  name: string;
+  headcount: number;
+}
+
+/** Grade/level dimensions carry no assignments yet: the backend returns a
+ * withheld marker instead of buckets until HR assigns them. */
+export interface WithheldDimension {
+  withheld: string;
+  detail: string;
+}
+
+export function isWithheld(
+  v: HeadcountBucket[] | WithheldDimension | undefined,
+): v is WithheldDimension {
+  return !!v && !Array.isArray(v) && typeof (v as WithheldDimension).withheld === 'string';
+}
+
+export interface OrgAnalyticsSummary {
+  total_headcount: number;
+  total_records: number;
+  by_department: HeadcountBucket[];
+  by_location: HeadcountBucket[];
+  by_business_unit: HeadcountBucket[];
+  by_employment_type: HeadcountBucket[];
+  by_status: HeadcountBucket[];
+  by_grade: HeadcountBucket[] | WithheldDimension;
+  by_level: HeadcountBucket[] | WithheldDimension;
+  /** Metrics with no source data (gender, age, tenure, growth, attrition_rate)
+   * map to a human-readable reason; never charted. */
+  unavailable: Record<string, string>;
+}
+
+export type OrgHeadcountDimension =
+  | 'department'
+  | 'location'
+  | 'business_unit'
+  | 'cost_center'
+  | 'legal_entity'
+  | 'grade'
+  | 'level'
+  | 'employment_type'
+  | 'work_mode'
+  | 'status';
+
+export const HEADCOUNT_DIMENSIONS: { value: OrgHeadcountDimension; label: string }[] = [
+  { value: 'department', label: 'Department' },
+  { value: 'location', label: 'Location' },
+  { value: 'business_unit', label: 'Business unit' },
+  { value: 'employment_type', label: 'Employment type' },
+  { value: 'work_mode', label: 'Work mode' },
+  { value: 'status', label: 'Status' },
+];
+
+export interface HeadcountResponse {
+  dimension: string;
+  buckets: HeadcountBucket[];
+  total: number;
+}
+
+/** Category filter values accepted by GET org/employee-activity/. */
+export const EMPLOYEE_ACTIVITY_CATEGORIES = [
+  'login',
+  'profile',
+  'role',
+  'lifecycle',
+  'orgchange',
+  'structure',
+  'other',
+] as const;
+
+export type EmployeeActivityCategory = (typeof EMPLOYEE_ACTIVITY_CATEGORIES)[number];
+
+export interface EmployeeActivityEntry {
+  id: number;
+  occurredAt: string;
+  action: string;
+  category: string;
+  employee: { id: number; code: string; name: string } | null;
+  actor: { id: number; email: string; name: string; employee_id: number | null } | null;
+  summary: string;
+  entityType: string;
+  entityId: string;
 }
 
 export class ApiError extends Error {
@@ -156,12 +333,17 @@ export const qs = (params: Record<string, string | number | undefined>) => {
 export const adminApi = {
   // roles
   listRoles: () => request<Page<Role>>(`roles/${qs({ pageSize: 100 })}`),
-  createRole: (body: { name: string; archetype: Archetype }) =>
+  createRole: (body: { name: string; description?: string; archetype: Archetype }) =>
     request<Role>('roles/', { method: 'POST', body }),
-  updateRole: (id: number, body: Partial<{ name: string; archetype: Archetype; isActive: boolean }>) =>
+  updateRole: (
+    id: number,
+    body: Partial<{ name: string; description: string; archetype: Archetype; isActive: boolean }>,
+  ) =>
     request<Role>(`roles/${id}/`, { method: 'PATCH', body }),
   deleteRole: (id: number) => request<void>(`roles/${id}/`, { method: 'DELETE' }),
-  listPermissions: () => request<Page<Permission>>(`permissions/${qs({ pageSize: 100 })}`),
+  // Catalog is ~107 and grows slowly; 500 (max_page_size 1000) fetches all in
+  // one page. ponytail: single-page fetch, paginate if the catalog ever nears 500.
+  listPermissions: () => request<Page<Permission>>(`permissions/${qs({ pageSize: 500 })}`),
 
   // what a role grants
   addGrant: (role: number, permission: number, scopeTier: ScopeTier) =>
@@ -173,8 +355,12 @@ export const adminApi = {
   // people
   listUsers: (p: { search?: string; page?: number; pageSize?: number }) =>
     request<Page<AdminUser>>(`users/${qs(p)}`),
-  updateUser: (id: number, body: Partial<{ role: number; isActive: boolean }>) =>
+  updateUser: (id: number, body: Partial<{ roleIds: number[]; isActive: boolean }>) =>
     request<AdminUser>(`users/${id}/`, { method: 'PATCH', body }),
+  addUsersToRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/add-users/`, { method: 'POST', body: { userIds } }),
+  removeUsersFromRole: (roleId: number, userIds: number[]) =>
+    request<Role>(`roles/${roleId}/remove-users/`, { method: 'POST', body: { userIds } }),
   resetPassword: (id: number) =>
     request<{ temporaryPassword: string }>(`users/${id}/reset-password/`, { method: 'POST', body: {} }),
   revokeSessions: (id: number) =>
@@ -183,7 +369,7 @@ export const adminApi = {
     request<AccessPreview>(`users/${id}/access-preview/${qs({ permission })}`),
 
   // personal exceptions
-  listExceptions: (p: { user?: number; page?: number; pageSize?: number }) =>
+  listExceptions: (p: { user?: number; permission?: number; page?: number; pageSize?: number }) =>
     request<Page<Exception>>(`user-permission-overrides/${qs(p)}`),
   addException: (body: { user: number; permission: number; scopeTier: ScopeTier; isGranted: boolean }) =>
     request<Exception>('user-permission-overrides/', { method: 'POST', body }),
@@ -200,6 +386,53 @@ export const adminApi = {
     pageSize?: number;
   }) =>
     request<Page<AuditEntry>>(`audit-log/${qs(p)}`),
+
+  // organisation analytics (org.read-gated, snake_case {success, data})
+  getOrgAnalyticsSummary: () =>
+    request<OrgAnalyticsSummary>('org/analytics/summary/'),
+  getOrgHeadcount: (
+    by: OrgHeadcountDimension,
+    filters: Record<string, string | undefined> = {},
+  ) =>
+    request<HeadcountResponse>(`org/analytics/headcount/${qs({ by, ...filters })}`),
+
+  // per-employee activity feed (audit.read-gated, camelCase Page)
+  listEmployeeActivity: (p: {
+    employee?: string;
+    category?: string;
+    action?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    pageSize?: number;
+  }) =>
+    request<Page<EmployeeActivityEntry>>(`org/employee-activity/${qs(p)}`),
+
+  // employee reports (org.read-gated, snake_case {success, data})
+  getReportCatalog: () => request<ReportCatalog>('org/reports/catalog/'),
+  runReport: (
+    type: string,
+    filters: Record<string, string | undefined> = {},
+    columns?: string[],
+  ) =>
+    request<ReportPayload>(
+      `org/reports/run/${qs({ type, ...filters, ...(columns?.length ? { columns: columns.join(',') } : {}) })}`,
+    ),
+  runSavedReport: (id: number, filters: Record<string, string | undefined> = {}) =>
+    request<ReportPayload>(`org/reports/run/${qs({ custom: id, ...filters })}`),
+  listCustomReports: () => request<Page<SavedReport>>('org/reports/custom/'),
+  createCustomReport: (body: {
+    name: string;
+    base_type: string;
+    selected_fields: string[];
+    filters: Record<string, string>;
+  }) => request<SavedReport>('org/reports/custom/', { method: 'POST', body }),
+  updateCustomReport: (
+    id: number,
+    body: Partial<{ name: string; selected_fields: string[]; filters: Record<string, string> }>,
+  ) => request<SavedReport>(`org/reports/custom/${id}/`, { method: 'PATCH', body }),
+  deleteCustomReport: (id: number) =>
+    request<void>(`org/reports/custom/${id}/`, { method: 'DELETE' }),
 };
 
 /** "Role.created" -> "Role created", "auth.login_failed" -> "Login failed". */

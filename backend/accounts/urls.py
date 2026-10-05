@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from accounts.auth_views import ChangePasswordView, LoginView, LogoutView, MeView, RefreshView
+from accounts.auth_views import ChangePasswordView, LoginView, LogoutView, MeView, PasswordSetupCheckView, PasswordSetupCompleteView, RefreshView
 from accounts.session_views import MySessionDetailView, MySessionsView
 from accounts.views import (
     PermissionViewSet,
@@ -28,5 +28,7 @@ urlpatterns = [
     path("users/me/change-password", ChangePasswordView.as_view(), name="change-password"),
     path("users/me/sessions", MySessionsView.as_view(), name="my-sessions"),
     path("users/me/sessions/<int:pk>", MySessionDetailView.as_view(), name="my-session-detail"),
+    path("auth/set-password/<str:token>", PasswordSetupCheckView.as_view(), name="auth-set-password-check"),
+    path("auth/set-password/<str:token>/complete", PasswordSetupCompleteView.as_view(), name="auth-set-password-complete"),
     *router.urls,
 ]

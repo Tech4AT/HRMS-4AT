@@ -16,12 +16,61 @@ export interface LeaveType {
   id: string;
   name: string;
   code: string;
+  category: string;
   annual_allocation: number;
   carry_forward_limit: number;
   requires_approval: boolean;
   is_paid: boolean;
   description: string | null;
+  /** 'active' types can be picked for new requests; 'inactive' ones are retired
+   *  but keep every balance and request. */
   status: string;
+  /** How many balances / requests use this type. Only sent to people who manage
+   *  leave settings (null for everyone else). */
+  balance_count: number | null;
+  request_count: number | null;
+}
+
+/** What a permanent purge erased. */
+export interface LeaveTypePurgeResult {
+  id: string;
+  balances: number;
+  requests: number;
+  approvals: number;
+}
+
+/** The backend's actual wire shape for `LeaveType`/`LeaveBalanceItem`/
+ *  `LeaveRequest` below — `DecimalField`s (`annual_allocation`,
+ *  `carry_forward_limit`, every `LeaveBalanceItem` money-like field,
+ *  `duration_days`) serialize as JSON *strings* by DRF default
+ *  (`COERCE_DECIMAL_TO_STRING`, unset here so it stays the default `True` —
+ *  the same reason `lib/api/policySettings.ts` and `lib/api/leaveBalanceAdmin.ts`
+ *  convert at this same boundary), not numbers. Calling `.toFixed()` on one of
+ *  these straight off the wire throws ("n.toFixed is not a function") — the
+ *  `toLeaveType`/`toLeaveBalanceItem`/`toLeaveRequest` converters below exist
+ *  so every other component in this app can keep treating these fields as
+ *  plain numbers, as their types already promise. */
+type RawLeaveType = Omit<LeaveType, 'annual_allocation' | 'carry_forward_limit'> & {
+  annual_allocation: string;
+  carry_forward_limit: string;
+};
+
+function toLeaveType(raw: RawLeaveType): LeaveType {
+  return {
+    ...raw,
+    annual_allocation: Number(raw.annual_allocation),
+    carry_forward_limit: Number(raw.carry_forward_limit),
+  };
+}
+
+export interface LeaveTypeInput {
+  name: string;
+  category: string;
+  annual_allocation: number;
+  carry_forward_limit: number;
+  requires_approval: boolean;
+  is_paid: boolean;
+  description?: string;
 }
 
 export interface LeaveBalanceItem {
@@ -36,6 +85,34 @@ export interface LeaveBalanceItem {
   lapsed: number;
   entitled: number;
   available: number;
+}
+
+type RawLeaveBalanceItem = Omit<
+  LeaveBalanceItem,
+  'opening_balance' | 'allocated' | 'used' | 'pending' | 'carry_forward' | 'lapsed' | 'entitled' | 'available'
+> & {
+  opening_balance: string;
+  allocated: string;
+  used: string;
+  pending: string;
+  carry_forward: string;
+  lapsed: string;
+  entitled: string;
+  available: string;
+};
+
+function toLeaveBalanceItem(raw: RawLeaveBalanceItem): LeaveBalanceItem {
+  return {
+    ...raw,
+    opening_balance: Number(raw.opening_balance),
+    allocated: Number(raw.allocated),
+    used: Number(raw.used),
+    pending: Number(raw.pending),
+    carry_forward: Number(raw.carry_forward),
+    lapsed: Number(raw.lapsed),
+    entitled: Number(raw.entitled),
+    available: Number(raw.available),
+  };
 }
 
 export interface LeaveRequest {
@@ -58,6 +135,69 @@ export interface LeaveRequest {
   leave_type_code: string | null;
   employee_name: string | null;
   approver_name: string | null;
+  /** Who actually decided this — usually the same as approver_name, but not
+   *  when an HR Admin resolved it via the approvals.manage override instead
+   *  of the assigned approver deciding it themselves. Use this, not
+   *  approver_name, for a "decided by" display. */
+  decided_by_name?: string | null;
+  approver_remarks?: string | null;
+  /** The generic approvals engine's own request id — decide through
+   *  requestsApi.approve/reject(this id), never a per-module endpoint. */
+  approval_request_id?: string | null;
+}
+
+type RawLeaveRequest = Omit<LeaveRequest, 'duration_days'> & { duration_days: string };
+
+function toLeaveRequest(raw: RawLeaveRequest): LeaveRequest {
+  return { ...raw, duration_days: Number(raw.duration_days) };
+}
+
+/** A request to earn compensatory days for off days worked. Same lifecycle and
+ *  decision fields as LeaveRequest; `days` are credited to `leave_type_name`'s
+ *  balance once approved. */
+export interface CompOffRequest {
+  id: string;
+  employee_id: string;
+  employee_name: string | null;
+  /** The balance the approver chose when approving; null until then. */
+  leave_type_id: string | null;
+  leave_type_name: string | null;
+  /** ISO dates, oldest first - one day is credited per date. */
+  worked_dates: string[];
+  days: number;
+  reason: string | null;
+  status: LeaveStatus;
+  approver_id: string | null;
+  approver_name: string | null;
+  decided_by_name?: string | null;
+  approver_remarks?: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
+  cancelled_at: string | null;
+  /** The generic approvals engine's request id - decide through requestsApi. */
+  approval_request_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type RawCompOffRequest = Omit<CompOffRequest, 'days'> & { days: string };
+
+function toCompOffRequest(raw: RawCompOffRequest): CompOffRequest {
+  return { ...raw, days: Number(raw.days) };
+}
+
+/** An off day (weekly off or holiday) the caller could still claim. */
+export interface EligibleCompOffDay {
+  date: string;
+  /** e.g. "Weekly off" or "Holiday: Founders Day". */
+  reason: string;
+  /** Whether an attendance clock-in exists for that day. */
+  clocked_in: boolean;
+}
+
+export interface EligibleCompOffDays {
+  lookback_days: number;
+  days: EligibleCompOffDay[];
 }
 
 export interface Holiday {
@@ -65,6 +205,7 @@ export interface Holiday {
   name: string;
   holiday_date: string;
   is_optional: boolean;
+  is_special?: boolean;
   description: string | null;
 }
 
@@ -127,30 +268,70 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const leaveApi = {
-  getTypes: () => request<LeaveType[]>('/types'),
-  getBalance: () => request<LeaveBalanceItem[]>('/balance'),
-  getRequests: () => request<LeaveRequest[]>('/requests'),
-  getRequest: (id: string) => request<LeaveRequest>(`/requests/${id}`),
-  createRequest: (input: CreateLeaveRequestInput) =>
-    request<LeaveRequest>('/requests', {
+  getTypes: async () => (await request<RawLeaveType[]>('/types')).map(toLeaveType),
+  createType: async (input: LeaveTypeInput) =>
+    toLeaveType(await request<RawLeaveType>('/types', { method: 'POST', body: JSON.stringify(input) })),
+  updateType: async (id: string, input: Partial<LeaveTypeInput>) =>
+    toLeaveType(
+      await request<RawLeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify(input) }),
+    ),
+  /** Deactivate ('inactive') or reactivate ('active') a type without touching its history. */
+  setTypeStatus: async (id: string, status: 'active' | 'inactive') =>
+    toLeaveType(
+      await request<RawLeaveType>(`/types/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }),
+    ),
+  /** Only succeeds for a type nothing uses; otherwise the backend answers 409. */
+  deleteType: (id: string) => request<{ id: string }>(`/types/${id}`, { method: 'DELETE' }),
+  /** Irreversible: erases the type and every balance and request that uses it.
+   *  The backend requires the type's exact name as confirmation. */
+  purgeType: (id: string, confirmName: string) =>
+    request<LeaveTypePurgeResult>(`/types/${id}/purge`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify({ confirm_name: confirmName }),
     }),
-  cancelRequest: (id: string) =>
-    request<LeaveRequest>(`/requests/${id}/cancel`, { method: 'POST' }),
-  getPendingApprovals: () => request<LeaveRequest[]>('/approvals/pending'),
-  decide: (id: string, approve: boolean, rejectionReason?: string) =>
-    request<LeaveRequest>(`/requests/${id}/approve`, {
-      method: 'PUT',
-      body: JSON.stringify(
-        approve
-          ? { approve: true }
-          : { approve: false, rejection_reason: rejectionReason },
-      ),
-    }),
+  getBalance: async () => (await request<RawLeaveBalanceItem[]>('/balance')).map(toLeaveBalanceItem),
+  getRequests: async () => (await request<RawLeaveRequest[]>('/requests')).map(toLeaveRequest),
+  getRequest: async (id: string) => toLeaveRequest(await request<RawLeaveRequest>(`/requests/${id}`)),
+  createRequest: async (input: CreateLeaveRequestInput) =>
+    toLeaveRequest(
+      await request<RawLeaveRequest>('/requests', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    ),
+  cancelRequest: async (id: string) =>
+    toLeaveRequest(await request<RawLeaveRequest>(`/requests/${id}/cancel`, { method: 'POST' })),
+  getPendingApprovals: async () =>
+    (await request<RawLeaveRequest[]>('/approvals/pending')).map(toLeaveRequest),
+  getApprovalHistory: async () =>
+    (await request<RawLeaveRequest[]>('/approvals/history')).map(toLeaveRequest),
+  decide: async (id: string, approve: boolean, rejectionReason?: string, remarks?: string) =>
+    toLeaveRequest(
+      await request<RawLeaveRequest>(`/requests/${id}/approve`, {
+        method: 'PUT',
+        body: JSON.stringify(
+          approve
+            ? { approve: true, remarks }
+            : { approve: false, rejection_reason: rejectionReason, remarks },
+        ),
+      }),
+    ),
+  getCompOffRequests: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off')).map(toCompOffRequest),
+  getEligibleCompOffDays: () => request<EligibleCompOffDays>('/comp-off/eligible-days'),
+  createCompOffRequest: async (input: { worked_dates: string[]; reason?: string }) =>
+    toCompOffRequest(
+      await request<RawCompOffRequest>('/comp-off', { method: 'POST', body: JSON.stringify(input) }),
+    ),
+  cancelCompOffRequest: async (id: string) =>
+    toCompOffRequest(await request<RawCompOffRequest>(`/comp-off/${id}/cancel`, { method: 'POST' })),
+  getCompOffPendingApprovals: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off/approvals/pending')).map(toCompOffRequest),
+  getCompOffApprovalHistory: async () =>
+    (await request<RawCompOffRequest[]>('/comp-off/approvals/history')).map(toCompOffRequest),
   getHolidays: (year: number) => request<Holiday[]>(`/holidays?year=${year}`),
-  getCalendar: (from: string, to: string) =>
-    request<LeaveRequest[]>(`/calendar?from=${from}&to=${to}`),
+  getCalendar: async (from: string, to: string) =>
+    (await request<RawLeaveRequest[]>(`/calendar?from=${from}&to=${to}`)).map(toLeaveRequest),
 };
 
 // ---- small formatting helpers shared by the leave UI ----
@@ -192,4 +373,18 @@ const STATUS_LABEL: Record<LeaveStatus, string> = {
 
 export function statusLabel(s: LeaveStatus): string {
   return STATUS_LABEL[s] ?? s;
+}
+
+/** "Sat 04 Oct 2026, Sun 05 Oct 2026" - for listing the days a Comp Off request covers. */
+export function formatDateList(dates: string[]): string {
+  return dates
+    .map((d) =>
+      new Date(`${d}T00:00:00`).toLocaleDateString('en-US', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }),
+    )
+    .join(', ');
 }

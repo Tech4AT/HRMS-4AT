@@ -1,0 +1,25 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Your exit{% endblock %}
+{% block content %}
+{% if accepted %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Hi {{ first_name }}, your exit is confirmed</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  {% if hr_initiated %}HR has recorded your exit from {{ company_name }}.{% else %}HR has accepted your resignation.{% endif %}
+  Your last working day is <strong>{{ last_working_day }}</strong>. Your HRMS access will end after that day.
+</p>
+{% else %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Hi {{ first_name }}, an update on your resignation</h1>
+<p style="margin:0 0 20px 0; font-size:15px; color:#374151; line-height:24px;">
+  HR has not accepted your resignation at this time. Please speak to HR about next steps.
+</p>
+{% endif %}
+{% if notes %}
+<div style="background-color:#f9fafb; border:1px solid #eef0f3; border-radius:12px; padding:16px 20px; margin:0 0 20px 0;">
+  <p style="margin:0 0 6px 0; font-size:13px; font-weight:700; color:#6b21a8; text-transform:uppercase; letter-spacing:0.4px;">{% if hr_initiated %}Reason{% else %}Note from HR{% endif %}</p>
+  <p style="margin:0; font-size:14px; color:#374151; line-height:22px;">{{ notes|linebreaksbr }}</p>
+</div>
+{% endif %}
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Thanks,<br><strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

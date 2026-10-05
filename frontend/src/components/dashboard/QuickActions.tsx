@@ -3,23 +3,17 @@
 import { useRouter } from 'next/navigation';
 import { DashboardCard } from './DashboardCard';
 import {
-  CalendarIcon,
   ReceiptIcon,
-  HomeIcon,
   FileTextIcon,
-  TimerIcon,
-  ClockIcon,
   TeamIcon,
   MessageCircleIcon,
 } from '@/components/icons';
 
+// Leave/attendance/timesheet quick actions removed until those backends exist
+// (their pages 404 → "Upstream error"). Re-add when the peer backends land.
 const actions = [
-  { id: 'apply_leave', label: 'Apply Leave', icon: CalendarIcon, href: '/leave/apply' },
   { id: 'log_expense', label: 'Log Expense', icon: ReceiptIcon, href: '/me/expenses' },
-  { id: 'request_wfh', label: 'Request WFH', icon: HomeIcon, href: '/attendance/wfh' },
   { id: 'view_payslip', label: 'View Payslip', icon: FileTextIcon, href: '/payslips' },
-  { id: 'timesheet', label: 'Timesheet', icon: TimerIcon, href: '/timesheet' },
-  { id: 'regularize_attendance', label: 'Regularize Attendance', icon: ClockIcon, href: '/attendance/regularize' },
   { id: 'team_directory', label: 'Team Directory', icon: TeamIcon, href: '/team' },
   { id: 'ask_hr', label: 'Ask HR', icon: MessageCircleIcon, href: '/inbox' },
 ];

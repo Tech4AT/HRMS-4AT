@@ -22,14 +22,40 @@ export interface AttendanceDayView {
   working_minutes: number | null;
   late_minutes: number | null;
   early_leave_minutes: number | null;
+  /** Minutes worked beyond the standard workday. */
+  overtime_minutes?: number | null;
   is_weekend: boolean;
   is_holiday: boolean;
   holiday_name: string | null;
+  holiday_description?: string | null;
   on_leave: boolean;
   leave_type_name: string | null;
   source: string | null;
   notes: string | null;
   record_id: string | null;
+  /** Whether a break is currently in progress (today only). */
+  on_break?: boolean;
+  /** Total break minutes so far today, including any break in progress. */
+  break_minutes?: number | null;
+  /** Each break in the order taken; `end` is null for one still in progress. */
+  breaks?: { start: string; end: string | null; minutes: number }[];
+  /** Set by the org calendar (a one-off WFH date or an active recurring
+   *  weekday rule) - informational only, doesn't change how check-in/out work. */
+  is_wfh_day?: boolean;
+  /** Name/label of the WFH reason (the one-off entry's name, or the
+   *  recurring rule's label), when `is_wfh_day` is true. */
+  wfh_note?: string | null;
+  /** Description of the one-off WFH entry, if it has one. */
+  wfh_description?: string | null;
+  /** Special calendar events on this date. */
+  events?: { name: string; description: string | null }[];
+  /** The employee's assigned Shift, "HH:MM" 24h wall-clock time — null if no
+   *  Shift is assigned (Settings > Shifts). Doesn't vary by date. */
+  shift_start_time?: string | null;
+  shift_end_time?: string | null;
+  /** The shift's scheduled working minutes (span minus break) - null if no
+   *  Shift is assigned. */
+  shift_scheduled_minutes?: number | null;
 }
 
 export interface AttendanceSummary {
@@ -44,8 +70,10 @@ export interface AttendanceSummary {
   leave_days: number;
   absent_days: number;
   late_days: number;
+  early_leave_days: number;
   total_working_minutes: number;
   total_working_hours: number;
+  overtime_minutes: number;
 }
 
 export interface AttendanceRecord {
@@ -56,6 +84,7 @@ export interface AttendanceRecord {
   clock_in_time: string | null;
   clock_out_time: string | null;
   working_minutes: number | null;
+  break_minutes?: number | null;
   late_minutes: number | null;
   early_leave_minutes: number | null;
   status: string;
@@ -91,6 +120,15 @@ export interface AttendanceRequest {
   updated_at: string;
   employee_name?: string | null;
   approver_name?: string | null;
+  /** Who actually decided this — usually the same as approver_name, but not
+   *  when an HR Admin resolved it via the approvals.manage override instead
+   *  of the assigned approver deciding it themselves. Use this, not
+   *  approver_name, for a "decided by" display. */
+  decided_by_name?: string | null;
+  approver_remarks?: string | null;
+  /** The generic approvals engine's own request id — decide through
+   *  requestsApi.approve/reject(this id), never a per-module endpoint. */
+  approval_request_id?: string | null;
 }
 
 export interface CreateWfhRequestInput {
@@ -103,6 +141,12 @@ export interface CreateWfhRequestInput {
 export interface CreateRegularisationRequestInput {
   start_date: string;
   reason: string;
+}
+
+/** Only a pending regularisation request can be edited. */
+export interface UpdateRegularisationRequestInput {
+  start_date?: string;
+  reason?: string;
 }
 
 interface Envelope<T> {
@@ -176,6 +220,8 @@ export const attendanceApi = {
       method: 'POST',
       body: JSON.stringify(notes ? { notes } : {}),
     }),
+  startBreak: () => request<AttendanceDayView>('/break-start', { method: 'POST', body: '{}' }),
+  endBreak: () => request<AttendanceDayView>('/break-end', { method: 'POST', body: '{}' }),
 
   // ----- WFH / regularisation requests -----------------------------------
   getRequests: (type?: AttendanceRequestType) =>
@@ -192,14 +238,21 @@ export const attendanceApi = {
     }),
   cancelRequest: (id: string) =>
     request<AttendanceRequest>(`/requests/${id}/cancel`, { method: 'POST' }),
+  /** Only a pending ('submitted') regularisation request can be edited. */
+  updateRequest: (id: string, input: UpdateRegularisationRequestInput) =>
+    request<AttendanceRequest>(`/requests/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    }),
   getPendingApprovals: () => request<AttendanceRequest[]>('/requests/approvals/pending'),
-  decideRequest: (id: string, approve: boolean, rejectionReason?: string) =>
+  getApprovalHistory: () => request<AttendanceRequest[]>('/requests/approvals/history'),
+  decideRequest: (id: string, approve: boolean, rejectionReason?: string, remarks?: string) =>
     request<AttendanceRequest>(`/requests/${id}/approve`, {
       method: 'PUT',
       body: JSON.stringify(
         approve
-          ? { approve: true }
-          : { approve: false, rejection_reason: rejectionReason },
+          ? { approve: true, remarks }
+          : { approve: false, rejection_reason: rejectionReason, remarks },
       ),
     }),
 };

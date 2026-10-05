@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
             lastName: MOCK_USER.lastName,
             role: 'employee',
             permissions: [],
+            mustChangePassword: false,
           },
         },
       });
@@ -47,6 +48,10 @@ export async function POST(req: NextRequest) {
           lastName: data.data.user.lastName,
           role: 'employee', // real role/permissions come from /api/auth/me
           permissions: [],
+          // Forced temporary-password change gate (T06); real value comes
+          // from /api/auth/me — this lets the login screen route correctly
+          // even before that refresh lands.
+          mustChangePassword: data.data.user.mustChangePassword ?? false,
         },
       },
     });

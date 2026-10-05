@@ -10,14 +10,12 @@ done
 echo "==> Migrating"
 python manage.py migrate --noinput
 
-if [ -f /data/docs/roster.xlsx ]; then
-  echo "==> Loading REAL directory from docs/roster.xlsx"
-  python manage.py load_real_directory /data/docs/roster.xlsx || true
-else
-  echo "==> No docs/roster.xlsx found; seeding demo data"
-  python manage.py createinitialadmin || true
-  python manage.py seed_demo_org || true
-fi
+echo "==> Ensuring initial admin user"
+python manage.py createinitialadmin || true
+
+# NOTE: Do NOT run load_real_directory here — it wipes all users and org data.
+# To import a real roster run explicitly: docker compose exec backend \
+#   python manage.py load_real_directory /data/docs/roster.xlsx --force
 
 echo "==> Starting Django on :3000"
 exec python manage.py runserver 0.0.0.0:3000

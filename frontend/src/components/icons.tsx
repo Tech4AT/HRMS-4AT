@@ -80,6 +80,52 @@ export const HelpIcon = base(
   <path d="M11 18h2v-2h-2v2zm1-16C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-2.21 0-4 1.79-4 4h2c0-1.1.9-2 2-2s2 .9 2 2c0 2-3 1.5-3 5h2c0-2.5 3-3 3-5 0-2.21-1.79-4-4-4z" />,
 );
 
+/** Help & Support: a diagonal support ticket (text lines, notched stub) with a
+ *  gear over its corner. Mostly line work, unlike the filled icons around it,
+ *  so it strokes with `currentColor`; the gear is solid so it stays legible at
+ *  20px. */
+export function SupportTicketIcon({ className = 'w-5 h-5' }: IconProps) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {/* A gap is cut out of the ticket around the gear so the two stay distinct. */}
+      <mask id="support-ticket-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="white" />
+        <circle cx="17.3" cy="17.3" r="6.4" fill="black" />
+      </mask>
+      <g mask="url(#support-ticket-cut)">
+        <g transform="rotate(-35 11 10.5)">
+          {/* ticket with a notched stub */}
+          <path d="M4.5 6H14a1.5 1.5 0 003 0H18a1.5 1.5 0 011.5 1.5v6A1.5 1.5 0 0118 15h-1a1.5 1.5 0 00-3 0H4.5A1.5 1.5 0 013 13.5v-6A1.5 1.5 0 014.5 6z" />
+          {/* perforation and text lines */}
+          <path d="M15.5 7.8v5.4" strokeDasharray="1.4 1.6" />
+          <path d="M6 9.2h6M6 11.8h4" />
+        </g>
+      </g>
+      {/* gear: solid body with a hole, eight teeth */}
+      <path
+        d="M13.6 17.3a3.7 3.7 0 107.4 0 3.7 3.7 0 10-7.4 0zM15.9 17.3a1.4 1.4 0 102.8 0 1.4 1.4 0 10-2.8 0z"
+        fill="currentColor"
+        stroke="none"
+        fillRule="evenodd"
+      />
+      <path
+        d="M20.7 17.3h1.6M19.7 19.7l1.14 1.14M17.3 20.7v1.6M14.9 19.7l-1.14 1.14M13.9 17.3h-1.6M14.9 14.9l-1.14-1.14M17.3 13.9v-1.6M19.7 14.9l1.14-1.14"
+        strokeWidth={2}
+        strokeLinecap="butt"
+      />
+    </svg>
+  );
+}
+
 export const BellIcon = base(
   <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />,
 );
@@ -227,4 +273,53 @@ export const FingerprintIcon = strokeIcon(
     <path d="M20.5 17.2A10 10 0 0021 12" />
     <path d="M15.5 20c.3-.7.55-1.4.75-2.2" />
   </>,
+);
+
+// Onboarding hybrid compat icons (same paths as the teammate's icon set, so
+// his ported onboarding/documents components render unchanged).
+export const DownloadIcon = base(
+  <path d="M12 3v10.586l3.293-3.293 1.414 1.414L12 17.414l-4.707-4.707 1.414-1.414L12 13.586V3h0zM5 19h14v2H5v-2z" />,
+);
+
+export const MoreVerticalIcon = base(
+  <path d="M12 8a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4zm0 6a2 2 0 100-4 2 2 0 000 4z" />,
+);
+
+export const XCircleIcon = strokeIcon(
+  <>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M15 9l-6 6M9 9l6 6" />
+  </>,
+);
+
+export const UploadCloudIcon = strokeIcon(
+  <>
+    <path d="M16 16l-4-4-4 4" />
+    <path d="M12 12v9" />
+    <path d="M20.39 18.39A5 5 0 0018 9h-1.26A8 8 0 103 16.3" />
+  </>,
+);
+
+export const ZoomInIcon = strokeIcon(
+  <>
+    <circle cx="11" cy="11" r="8" />
+    <path d="M21 21l-4.35-4.35" />
+    <path d="M11 8v6M8 11h6" />
+  </>,
+);
+
+export const ZoomOutIcon = strokeIcon(
+  <>
+    <circle cx="11" cy="11" r="8" />
+    <path d="M21 21l-4.35-4.35" />
+    <path d="M8 11h6" />
+  </>,
+);
+
+export const EyeIcon = base(
+  <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />,
+);
+
+export const EyeOffIcon = base(
+  <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z" />,
 );

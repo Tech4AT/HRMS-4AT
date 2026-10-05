@@ -78,7 +78,9 @@ class Command(VerificationCommand):
             {"role": role_id, "permission": self.read_permission_id, "scopeTier": tier},
         )
         v.expect_status(f"admin grants employees.read at tier '{tier}'", grant, 201)
-        assign = admin.patch(f"{API}/users/{self.people[person_key].user_id}/", {"role": role_id})
+        assign = admin.patch(
+            f"{API}/users/{self.people[person_key].user_id}/", {"roleIds": [role_id]}
+        )
         v.expect_status(
             f"admin assigns the role to {self.people[person_key].user.first_name}", assign, 200
         )
@@ -124,12 +126,14 @@ class Command(VerificationCommand):
         v.check("login returns an access token and a refresh token", bool(probe.tokens))
         me = probe.get(f"{API}/users/me").json()["data"]
         v.note(
-            f"/users/me: role={me['roles'][0]['name']}, scope={me['scope']['kind']}, "
-            f"{len(me['permissions'])} permissions"
+            f"/users/me: roles={me['roles']}, archetype={me['archetype']}, "
+            f"scope={me['scope']['kind']}, {len(me['permissions'])} permissions"
         )
         v.check(
             "/users/me reports HR Admin with organisation-wide scope",
-            me["roles"][0]["name"] == "HR Admin" and me["scope"]["kind"] == "org",
+            me["roles"] == ["HR Admin"]
+            and me["archetype"] == "superadmin"
+            and me["scope"]["kind"] == "org",
         )
 
         old_refresh = probe.tokens["refresh"]
@@ -189,7 +193,7 @@ class Command(VerificationCommand):
         maya = v.login("maya", self.email("maya"), PASSWORD)
         self._expect_sees(
             v,
-            "Manager (scope: reporting manager) sees self and direct reports",
+            "Manager (scope: team) sees self and everyone below them",
             maya,
             {"maya", "eli", "eve"},
         )
@@ -200,15 +204,42 @@ class Command(VerificationCommand):
         )
 
         dana = v.login("dana", self.email("dana"), PASSWORD)
+        # Managers see their whole team (direct AND indirect reports), because the
+        # reporting-line screen has to list everyone whose manager they may change
+        # (Organization requirement). They still never see another team.
         self._expect_sees(
             v,
-            "Director as Manager sees direct reports only, not skip-level",
+            "Director as Manager sees direct and skip-level reports (the whole team)",
             dana,
-            {"dana", "maya"},
+            {"dana", "maya", "eli", "eve"},
         )
         v.expect_status(
-            "skip-level record is refused at the Manager tier",
+            "skip-level record is readable by the Manager",
             dana.get(f"{API}/employees/{self.people['eli'].pk}/"),
+            200,
+        )
+        v.expect_status(
+            "Director cannot open someone in another team",
+            dana.get(f"{API}/employees/{self.people['sam'].pk}/"),
+            403,
+        )
+        # What a Manager may change is the reporting line, and nothing else. Reading
+        # a record is not editing it: no field edit, no exit, no rename.
+        for label, body in (
+            ("another field of a report (employment type)", {"employment_type": "contract"}),
+            ("a report's status (exiting someone ends their access)", {"status": "exited"}),
+        ):
+            v.expect_status(
+                f"Manager cannot change {label}",
+                dana.patch(f"{API}/employees/{self.people['eli'].pk}/", body),
+                403,
+            )
+        v.expect_status(
+            "Manager cannot rename a report through the profile",
+            dana.patch(
+                f"{API}/employees/{self.people['eli'].pk}/profile/name/",
+                {"first_name": "Eli", "last_name": "Renamed"},
+            ),
             403,
         )
 
@@ -261,7 +292,7 @@ class Command(VerificationCommand):
             )
         dana = v.login("dana", self.email("dana"), PASSWORD)
         v.expect_status(
-            "team tier reaches the skip-level record that the Manager tier refused",
+            "team tier reaches the skip-level record",
             dana.get(f"{API}/employees/{self.people['eli'].pk}/"),
             200,
         )
@@ -333,7 +364,12 @@ class Command(VerificationCommand):
         v.expect_status("HR Admin can administer roles", hana.get(f"{API}/roles/"), 200)
         v.check(
             "Eve's role is unchanged after her attempt",
-            User.objects.get(pk=self.people["eve"].user_id).role.name == "Employee",
+            list(
+                User.objects.get(pk=self.people["eve"].user_id).roles.values_list(
+                    "name", flat=True
+                )
+            )
+            == ["Employee"],
         )
 
     def _sessions_and_deactivation(self, v):
@@ -401,7 +437,7 @@ class Command(VerificationCommand):
         )
         v.check(
             "a role named in the request body is ignored (roles are roles.manage only)",
-            nia.role.name == "Employee",
+            list(nia.roles.values_list("name", flat=True)) == ["Employee"],
         )
 
         dana_id, eli_id = self.people["dana"].pk, self.people["eli"].pk
@@ -477,10 +513,14 @@ class Command(VerificationCommand):
 
         response = hana.patch(f"{API}/roles/{role.pk}/", {"isActive": False})
         v.expect_status("HR Admin deactivates the role", response, 200)
-        v.expect_status(
-            "the same login is refused at once: a deactivated role grants nothing",
-            maya.get(f"{API}/employees/"),
-            403,
+        # The dead role grants nothing: Maya falls back to exactly the
+        # self-service baseline (herself, nothing else) — she is an employee,
+        # so the baseline still applies even with no live role grant.
+        self._expect_sees(
+            v,
+            "deactivation strips the role grant: only baseline self-service remains",
+            maya,
+            {"maya"},
         )
         v.expect_status(
             "reactivating the role restores access",
@@ -532,8 +572,8 @@ class Command(VerificationCommand):
         hana_id = self.people["hana"].user_id
         finance = Role.objects.get(name="Finance").pk
         v.expect_status(
-            "an admin cannot change their own role (avoids locking everyone out)",
-            hana.patch(f"{API}/users/{hana_id}/", {"role": finance}),
+            "an admin cannot drop their own last roles.manage role (avoids locking everyone out)",
+            hana.patch(f"{API}/users/{hana_id}/", {"roleIds": [finance]}),
             403,
         )
         v.expect_status(

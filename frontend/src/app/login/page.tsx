@@ -3,27 +3,29 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth/useAuth';
 import { useRouter } from 'next/navigation';
+import { PasswordInput } from '@/components/PasswordInput';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const { login, isLoading, isAuthenticated } = useAuth();
+  const { login, isLoading, isAuthenticated, user } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/');
+      // A temporary admin-issued password forces a change first (T06).
+      router.push(user?.mustChangePassword ? '/change-password' : '/');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, user, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     try {
-      await login(email, password);
-      router.push('/');
+      const mustChange = await login(email, password);
+      router.push(mustChange ? '/change-password' : '/');
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : 'Invalid email or password');
     }
@@ -92,10 +94,10 @@ export default function LoginPage() {
             {/* Password Input */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
                 placeholder="••••••••"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-transparent"
                 required

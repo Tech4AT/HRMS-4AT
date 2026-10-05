@@ -20,6 +20,15 @@ export interface NotificationsList {
   unreadCount: number;
 }
 
+/** Who an announcement goes to. */
+export type AnnounceTarget =
+  | { type: 'everyone' }
+  | { type: 'me' }
+  | { type: 'admins' }
+  | { type: 'role'; roleId: number }
+  | { type: 'department'; departmentId: string }
+  | { type: 'users'; userIds: number[] };
+
 interface Envelope<T> {
   success: boolean;
   data?: T;
@@ -74,4 +83,11 @@ export const notificationsApi = {
     request<{ notification: Notification }>(`/${id}/read`, { method: 'PUT' }),
   markAllRead: () =>
     request<{ markedCount: number }>('/read-all', { method: 'PUT' }),
+  // Superadmin only (the backend enforces it) — broadcast an announcement to a
+  // chosen audience.
+  announce: (title: string, body: string, target: AnnounceTarget) =>
+    request<{ count: number }>('/announce', {
+      method: 'POST',
+      body: JSON.stringify({ title, body, target }),
+    }),
 };

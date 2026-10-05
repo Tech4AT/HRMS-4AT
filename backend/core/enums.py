@@ -34,6 +34,15 @@ class EmploymentType(models.TextChoices):
     INTERN = "intern", "Intern"
 
 
+class WorkMode(models.TextChoices):
+    """Where a person works — not in the roster export, so HR sets it. Default
+    OFFICE; REMOTE covers permanent work-from-home."""
+
+    OFFICE = "office", "Office"
+    REMOTE = "remote", "Remote"
+    HYBRID = "hybrid", "Hybrid"
+
+
 class RoleArchetype(models.TextChoices):
     """Which of the frontend's 3 known UI archetypes a role renders as —
     confirmed against the actual frontend source (frontend/src/lib/auth/

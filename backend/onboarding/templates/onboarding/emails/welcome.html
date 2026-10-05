@@ -1,0 +1,65 @@
+{% extends "onboarding/emails/base_email.html" %}
+{% block title %}Welcome to {{ company_name }}{% endblock %}
+{% block content %}
+<h1 style="margin:0 0 4px 0; font-size:22px; color:#111827; font-weight:700;">Welcome aboard, {{ first_name }}! 🎉</h1>
+<p style="margin:0 0 20px 0; font-size:14px; color:#6b7280;">We're excited to have you join {{ company_name }}.</p>
+
+<p style="margin:0 0 16px 0; font-size:15px; color:#374151; line-height:24px;">
+  Your joining date is set for <strong>{{ joining_date }}</strong>. Between now and then, there are a few quick
+  steps to take care of — nothing complicated, just some documents and a couple of confirmations so everything's
+  ready for your first day.
+</p>
+
+<div style="background-color:#f9fafb; border:1px solid #eef0f3; border-radius:12px; padding:20px; margin:0 0 20px 0;">
+  <p style="margin:0 0 10px 0; font-size:13px; font-weight:700; color:#6b21a8; text-transform:uppercase; letter-spacing:0.4px;">Your next steps</p>
+  <p style="margin:0 0 8px 0; font-size:14px; color:#374151;">{{ pending_count }} step{{ pending_count|pluralize }} to complete before your joining date:</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    {% for task in tasks %}
+    <tr>
+      <td style="padding:9px 0; border-bottom:1px solid #eef0f3;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="width:22px; vertical-align:top; padding-top:2px;">
+              <div style="width:14px; height:14px; border-radius:4px; border:2px solid #a78bfa;"></div>
+            </td>
+            <td>
+              <p style="margin:0; font-size:14px; font-weight:600; color:#111827;">{{ task.title }}</p>
+              <p style="margin:2px 0 0 0; font-size:12px; color:#9ca3af;">
+                {% if task.due_date %}Due {{ task.due_date }}{% else %}No due date{% endif %}{% if task.requires_document %} · <span style="color:#7c3aed; font-weight:600;">upload a document</span>{% endif %}
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if set_password_url %}
+<p style="margin:0 0 16px 0; font-size:15px; color:#374151; line-height:24px;">
+  <strong>To get started:</strong> set a password for your account ({{ work_email }}). You'll be signed in
+  straight away and taken to your onboarding checklist, where you can upload the documents above.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 24px 0;">
+  <tr>
+    <td style="border-radius:10px; background-color:#7c3aed;">
+      <a href="{{ set_password_url }}" style="display:inline-block; padding:13px 28px; font-size:14px; font-weight:700; color:#ffffff; text-decoration:none;">Set Your Password</a>
+    </td>
+  </tr>
+</table>
+<p style="margin:0 0 24px 0; font-size:13px; color:#9ca3af;">
+  This link is unique to you and expires in a few days — use it once to set your password, then log in normally from then on.
+</p>
+{% endif %}
+
+<p style="margin:0 0 24px 0; font-size:15px; color:#374151; line-height:24px;">
+  We'll check in with reminders if anything's still outstanding as your joining date gets closer — no need to
+  track it all yourself.
+</p>
+
+<p style="margin:0; font-size:15px; color:#374151; line-height:24px;">
+  Looking forward to having you with us,<br>
+  <strong>{{ company_name }} People Team</strong>
+</p>
+{% endblock %}

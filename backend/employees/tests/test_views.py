@@ -164,7 +164,12 @@ def test_response_shape_matches_frontend_contract(starter_roles, logged_in_clien
         "legal_entity_id",
         "business_unit_id",
         "cost_center_id",
+        "position_id",
+        "level_id",
+        "grade_id",
         "employment_type",
+        "work_mode",
+        "team_ids",
         "date_of_joining",
         "date_of_exit",
     }

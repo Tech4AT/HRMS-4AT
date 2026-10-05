@@ -1,0 +1,293 @@
+import pytest
+from rest_framework.test import APIClient
+
+from accounts.factories import UserFactory
+from accounts.models import Role
+from audit.models import AuditLog
+from employees.factories import EmployeeFactory
+from org_calendar.factories import make_calendar
+from org_calendar.models import CalendarEntry
+
+pytestmark = pytest.mark.django_db
+
+URL = "/api/v1/calendar/entries"
+
+
+def _client(role_name):
+    user = UserFactory(role=Role.objects.get(name=role_name))
+    EmployeeFactory(user=user)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client, user
+
+
+def _hr_client():
+    return _client("HR Admin")
+
+
+# ------------------------------- permissions --------------------------------
+
+
+def test_anonymous_is_401():
+    assert APIClient().get(URL).status_code == 401
+
+
+@pytest.mark.parametrize("role", ["Employee", "Manager", "Finance"])
+def test_roles_without_calendar_manage_are_refused(role):
+    client, _ = _client(role)
+
+    assert client.get(URL).status_code == 403
+    assert (
+        client.post(
+            URL, {"type": "holiday", "date": "2026-01-01", "name": "X"}, format="json"
+        ).status_code
+        == 403
+    )
+
+
+def test_hr_admin_may_list_entries():
+    client, _ = _hr_client()
+
+    response = client.get(URL)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"] == []
+
+
+# ---------------------------------- create -----------------------------------
+
+
+def test_hr_admin_creates_an_entry():
+    client, hr = _hr_client()
+    calendar = make_calendar()
+
+    response = client.post(
+        URL,
+        {
+            "calendar_id": calendar.pk,
+            "type": "holiday",
+            "date": "2026-01-26",
+            "name": "Republic Day",
+            "description": "National holiday",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["success"] is True
+    entry = body["data"]
+    assert entry["type"] == "holiday"
+    assert entry["date"] == "2026-01-26"
+    assert entry["name"] == "Republic Day"
+    assert entry["description"] == "National holiday"
+    assert entry["calendar_id"] == str(calendar.pk)
+    assert entry["optional"] is False and entry["special"] is False
+    assert entry["id"] and entry["created_at"] and entry["updated_at"]
+    # lib/api/calendar.ts types id as `string` — a plain SerializerMethodField
+    # mixin silently didn't do this (DRF's metaclass ignores declared fields
+    # on a base class that isn't itself a Serializer), caught only by
+    # checking this, not by any existing "is the response is 201" test.
+    assert isinstance(entry["id"], str)
+    assert AuditLog.objects.filter(
+        action="CalendarEntry.created", entity_id=str(entry["id"])
+    ).exists()
+
+
+def test_create_without_description_stores_null():
+    client, _ = _hr_client()
+
+    response = client.post(
+        URL,
+        {
+            "calendar_id": make_calendar().pk,
+            "type": "event",
+            "date": "2026-03-01",
+            "name": "Townhall",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["data"]["description"] is None
+
+
+def test_create_requires_type_date_and_name():
+    client, _ = _hr_client()
+
+    calendar = make_calendar()
+
+    response = client.post(
+        URL, {"calendar_id": calendar.pk, "type": "holiday", "date": "2026-01-01"}, format="json"
+    )
+
+    assert response.status_code == 400
+
+
+def test_create_requires_a_calendar():
+    client, _ = _hr_client()
+
+    response = client.post(
+        URL, {"type": "holiday", "date": "2026-01-01", "name": "New Year"}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert "calendar_id" in str(response.json())
+
+
+def test_holiday_flags_are_stored_and_returned():
+    client, _ = _hr_client()
+    calendar = make_calendar()
+
+    response = client.post(
+        URL,
+        {
+            "calendar_id": calendar.pk,
+            "type": "holiday",
+            "date": "2026-03-04",
+            "name": "Holi",
+            "optional": True,
+            "special": True,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    data = response.json()["data"]
+    assert data["optional"] is True and data["special"] is True
+    assert CalendarEntry.objects.get(pk=data["id"]).optional is True
+
+
+@pytest.mark.parametrize("flag", ["optional", "special"])
+@pytest.mark.parametrize("entry_type", ["event", "wfh"])
+def test_flags_are_only_for_holidays(flag, entry_type):
+    client, _ = _hr_client()
+
+    response = client.post(
+        URL,
+        {
+            "calendar_id": make_calendar().pk,
+            "type": entry_type,
+            "date": "2026-03-04",
+            "name": "X",
+            flag: True,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
+def test_the_same_entry_cannot_be_added_twice_to_one_calendar_but_can_to_another():
+    client, _ = _hr_client()
+    first, second = make_calendar(), make_calendar()
+    body = {"type": "holiday", "date": "2026-01-26", "name": "Republic Day"}
+
+    assert client.post(URL, {**body, "calendar_id": first.pk}, format="json").status_code == 201
+    duplicate = {**body, "calendar_id": first.pk, "name": "republic day"}
+    assert client.post(URL, duplicate, format="json").status_code == 400
+    assert client.post(URL, {**body, "calendar_id": second.pk}, format="json").status_code == 201
+
+
+def test_flags_can_be_updated_on_a_holiday():
+    client, _ = _hr_client()
+    entry = CalendarEntry.objects.create(
+        calendar=make_calendar(), type="holiday", date="2026-03-04", name="Holi"
+    )
+
+    response = client.put(f"{URL}/{entry.pk}", {"optional": True}, format="json")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["optional"] is True
+
+
+# ---------------------------------- list filters ------------------------------
+
+
+def test_list_filters_by_from_to_and_type():
+    client, _ = _hr_client()
+    calendar = make_calendar()
+    CalendarEntry.objects.create(
+        calendar=calendar, type="holiday", date="2026-01-01", name="New Year"
+    )
+    CalendarEntry.objects.create(calendar=calendar, type="event", date="2026-02-01", name="Kickoff")
+    CalendarEntry.objects.create(
+        calendar=calendar, type="holiday", date="2026-03-01", name="Late Holiday"
+    )
+
+    by_range = client.get(URL, {"from": "2026-01-15", "to": "2026-02-15"}).json()["data"]
+    by_type = client.get(URL, {"type": "holiday"}).json()["data"]
+
+    assert [e["name"] for e in by_range] == ["Kickoff"]
+    assert {e["name"] for e in by_type} == {"New Year", "Late Holiday"}
+
+
+def test_list_filters_by_calendar():
+    client, _ = _hr_client()
+    first, second = make_calendar(), make_calendar()
+    CalendarEntry.objects.create(calendar=first, type="holiday", date="2026-01-01", name="A")
+    CalendarEntry.objects.create(calendar=second, type="holiday", date="2026-01-02", name="B")
+
+    data = client.get(URL, {"calendar": first.pk}).json()["data"]
+
+    assert [e["name"] for e in data] == ["A"]
+
+
+# ---------------------------------- update (PUT-as-partial) -------------------
+
+
+def test_put_updates_only_the_fields_sent():
+    client, _ = _hr_client()
+    entry = CalendarEntry.objects.create(
+        calendar=make_calendar(),
+        type="event",
+        date="2026-04-01",
+        name="Old Name",
+        description="Old description",
+    )
+
+    response = client.put(f"{URL}/{entry.pk}", {"name": "New Name"}, format="json")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["name"] == "New Name"
+    assert data["description"] == "Old description"  # untouched
+    assert data["date"] == "2026-04-01"  # untouched
+    assert AuditLog.objects.filter(action="CalendarEntry.updated", entity_id=str(entry.pk)).exists()
+
+
+def test_put_can_clear_description_with_explicit_null():
+    client, _ = _hr_client()
+    entry = CalendarEntry.objects.create(
+        calendar=make_calendar(), type="event", date="2026-04-01", name="X", description="Y"
+    )
+
+    response = client.put(f"{URL}/{entry.pk}", {"description": None}, format="json")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["description"] is None
+
+
+# ---------------------------------- delete -------------------------------------
+
+
+def test_delete_returns_success_envelope_with_null_data():
+    client, _ = _hr_client()
+    entry = CalendarEntry.objects.create(
+        calendar=make_calendar(), type="holiday", date="2026-05-01", name="X"
+    )
+
+    response = client.delete(f"{URL}/{entry.pk}")
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True, "data": None}
+    assert not CalendarEntry.objects.filter(pk=entry.pk).exists()
+    assert AuditLog.objects.filter(action="CalendarEntry.deleted", entity_id=str(entry.pk)).exists()
+
+
+def test_delete_missing_entry_is_404():
+    client, _ = _hr_client()
+
+    assert client.delete(f"{URL}/999999").status_code == 404

@@ -43,10 +43,6 @@ export default function RegularizeAttendancePage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 mb-1">Regularize Attendance</h1>
-            <p className="text-sm text-slate-500">Request this day be marked Present</p>
-          </div>
         </div>
       </div>
 

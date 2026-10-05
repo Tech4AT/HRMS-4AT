@@ -19,6 +19,14 @@ export const EMPLOYMENT_TYPES: { value: EmploymentType; label: string }[] = [
   { value: 'intern', label: 'Intern' },
 ];
 
+export type WorkMode = 'office' | 'remote' | 'hybrid';
+
+export const WORK_MODES: { value: WorkMode; label: string }[] = [
+  { value: 'office', label: 'Office' },
+  { value: 'remote', label: 'Remote' },
+  { value: 'hybrid', label: 'Hybrid' },
+];
+
 export const GENDERS = [
   { value: '', label: 'Not recorded' },
   { value: 'female', label: 'Female' },
@@ -43,6 +51,7 @@ export interface EmployeeRow {
   cost_center_id: string | null;
   status: EmployeeStatus;
   employment_type: EmploymentType;
+  work_mode: WorkMode;
   date_of_joining: string | null;
   date_of_exit: string | null;
 }
@@ -69,6 +78,7 @@ export interface EmployeeInput {
   cost_center_id?: string | null;
   manager_id?: string | null;
   employment_type?: EmploymentType;
+  work_mode?: WorkMode;
   date_of_joining?: string | null;
   status?: EmployeeStatus;
   date_of_exit?: string | null;

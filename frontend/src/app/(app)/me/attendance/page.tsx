@@ -17,16 +17,24 @@ import {
   type AttendanceRequest,
   type AttendanceRequestStatus,
 } from '@/lib/api/attendance';
-import { useAuth } from '@/lib/auth/useAuth';
+import { AttendanceLeaveTabs } from '@/components/AttendanceLeaveTabs';
+import { AttendancePolicyModal } from '@/components/attendance/AttendancePolicyModal';
+import { fmtHM, isoToHM, toAttendanceRow, toLocalISODate, type AttendanceRow } from '@/lib/attendance/view';
 
 function AttendanceVisual({
   checkIn,
   checkOut,
   breakMinutes,
+  shiftStart,
+  shiftEnd,
 }: {
   checkIn?: string;
   checkOut?: string;
   breakMinutes?: number;
+  /** The employee's assigned shift, "HH:MM" 24h - drawn as start/end markers
+   *  on the timeline so the logged-in bar has a schedule to read against. */
+  shiftStart?: string;
+  shiftEnd?: string;
 }) {
   if (!checkIn) {
     return <div className="h-2 w-full min-w-[140px] bg-slate-100 rounded-full" />;
@@ -67,6 +75,11 @@ function AttendanceVisual({
 
   const ticks = Array.from({ length: 11 }, (_, i) => ((i + 1) / 12) * 100); // every 2h across 24h
 
+  const shiftMarkers = [
+    shiftStart ? { pct: (toMinutes(shiftStart) / 1440) * 100, label: `Shift starts ${fmtMin(toMinutes(shiftStart))}` } : null,
+    shiftEnd ? { pct: (toMinutes(shiftEnd) / 1440) * 100, label: `Shift ends ${fmtMin(toMinutes(shiftEnd))}` } : null,
+  ].filter((m): m is { pct: number; label: string } => m !== null);
+
   return (
     <div className="relative w-full min-w-[140px] py-2">
       <div className="relative h-2 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -74,6 +87,22 @@ function AttendanceVisual({
           <span key={pct} className="absolute top-0 bottom-0 w-px bg-white/80" style={{ left: `${pct}%` }} />
         ))}
       </div>
+
+      {shiftMarkers.map((m, i) => (
+        <div
+          key={`shift-${i}`}
+          className="group/shift absolute -top-1 h-4 w-0.5 bg-indigo-400 rounded-full"
+          title={m.label}
+          style={{ left: `${m.pct}%` }}
+        >
+          <div className="hidden group-hover/shift:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-20">
+            <div className="bg-slate-700 text-white text-xs font-semibold rounded-lg px-3 py-2 whitespace-nowrap shadow-lg">
+              {m.label}
+            </div>
+            <div className="w-2 h-2 bg-slate-700 rotate-45 mx-auto -mt-1" />
+          </div>
+        </div>
+      ))}
 
       {segments.map((seg, i) => {
         const isLast = i === segments.length - 1;
@@ -126,6 +155,39 @@ function AttendanceVisual({
             );
           })()
         : null}
+    </div>
+  );
+}
+
+/** For an in-progress day (checked in, not out yet) `effectiveMinutes` is
+ *  undefined - `working_minutes` is only computed at checkout - so the
+ *  progress bar would otherwise sit empty all day. Estimate it live from
+ *  check-in to `now` instead, same idea as AttendanceVisual's own "now" bar. */
+function liveEffectiveMinutes(row: AttendanceRow, now: Date): number | undefined {
+  if (row.effectiveMinutes != null) return row.effectiveMinutes;
+  if (row.status !== 'inprogress' || !row.checkIn) return undefined;
+  const [h, m] = row.checkIn.split(':').map(Number);
+  const start = new Date(row.date);
+  start.setHours(h, m, 0, 0);
+  return Math.max(0, Math.round((now.getTime() - start.getTime()) / 60000));
+}
+
+/** Fills up as the day's actual worked minutes approach the shift's scheduled
+ *  minutes - the "how much of the working day is done" visual. Renders
+ *  nothing when the employee has no assigned shift, since there's no
+ *  scheduled total to measure progress against. */
+function EffectiveHoursBar({ minutes, scheduledMinutes }: { minutes?: number; scheduledMinutes?: number }) {
+  if (!scheduledMinutes) return null;
+  const pct = Math.max(0, Math.min(100, Math.round(((minutes ?? 0) / scheduledMinutes) * 100)));
+  return (
+    <div
+      className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1.5"
+      title={`${pct}% of ${fmtHM(scheduledMinutes)} scheduled`}
+    >
+      <div
+        className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
@@ -200,67 +262,12 @@ function RowActionsMenu({
 
 /* ============================== data mapping ============================== */
 
-type DayStatus = 'present' | 'weekoff' | 'holiday' | 'on_leave' | 'absent' | 'not_marked' | 'inprogress';
-
-interface AttendanceRow {
-  date: Date;
-  status: DayStatus;
-  checkIn?: string;
-  checkOut?: string;
-  effectiveMinutes?: number;
-  arrival?: 'On Time' | 'Late';
-  note?: string;
-}
-
-function fmtHM(minutes?: number) {
-  if (minutes == null) return '-';
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}h ${m}m`;
-}
-
-// Local (not UTC) YYYY-MM-DD — Date#toISOString() converts to UTC first, which
-// shifts the date by a day for anyone west of UTC. Build the string from the
-// local getFullYear/getMonth/getDate instead.
-function toLocalISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 function fmtClock(time24: string, use24h: boolean) {
   if (use24h) return time24;
   const [h, m] = time24.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-// ISO timestamp (UTC) → local "HH:MM" 24h string, what AttendanceVisual expects.
-function isoToHM(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function toAttendanceRow(v: AttendanceDayView): AttendanceRow {
-  const date = new Date(`${v.attendance_date}T00:00:00`);
-
-  if (v.status === 'weekend') return { date, status: 'weekoff' };
-  if (v.status === 'holiday') return { date, status: 'holiday', note: v.holiday_name ?? 'Holiday' };
-  if (v.status === 'on_leave') return { date, status: 'on_leave', note: v.leave_type_name ?? 'On Leave' };
-  if (v.status === 'absent') return { date, status: 'absent' };
-  if (v.status === 'not_marked') return { date, status: 'not_marked' };
-
-  // present / work_from_home / half_day
-  return {
-    date,
-    status: v.check_out ? 'present' : 'inprogress',
-    checkIn: v.check_in ? isoToHM(v.check_in) : undefined,
-    checkOut: v.check_out ? isoToHM(v.check_out) : undefined,
-    effectiveMinutes: v.working_minutes ?? undefined,
-    arrival: v.late_minutes && v.late_minutes > 0 ? 'Late' : 'On Time',
-  };
 }
 
 type LogRangeMode = 'week' | 'month' | 'custom';
@@ -279,6 +286,7 @@ export default function AttendancePage() {
     // app layout's full-height `overflow-y-auto` container. `100vh` here stacks
     // on top of the header + padding and creates a phantom scroll region.
     <div className="min-h-full bg-slate-50 font-['Inter']">
+      <AttendanceLeaveTabs active="attendance" />
       <div className="p-4 sm:p-8">
         <AttendanceTab />
       </div>
@@ -293,7 +301,7 @@ function AttendanceTab() {
   const [statsPeriod, setStatsPeriod] = useState<'This Week' | 'Last Week' | 'This Month'>('Last Week');
   const [statsMenuOpen, setStatsMenuOpen] = useState(false);
   const [now, setNow] = useState(new Date());
-  const [logSubTab, setLogSubTab] = useState<'log' | 'calendar' | 'requests'>('log');
+  const [logSubTab, setLogSubTab] = useState<'log' | 'requests'>('log');
   const [logRangeMode, setLogRangeMode] = useState<LogRangeMode>('month');
   const [logRangeMenuOpen, setLogRangeMenuOpen] = useState(false);
   const [rowActionsFor, setRowActionsFor] = useState<string | null>(null);
@@ -309,6 +317,7 @@ function AttendanceTab() {
   const [todayLoading, setTodayLoading] = useState(true);
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showPolicy, setShowPolicy] = useState(false);
 
   const [historyViews, setHistoryViews] = useState<AttendanceDayView[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -444,7 +453,35 @@ function AttendanceTab() {
     }
   };
 
-  const rows = historyViews.map(toAttendanceRow);
+  const handleStartBreak = async () => {
+    setActionPending(true);
+    setActionError(null);
+    try {
+      await attendanceApi.startBreak();
+      refreshToday();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Could not start break');
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  const handleEndBreak = async () => {
+    setActionPending(true);
+    setActionError(null);
+    try {
+      await attendanceApi.endBreak();
+      refreshToday();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Could not end break');
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  // historyViews comes back oldest-first (the range query); the log table
+  // should read like a feed, most recent day on top.
+  const rows = [...historyViews].reverse().map(toAttendanceRow);
 
   const meHrs = summary ? fmtHM(summary.total_working_minutes) : '—';
   const meOnTime =
@@ -471,8 +508,6 @@ function AttendanceTab() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold text-slate-900">Attendance Stats</h1>
-
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         {/* Attendance Stats */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
@@ -509,13 +544,14 @@ function AttendanceTab() {
             </span>
           </div>
 
-          <div className="grid grid-cols-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2 px-1">
+          <div className="grid grid-cols-4 text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2 px-1">
             <span />
             <span className="text-right">Avg Hrs / Day</span>
             <span className="text-right">On Time Arrival</span>
+            <span className="text-right">Overtime</span>
           </div>
 
-          <div className="grid grid-cols-3 items-center py-3 border-t border-slate-100">
+          <div className="grid grid-cols-4 items-center py-3 border-t border-slate-100">
             <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[10px] font-bold">
                 Me
@@ -525,15 +561,19 @@ function AttendanceTab() {
             <span className="text-right text-lg font-bold text-slate-900">
               {summaryLoading ? '…' : meOnTime !== null ? `${meOnTime}%` : '—'}
             </span>
+            <span className="text-right text-lg font-bold text-slate-900">
+              {summaryLoading ? '…' : summary ? fmtHM(summary.overtime_minutes) : '—'}
+            </span>
           </div>
 
-          <div className="grid grid-cols-3 items-center py-3 border-t border-slate-100">
+          <div className="grid grid-cols-4 items-center py-3 border-t border-slate-100">
             <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[10px] font-bold">
                 T
               </span>
               My Team
             </span>
+            <span className="text-right text-lg font-bold text-slate-400">—</span>
             <span className="text-right text-lg font-bold text-slate-400">—</span>
             <span className="text-right text-lg font-bold text-slate-400">—</span>
           </div>
@@ -561,9 +601,19 @@ function AttendanceTab() {
                 Today ({isoToHM(today.check_in)}
                 {today.check_out ? ` - ${isoToHM(today.check_out)}` : ' - now'})
               </p>
-              <AttendanceVisual checkIn={isoToHM(today.check_in)} checkOut={today.check_out ? isoToHM(today.check_out) : undefined} />
+              <AttendanceVisual
+                checkIn={isoToHM(today.check_in)}
+                checkOut={today.check_out ? isoToHM(today.check_out) : undefined}
+                breakMinutes={today.break_minutes ?? undefined}
+                shiftStart={today.shift_start_time ?? undefined}
+                shiftEnd={today.shift_end_time ?? undefined}
+              />
               <div className="flex items-center justify-between text-xs text-slate-500 mt-3">
                 <span>Duration: {fmtHM(today.working_minutes ?? undefined)}</span>
+                {today.break_minutes ? <span>Break: {fmtHM(today.break_minutes)}</span> : null}
+                {today.overtime_minutes ? (
+                  <span className="text-blue-600 font-medium">+{fmtHM(today.overtime_minutes)} OT</span>
+                ) : null}
               </div>
             </>
           ) : (
@@ -573,7 +623,22 @@ function AttendanceTab() {
 
         {/* Actions */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-          <h3 className="text-base font-bold text-slate-900 mb-4">Actions</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-bold text-slate-900">Actions</h3>
+            <span
+              className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${
+                today?.check_out
+                  ? 'bg-slate-100 text-slate-600'
+                  : today?.on_break
+                    ? 'bg-amber-100 text-amber-700'
+                    : today?.check_in
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-slate-100 text-slate-400'
+              }`}
+            >
+              {today?.check_out ? 'Checked out' : today?.on_break ? 'On Break' : today?.check_in ? 'Present' : 'Not checked in'}
+            </span>
+          </div>
           <div className="border border-slate-200 rounded-lg px-4 py-3 mb-4">
             <span className="text-2xl font-bold text-slate-900 tabular-nums">{timeLabel.replace(/(AM|PM)/, '')}</span>
             <span className="text-sm font-semibold text-slate-500 ml-1">{timeLabel.match(/AM|PM/)?.[0]}</span>
@@ -583,8 +648,9 @@ function AttendanceTab() {
           {!todayLoading && (
             <button
               onClick={today?.check_in && !today.check_out ? handleCheckOut : handleCheckIn}
-              disabled={actionPending || Boolean(today?.check_in && today?.check_out)}
-              className="w-full mb-4 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              disabled={actionPending || Boolean(today?.check_in && today?.check_out) || Boolean(today?.on_break)}
+              title={today?.on_break ? 'End your break before checking out' : undefined}
+              className="w-full mb-3 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {today?.check_in && today?.check_out
                 ? 'Checked out for today'
@@ -597,6 +663,26 @@ function AttendanceTab() {
                     : 'Check In'}
             </button>
           )}
+
+          {!todayLoading && today?.check_in && !today?.check_out ? (
+            <button
+              onClick={today?.on_break ? handleEndBreak : handleStartBreak}
+              disabled={actionPending}
+              className={`w-full mb-4 px-4 py-2.5 text-sm font-semibold rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                today?.on_break
+                  ? 'border-amber-300 text-amber-700 hover:bg-amber-50'
+                  : 'border-slate-200 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {today?.on_break
+                ? actionPending
+                  ? 'Ending break…'
+                  : `End Break${today?.break_minutes ? ` (${fmtHM(today.break_minutes)})` : ''}`
+                : actionPending
+                  ? 'Starting break…'
+                  : 'Take a Break'}
+            </button>
+          ) : null}
           {actionError && <p className="text-xs text-red-600 mb-4">{actionError}</p>}
 
           <div className="space-y-3">
@@ -608,7 +694,7 @@ function AttendanceTab() {
               Work From Home
             </button>
             <button
-              onClick={() => router.push('/help')}
+              onClick={() => setShowPolicy(true)}
               className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
             >
               <ClockIcon className="w-4 h-4" />
@@ -617,6 +703,8 @@ function AttendanceTab() {
           </div>
         </div>
       </div>
+
+      {showPolicy ? <AttendancePolicyModal onClose={() => setShowPolicy(false)} /> : null}
 
       {/* Logs & Requests */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
@@ -639,8 +727,7 @@ function AttendanceTab() {
           {(
             [
               ['log', 'Attendance Log'],
-              ['calendar', 'Calendar'],
-              ['requests', 'Attendance Requests'],
+              ['requests', 'My Requests'],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -658,7 +745,7 @@ function AttendanceTab() {
         {logSubTab === 'log' ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
-              <h3 className="text-sm font-semibold text-slate-900">{logRangeLabel}</h3>
+              <h3 className="text-sm font-bold text-slate-900">{logRangeLabel}</h3>
               <div className="flex items-center gap-3">
                 <div className="relative">
                   <button
@@ -719,7 +806,7 @@ function AttendanceTab() {
                 <table className="w-full">
                   <thead className="bg-slate-50 border-y border-slate-200">
                     <tr>
-                      {['Date', 'Attendance Visual', 'Effective Hours', 'Arrival', 'Log', ''].map((h) => (
+                      {['Date', 'Attendance Visual', 'Effective Hours', 'Arrival', 'Departure', 'Log', ''].map((h) => (
                         <th key={h} className="px-5 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase">
                           {h}
                         </th>
@@ -746,19 +833,52 @@ function AttendanceTab() {
                                 {placeholder.label}
                               </span>
                             ) : null}
+                            {row.isWfhDay ? (
+                              <span
+                                className="ml-2 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-blue-100 text-blue-700"
+                                title={[row.wfhNote ?? 'Org-wide WFH day', row.wfhDescription].filter(Boolean).join(' — ')}
+                              >
+                                WFH
+                              </span>
+                            ) : null}
+                            {row.events?.length ? (
+                              <span
+                                className="ml-2 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-fuchsia-100 text-fuchsia-700"
+                                title={row.events.map((e) => [e.name, e.description].filter(Boolean).join(' — ')).join('\n')}
+                              >
+                                {row.events.length > 1 ? `${row.events.length} events` : row.events[0].name}
+                              </span>
+                            ) : null}
                           </td>
                           {placeholder ? (
-                            <td className="px-5 py-4 text-sm text-slate-400" colSpan={4}>
+                            <td className="px-5 py-4 text-sm text-slate-400" colSpan={5}>
                               {placeholder.text}
+                              {row.noteDescription ? (
+                                <span className="block text-xs text-slate-400 mt-0.5">{row.noteDescription}</span>
+                              ) : null}
                             </td>
                           ) : (
                             <>
                               <td className="px-5 py-4">
-                                <AttendanceVisual checkIn={row.checkIn} checkOut={row.checkOut} />
+                                <AttendanceVisual
+                                  checkIn={row.checkIn}
+                                  checkOut={row.checkOut}
+                                  shiftStart={row.shiftStart}
+                                  shiftEnd={row.shiftEnd}
+                                />
                               </td>
                               <td className="px-5 py-4 text-sm font-semibold text-slate-900">
                                 {fmtHM(row.effectiveMinutes)}
                                 {row.status === 'inprogress' ? ' +' : ''}
+                                {row.overtimeMinutes ? (
+                                  <span className="ml-1.5 text-[10px] font-semibold text-blue-600">
+                                    +{fmtHM(row.overtimeMinutes)} OT
+                                  </span>
+                                ) : null}
+                                <EffectiveHoursBar
+                                  minutes={liveEffectiveMinutes(row, now)}
+                                  scheduledMinutes={row.shiftScheduledMinutes}
+                                />
                               </td>
                               <td className="px-5 py-4">
                                 <span
@@ -767,6 +887,15 @@ function AttendanceTab() {
                                   }`}
                                 >
                                   {row.arrival === 'Late' ? '⚠' : '✓'} {row.arrival}
+                                </span>
+                              </td>
+                              <td className="px-5 py-4">
+                                <span
+                                  className={`inline-flex items-center gap-1 text-sm font-medium ${
+                                    row.departure === 'Early' ? 'text-amber-600' : 'text-slate-700'
+                                  }`}
+                                >
+                                  {row.departure === 'Early' ? '⚠' : '✓'} {row.departure}
                                 </span>
                               </td>
                               <td className="px-5 py-4">
@@ -804,8 +933,7 @@ function AttendanceTab() {
           </>
         ) : null}
 
-        {logSubTab === 'calendar' ? <MiniCalendar rows={rows} /> : null}
-        {logSubTab === 'requests' ? <AttendanceRequestsList rangeLabel={logRangeLabel} /> : null}
+        {logSubTab === 'requests' ? <MyAttendanceRequests rangeLabel={logRangeLabel} /> : null}
       </div>
 
       {/* only reason use24h/fmtClock helper exists is to keep parity with the toggle; small usage to avoid unused warnings */}
@@ -814,62 +942,7 @@ function AttendanceTab() {
   );
 }
 
-function MiniCalendar({ rows }: { rows: AttendanceRow[] }) {
-  const byDate = new Map(rows.map((r) => [r.date.toDateString(), r]));
-  const first = rows[rows.length - 1]?.date ?? new Date();
-  const year = first.getFullYear();
-  const month = first.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstWeekday = (new Date(year, month, 1).getDay() + 6) % 7; // Monday-first
-
-  const cells: (Date | null)[] = Array(firstWeekday).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
-
-  const colorFor = (status?: DayStatus) => {
-    switch (status) {
-      case 'present':
-        return 'bg-emerald-100 text-emerald-700';
-      case 'inprogress':
-        return 'bg-blue-100 text-blue-700';
-      case 'on_leave':
-        return 'bg-violet-100 text-violet-700';
-      case 'holiday':
-        return 'bg-amber-100 text-amber-700';
-      case 'absent':
-        return 'bg-red-100 text-red-700';
-      case 'weekoff':
-        return 'bg-slate-100 text-slate-400';
-      default:
-        return 'text-slate-300';
-    }
-  };
-
-  return (
-    <div className="p-5">
-      <div className="grid grid-cols-7 gap-2 text-center text-[11px] font-semibold text-slate-400 uppercase mb-2">
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
-          <span key={d}>{d}</span>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-2">
-        {cells.map((date, i) =>
-          date ? (
-            <div
-              key={i}
-              className={`aspect-square rounded-lg flex items-center justify-center text-sm font-medium ${colorFor(
-                byDate.get(date.toDateString())?.status,
-              )}`}
-            >
-              {date.getDate()}
-            </div>
-          ) : (
-            <div key={i} />
-          ),
-        )}
-      </div>
-    </div>
-  );
-}
+/* ============================== my requests (own WFH / regularisation) ============================== */
 
 function requestStatusPillClass(status: AttendanceRequestStatus): string {
   switch (status) {
@@ -905,34 +978,24 @@ function fmtRequestRange(start: string, end: string): string {
   return start === end ? fmtRequestDate(start) : `${fmtRequestDate(start)} – ${fmtRequestDate(end)}`;
 }
 
-function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
-  const { user } = useAuth();
-  const canApprove = user?.permissions.includes('attendance.approve') ?? false;
-
+/** Shows the signed-in employee's own WFH / regularisation requests (submit
+ *  via the row "⋮" menu above). Approving other people's requests lives on
+ *  the separate /approvals page instead. */
+function MyAttendanceRequests({ rangeLabel }: { rangeLabel: string }) {
   const [ownRequests, setOwnRequests] = useState<AttendanceRequest[]>([]);
-  const [approvals, setApprovals] = useState<AttendanceRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [decidingId, setDecidingId] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editReason, setEditReason] = useState('');
 
   const refresh = useCallback(async () => {
     setOwnRequests(await attendanceApi.getRequests());
-    if (canApprove) {
-      try {
-        setApprovals(await attendanceApi.getPendingApprovals());
-      } catch {
-        setApprovals([]);
-      }
-    } else {
-      setApprovals([]);
-    }
-  }, [canApprove]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -940,7 +1003,7 @@ function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
     setLoadError(null);
     refresh()
       .catch((e) => {
-        if (active) setLoadError(e instanceof Error ? e.message : 'Failed to load attendance requests');
+        if (active) setLoadError(e instanceof Error ? e.message : 'Failed to load your requests');
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -965,32 +1028,105 @@ function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
     }
   };
 
-  const handleDecide = async (id: string, approve: boolean) => {
-    setDecidingId(id);
-    setActionError(null);
-    setActionMessage(null);
-    try {
-      await attendanceApi.decideRequest(id, approve, approve ? undefined : rejectReason.trim());
-      setActionMessage(approve ? 'Request approved.' : 'Request rejected.');
-      setRejectingId(null);
-      setRejectReason('');
-      await refresh();
-    } catch (e) {
-      setActionError(e instanceof AttendanceApiError ? e.message : 'Could not update this request');
-    } finally {
-      setDecidingId(null);
-    }
-  };
-
   const wfhRequests = ownRequests.filter((r) => r.request_type === 'wfh');
   const regularisationRequests = ownRequests.filter((r) => r.request_type === 'regularisation');
 
   if (loading) {
-    return <div className="p-5 text-sm text-slate-500">Loading requests…</div>;
+    return <div className="p-5 text-sm text-slate-500">Loading your requests…</div>;
   }
   if (loadError) {
     return <div className="p-5 text-sm text-red-600">{loadError}</div>;
   }
+
+  const startEdit = (r: AttendanceRequest) => {
+    setEditingId(r.id);
+    setEditDate(r.start_date);
+    setEditReason(r.reason ?? '');
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    setSavingId(id);
+    setActionError(null);
+    setActionMessage(null);
+    try {
+      await attendanceApi.updateRequest(id, { start_date: editDate, reason: editReason.trim() });
+      setActionMessage('Request updated.');
+      setEditingId(null);
+      await refresh();
+    } catch (e) {
+      setActionError(e instanceof AttendanceApiError ? e.message : 'Could not update this request');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const renderRequest = (r: AttendanceRequest, dateLabel: string, editable: boolean) => (
+    <div key={r.id} className="border border-slate-200 rounded-lg px-4 py-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold text-slate-900">{dateLabel}</p>
+          {r.reason ? <p className="text-xs text-slate-500 mt-0.5">{r.reason}</p> : null}
+          {r.status !== 'submitted' && r.approver_remarks ? (
+            <p className="text-xs text-slate-400 mt-0.5">Remarks: {r.approver_remarks}</p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${requestStatusPillClass(r.status)}`}>
+            {requestStatusLabel[r.status]}
+          </span>
+          {r.status === 'submitted' && editingId !== r.id ? (
+            <>
+              {editable ? (
+                <button
+                  onClick={() => startEdit(r)}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                >
+                  Edit
+                </button>
+              ) : null}
+              <button
+                onClick={() => handleCancel(r.id)}
+                disabled={cancellingId === r.id}
+                className="text-xs font-medium text-red-500 hover:text-red-600 disabled:opacity-50"
+              >
+                {cancellingId === r.id ? 'Cancelling…' : 'Cancel'}
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+      {editingId === r.id ? (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <input
+            type="date"
+            value={editDate}
+            onChange={(e) => setEditDate(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+          />
+          <input
+            type="text"
+            value={editReason}
+            onChange={(e) => setEditReason(e.target.value)}
+            placeholder="Reason"
+            className="flex-1 min-w-[160px] text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
+          />
+          <button
+            onClick={() => handleSaveEdit(r.id)}
+            disabled={savingId === r.id || !editDate}
+            className="text-xs font-semibold px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {savingId === r.id ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => setEditingId(null)}
+            className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="p-5 space-y-5">
@@ -1004,86 +1140,6 @@ function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
         </div>
       )}
 
-      {/* Approvals (managers/HR only) */}
-      {canApprove ? (
-        <div className="border border-slate-200 rounded-xl overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4">
-            <h3 className="text-base font-bold text-slate-900">Approvals</h3>
-          </div>
-          {approvals.length === 0 ? (
-            <p className="mx-5 mb-5 text-sm text-slate-400">No requests awaiting your approval.</p>
-          ) : (
-            <div className="mx-5 mb-5 space-y-3">
-              {approvals.map((a) => (
-                <div key={a.id} className="border border-slate-200 rounded-lg px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-900 truncate">
-                        {a.employee_name || 'Employee'} —{' '}
-                        {a.request_type === 'wfh' ? 'Work From Home' : 'Regularisation'}
-                      </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {fmtRequestRange(a.start_date, a.end_date)}
-                        {a.reason ? ` · ${a.reason}` : ''}
-                      </p>
-                    </div>
-                    {rejectingId === a.id ? null : (
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => handleDecide(a.id, true)}
-                          disabled={decidingId === a.id}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => {
-                            setRejectingId(a.id);
-                            setRejectReason('');
-                          }}
-                          disabled={decidingId === a.id}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {rejectingId === a.id ? (
-                    <div className="flex items-center gap-2 mt-3">
-                      <input
-                        type="text"
-                        value={rejectReason}
-                        onChange={(e) => setRejectReason(e.target.value)}
-                        placeholder="Reason for rejection (required)"
-                        className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500/10"
-                      />
-                      <button
-                        onClick={() => handleDecide(a.id, false)}
-                        disabled={decidingId === a.id || rejectReason.trim().length === 0}
-                        className="text-xs font-semibold px-3 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
-                      >
-                        Confirm reject
-                      </button>
-                      <button
-                        onClick={() => {
-                          setRejectingId(null);
-                          setRejectReason('');
-                        }}
-                        className="text-xs font-medium px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {/* Work From Home Requests */}
       <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4">
           <h3 className="text-base font-bold text-slate-900">Work From Home Requests</h3>
@@ -1095,33 +1151,11 @@ function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
           </div>
         ) : (
           <div className="mx-5 mb-5 space-y-2">
-            {wfhRequests.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{fmtRequestRange(r.start_date, r.end_date)}</p>
-                  {r.reason ? <p className="text-xs text-slate-500 mt-0.5">{r.reason}</p> : null}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${requestStatusPillClass(r.status)}`}>
-                    {requestStatusLabel[r.status]}
-                  </span>
-                  {r.status === 'submitted' ? (
-                    <button
-                      onClick={() => handleCancel(r.id)}
-                      disabled={cancellingId === r.id}
-                      className="text-xs font-medium text-red-500 hover:text-red-600 disabled:opacity-50"
-                    >
-                      {cancellingId === r.id ? 'Cancelling…' : 'Cancel'}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
+            {wfhRequests.map((r) => renderRequest(r, fmtRequestRange(r.start_date, r.end_date), false))}
           </div>
         )}
       </div>
 
-      {/* Regularisation Requests */}
       <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4">
           <h3 className="text-base font-bold text-slate-900">Regularisation Requests</h3>
@@ -1133,28 +1167,7 @@ function AttendanceRequestsList({ rangeLabel }: { rangeLabel: string }) {
           </div>
         ) : (
           <div className="mx-5 mb-5 space-y-2">
-            {regularisationRequests.map((r) => (
-              <div key={r.id} className="flex items-center justify-between border border-slate-200 rounded-lg px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold text-slate-900">{fmtRequestDate(r.start_date)}</p>
-                  {r.reason ? <p className="text-xs text-slate-500 mt-0.5">{r.reason}</p> : null}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className={`text-[11px] font-semibold rounded-full px-2.5 py-1 ${requestStatusPillClass(r.status)}`}>
-                    {requestStatusLabel[r.status]}
-                  </span>
-                  {r.status === 'submitted' ? (
-                    <button
-                      onClick={() => handleCancel(r.id)}
-                      disabled={cancellingId === r.id}
-                      className="text-xs font-medium text-red-500 hover:text-red-600 disabled:opacity-50"
-                    >
-                      {cancellingId === r.id ? 'Cancelling…' : 'Cancel'}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
+            {regularisationRequests.map((r) => renderRequest(r, fmtRequestDate(r.start_date), true))}
           </div>
         )}
       </div>

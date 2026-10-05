@@ -1,0 +1,88 @@
+"""The consumer side of the approvals engine (docs/LEAVE-ATTENDANCE-
+INTEGRATION.md), for the requires_approval=True path only — see
+apps.py/views.py for why an auto-approved LeaveType never raises a Request at
+all and so never reaches this receiver."""
+
+from django.db import transaction
+from django.dispatch import receiver
+from django.utils import timezone
+
+from approvals.signals import request_decided
+
+from .comp_off import credit_approved_request
+from .models import CompOffRequest, LeaveBalance, LeaveRequest, LeaveRequestStatus
+
+# approvals status -> our LeaveRequest.status
+_STATUS = {
+    "approved": LeaveRequestStatus.APPROVED,
+    "rejected": LeaveRequestStatus.REJECTED,
+    "withdrawn": LeaveRequestStatus.CANCELLED,
+}
+
+
+@receiver(request_decided)
+def apply_leave_decision(sender, request, actor, status, **kwargs):
+    if request.request_type != "leave":
+        return  # not ours — every module's decisions come through this signal
+    row_id = (request.payload or {}).get("leave_request_id")
+    if not row_id:
+        return
+    try:
+        row_id = int(row_id)
+    except (TypeError, ValueError):
+        # Same guard as attendance/handlers.py's identical case: payload is
+        # free-form JSON on the generic engine, so a malformed id here must
+        # not crash the manager's decide request.
+        return
+    row = LeaveRequest.objects.filter(pk=row_id).first()
+    if row is None:
+        return
+
+    row.status = _STATUS.get(status, row.status)
+    row.decided_at = timezone.now()
+    row.save(update_fields=["status", "decided_at", "updated_at"])
+
+    # Release the pending hold raised at submission time; approved additionally
+    # converts it into a real deduction. Rejected/withdrawn just releases it.
+    # Locked (PLAN.md Step 12) for the same reason views.py's create() is -
+    # this can race against a *different* request's create() or another
+    # decision touching the same balance row.
+    with transaction.atomic():
+        balance = (
+            LeaveBalance.objects.select_for_update()
+            .filter(
+                employee=row.employee, leave_type=row.leave_type, financial_year=row.financial_year
+            )
+            .first()
+        )
+        if balance is None:
+            return
+        balance.pending = max(balance.pending - row.duration_days, 0)
+        if row.status == LeaveRequestStatus.APPROVED:
+            balance.used += row.duration_days
+        balance.save(update_fields=["pending", "used", "updated_at"])
+
+
+@receiver(request_decided)
+def apply_comp_off_decision(sender, request, actor, status, **kwargs):
+    """Marks the Comp Off request decided and, when approved, credits the days to
+    the employee's balance (leave/comp_off.py). Rejected/withdrawn change nothing
+    else - a Comp Off request never reserves anything while pending."""
+    if request.request_type != "comp_off":
+        return
+    try:
+        row_id = int((request.payload or {}).get("comp_off_request_id"))
+    except (TypeError, ValueError):
+        return
+    row = (
+        CompOffRequest.objects.select_related("employee__user", "leave_type")
+        .filter(pk=row_id)
+        .first()
+    )
+    if row is None:
+        return
+    row.status = _STATUS.get(status, row.status)
+    row.decided_at = timezone.now()
+    row.save(update_fields=["status", "decided_at", "updated_at"])
+    if row.status == LeaveRequestStatus.APPROVED:
+        credit_approved_request(row)

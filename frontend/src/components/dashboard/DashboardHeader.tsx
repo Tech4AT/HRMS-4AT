@@ -1,6 +1,8 @@
 'use client';
 
-import { SunCloudIcon, MapPinIcon } from '@/components/icons';
+import { useEffect, useState } from 'react';
+import { MapPinIcon } from '@/components/icons';
+import { employee360Api } from '@/lib/api/employee360';
 
 interface DashboardHeaderProps {
   firstName: string;
@@ -13,6 +15,19 @@ function getGreeting(hour: number) {
 }
 
 export function DashboardHeader({ firstName }: DashboardHeaderProps) {
+  // The signed-in employee's work location, from their own profile.
+  const [location, setLocation] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    employee360Api
+      .get('me')
+      .then((p) => active && setLocation(p.job.location_name))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const now = new Date();
   const greeting = getGreeting(now.getHours());
   const dateLabel = now.toLocaleDateString('en-US', {
@@ -36,14 +51,15 @@ export function DashboardHeader({ firstName }: DashboardHeaderProps) {
       <div className="flex items-center gap-4 text-sm text-indigo-100 shrink-0">
         <div className="text-right">
           <div className="font-semibold text-white">{dateLabel}</div>
-          <div className="flex items-center justify-end gap-1 text-xs text-indigo-200/80">
-            <MapPinIcon className="w-3.5 h-3.5" />
-            Bengaluru, India
-          </div>
+          {location ? (
+            <div className="flex items-center justify-end gap-1 text-xs text-indigo-200/80">
+              <MapPinIcon className="w-3.5 h-3.5" />
+              {location}
+            </div>
+          ) : null}
         </div>
-        <div className="flex items-center gap-1.5 pl-4 border-l border-white/10 text-indigo-100">
-          <SunCloudIcon className="w-6 h-6 text-amber-400" />
-          <span className="font-semibold">28°C</span>
+        <div className="pl-4 border-l border-white/10 text-xs text-indigo-200/80 max-w-[8rem]">
+          Weather is yet to be implemented
         </div>
       </div>
     </div>

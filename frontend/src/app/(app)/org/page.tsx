@@ -1,7 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useAuth } from '@/lib/auth/useAuth';
+import { orgApi } from '@/lib/api/org';
+import { documentsApi, DocumentsApiError, UploadedDocument } from '@/lib/api/documents';
+import { DocumentUploadModal, formatBytes } from '@/components/documents/DocumentUploadModal';
+import { OrgDocumentsSection } from '@/components/documents/org/OrgDocumentsSection';
+import { MyOrgDocuments } from '@/components/documents/org/MyOrgDocuments';
+import { PendingAcknowledgements } from '@/components/documents/org/PendingAcknowledgements';
+import { DocumentViewerModal } from '@/components/documents/DocumentViewerModal';
 
 /* ------------------------------ data ------------------------------ */
 
@@ -110,6 +118,12 @@ const uniqueValues = (employees: Employee[], key: FilterKey) =>
 
 export default function OrgPage() {
   const searchParams = useSearchParams();
+  const { hasPermission, hasOrgScope } = useAuth();
+  // HR/managers who manage org documents get the full management section;
+  // plain employees get the read/acknowledge view of docs pushed to them.
+  // Every employee holds documents.write at SELF scope, so org scope is what
+  // separates managers here (mirrors backend _can_manage_org_documents).
+  const canManageDocs = hasOrgScope() && (hasPermission('documents.write') || hasPermission('org.manage'));
   const [tab, setTab] = useState<'directory' | 'chart' | 'documents'>('directory');
 
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -122,76 +136,77 @@ export default function OrgPage() {
     if (t === 'directory' || t === 'chart' || t === 'documents') setTab(t);
   }, [searchParams]);
 
+  const mountedRef = useRef(true);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const [rawEmployees, departments, businessUnits, locations, costCenters, designations, profile] =
-          await Promise.all([
-            fetchJson<RawEmployee[]>('/api/employees'),
-            fetchJson<NamedEntity[]>('/api/departments'),
-            fetchJson<NamedEntity[]>('/api/business-units'),
-            fetchJson<NamedEntity[]>('/api/locations'),
-            fetchJson<NamedEntity[]>('/api/cost-centers'),
-            fetchJson<NamedEntity[]>('/api/designations'),
-            fetchJson<{ id: string }>('/api/ess/profile'),
-          ]);
-        if (cancelled) return;
-        const deptMap = toNameMap(departments);
-        const buMap = toNameMap(businessUnits);
-        const locMap = toNameMap(locations);
-        const ccMap = toNameMap(costCenters);
-        const desigMap = toNameMap(designations);
-        setEmployees(rawEmployees.map((e) => toEmployee(e, deptMap, buMap, locMap, ccMap, desigMap)));
-        setMeId(profile.id);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load organisation data');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    mountedRef.current = true;
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
   }, []);
 
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const [rawEmployees, departments, businessUnits, locations, costCenters, designations] =
+        await Promise.all([
+          fetchJson<RawEmployee[]>('/api/org-directory'),
+          fetchJson<NamedEntity[]>('/api/departments'),
+          fetchJson<NamedEntity[]>('/api/business-units'),
+          fetchJson<NamedEntity[]>('/api/locations'),
+          fetchJson<NamedEntity[]>('/api/cost-centers'),
+          fetchJson<NamedEntity[]>('/api/designations'),
+        ]);
+      if (!mountedRef.current) return;
+      const deptMap = toNameMap(departments);
+      const buMap = toNameMap(businessUnits);
+      const locMap = toNameMap(locations);
+      const ccMap = toNameMap(costCenters);
+      const desigMap = toNameMap(designations);
+      setEmployees(rawEmployees.map((e) => toEmployee(e, deptMap, buMap, locMap, ccMap, desigMap)));
+      // Best-effort: only marks "you" on the chart. An account without an
+      // employee record (e.g. superadmin) has no profile — that must not
+      // blank the directory/chart for everyone else.
+      fetchJson<{ id: string }>('/api/ess/profile')
+        .then((profile) => {
+          if (mountedRef.current) setMeId(profile.id);
+        })
+        .catch(() => {});
+    } catch (e) {
+      if (mountedRef.current)
+        setError(e instanceof Error ? e.message : 'Failed to load organisation data');
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
   return (
     <div className="min-h-screen bg-gray-50 font-['Inter']">
-      <div className="bg-white border-b border-gray-200 px-4 sm:px-8">
-        <div className="flex gap-6">
-          {(
-            [
-              ['directory', 'Employee Directory'],
-              ['chart', 'Organisation Chart'],
-              ['documents', 'Organization Documents'],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`px-1 py-3 border-b-2 font-semibold text-sm transition-colors ${
-                tab === id
-                  ? 'border-purple-600 text-purple-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
+      {/* Section tabs come from the uniform sub-nav in the app layout, driven by
+          the ?tab= query this page reads above. */}
       <div className="p-4 sm:p-8">
         {tab === 'documents' ? (
-          <Documents />
+          <div className="space-y-4">
+            {/* Shown to every role above the document area: the docs this user
+                must still acknowledge, each with an Acknowledge button. */}
+            <PendingAcknowledgements />
+            {canManageDocs ? (
+              <OrgDocumentsSection verified={<Documents employees={employees} meId={meId} />} employees={employees} />
+            ) : (
+              <MyOrgDocuments />
+            )}
+          </div>
         ) : loading ? (
           <p className="text-sm text-gray-500">Loading...</p>
         ) : error ? (
           <p className="text-sm text-red-600">{error}</p>
         ) : tab === 'directory' ? (
-          <Directory employees={employees} />
+          <Directory employees={employees} onChanged={reload} />
         ) : (
           <OrgChart employees={employees} meId={meId} />
         )}
@@ -202,78 +217,6 @@ export default function OrgPage() {
 
 /* ------------------------------ documents ------------------------------ */
 
-interface OrgDocument {
-  title: string;
-  description: string;
-  expires: string;
-  size: string;
-  updated: string;
-}
-
-interface DocFolder {
-  name: string;
-  documents: OrgDocument[];
-}
-
-const docFolders: DocFolder[] = [
-  {
-    name: 'Human Resources Policies',
-    documents: [
-      { title: 'Employee Training and Development', description: '', expires: 'No', size: '316.60 KB', updated: '24 May 2024' },
-      { title: 'Grievance Policy', description: '', expires: 'No', size: '334.18 KB', updated: '24 May 2024' },
-      { title: 'Code of Conduct Policy', description: '', expires: 'No', size: '269.41 KB', updated: '24 May 2024' },
-      { title: 'Work From Home Policy', description: 'Guidelines for remote and hybrid working', expires: 'No', size: '258.23 KB', updated: '24 May 2024' },
-      { title: 'Drug & Alcohol Policy', description: '', expires: 'No', size: '244.01 KB', updated: '24 May 2024' },
-      { title: 'Rewards and Recognition Policy', description: '', expires: 'No', size: '260.21 KB', updated: '24 May 2024' },
-      { title: 'Leave Policy', description: 'Leave types, accrual and application process', expires: 'No', size: '376.88 KB', updated: '25 May 2024' },
-      { title: 'Hiring Policy', description: '', expires: 'No', size: '243.49 KB', updated: '25 May 2024' },
-    ],
-  },
-  {
-    name: 'Compliance Policies',
-    documents: [
-      { title: 'Anti-Bribery & Corruption Policy', description: '', expires: 'No', size: '198.44 KB', updated: '18 Apr 2024' },
-      { title: 'Whistleblower Policy', description: '', expires: 'No', size: '176.10 KB', updated: '18 Apr 2024' },
-      { title: 'Data Protection & Privacy Policy', description: 'How employee and customer data is handled', expires: 'No', size: '312.77 KB', updated: '02 May 2024' },
-      { title: 'Conflict of Interest Policy', description: '', expires: 'No', size: '154.30 KB', updated: '02 May 2024' },
-      { title: 'Regulatory Reporting Guidelines', description: '', expires: '31 Dec 2025', size: '221.09 KB', updated: '11 Jun 2024' },
-    ],
-  },
-  {
-    name: 'Operational Policies',
-    documents: [
-      { title: 'Travel & Expense Policy', description: 'Booking, limits and reimbursement claims', expires: 'No', size: '287.65 KB', updated: '09 Mar 2024' },
-      { title: 'Asset Management Policy', description: '', expires: 'No', size: '203.12 KB', updated: '09 Mar 2024' },
-    ],
-  },
-  {
-    name: 'Information Security Policies',
-    documents: [
-      { title: 'Acceptable Use Policy', description: 'Use of company devices, email and internet', expires: 'No', size: '241.88 KB', updated: '20 Feb 2024' },
-      { title: 'Password & Access Control Policy', description: '', expires: 'No', size: '188.44 KB', updated: '20 Feb 2024' },
-    ],
-  },
-  {
-    name: 'Communication Policy',
-    documents: [
-      { title: 'Internal & External Communication Guidelines', description: '', expires: 'No', size: '167.20 KB', updated: '14 Jan 2024' },
-    ],
-  },
-  {
-    name: 'Risk Management Policies',
-    documents: [
-      { title: 'Enterprise Risk Management Framework', description: '', expires: 'No', size: '402.55 KB', updated: '30 Apr 2024' },
-      { title: 'Business Continuity Plan', description: 'Response and recovery procedures', expires: '30 Apr 2025', size: '355.90 KB', updated: '30 Apr 2024' },
-    ],
-  },
-  {
-    name: 'Insurance Policy',
-    documents: [
-      { title: 'Group Health Insurance Handbook', description: 'Coverage, network hospitals and claims', expires: '31 Mar 2025', size: '512.34 KB', updated: '01 Apr 2024' },
-    ],
-  },
-];
-
 function FolderIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
@@ -282,110 +225,242 @@ function FolderIcon({ className }: { className?: string }) {
   );
 }
 
-function Documents() {
-  const [activeFolder, setActiveFolder] = useState(docFolders[0].name);
-  const [folderSearch, setFolderSearch] = useState('');
+/* Real per-employee file store (documents app, primitive #6). The previous
+   mock (hardcoded policy folders) is gone: this lists the selected
+   employee's `employee_document` bucket with live metadata, and HR/admin
+   users can upload, preview, download and delete. The backend enforces
+   everything (owner + entity_type->permission mapping + HR Admin); the
+   permission checks here only decide what UI to offer. */
+function Documents({ employees, meId }: { employees: Employee[]; meId: string | null }) {
+  const { hasPermission, hasOrgScope } = useAuth();
+  const canRead = hasPermission('documents.read');
+  const canWrite = hasPermission('documents.write');
+  // Broad-visibility users may browse anyone's bucket; everyone else is
+  // locked to their own record (the backend 403s anything else, so offering
+  // the picker would only produce failures).
+  const canSeeOthers =
+    hasOrgScope() ||
+    hasPermission('employees.write') ||
+    hasPermission('org.manage') ||
+    hasPermission('employees.personal.read');
 
-  const visibleFolders = docFolders.filter((f) =>
-    f.name.toLowerCase().includes(folderSearch.trim().toLowerCase()),
-  );
-  const folder = docFolders.find((f) => f.name === activeFolder) ?? docFolders[0];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveId = canSeeOthers ? (selectedId ?? meId ?? employees[0]?.id ?? null) : meId;
+
+  const [docs, setDocs] = useState<UploadedDocument[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+  const [viewing, setViewing] = useState<UploadedDocument | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | number | null>(null);
+
+  const load = useCallback(async () => {
+    if (!effectiveId) {
+      setDocs([]);
+      return;
+    }
+    try {
+      setLoadError(null);
+      setDocs(await documentsApi.list('employee_document', effectiveId));
+    } catch (e) {
+      setDocs(null);
+      setLoadError(e instanceof DocumentsApiError ? e.message : 'Failed to load documents');
+    }
+  }, [effectiveId]);
+
+  useEffect(() => {
+    if (canRead) void load();
+  }, [canRead, load]);
+
+  const remove = async (doc: UploadedDocument) => {
+    setActionError(null);
+    setDeletingId(doc.id);
+    try {
+      await documentsApi.remove(doc.id);
+      setViewing((v) => (v && v.id === doc.id ? null : v));
+      await load();
+    } catch (e) {
+      setActionError(e instanceof DocumentsApiError ? e.message : 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  if (!canRead) {
+    return (
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center">
+        <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
+        <p className="text-sm text-gray-500 mt-2">You don&apos;t have permission to view documents.</p>
+      </div>
+    );
+  }
+
+  const selected = employees.find((e) => e.id === effectiveId) ?? null;
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Documents in these folders are uploaded by admin and available for viewing by all employees.
-        </p>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-bold text-slate-900">Organization documents</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Files on the selected employee&apos;s record — upload, preview, download or delete.
+          </p>
+        </div>
+        {canWrite && effectiveId && (
+          <button
+            type="button"
+            onClick={() => setShowUpload(true)}
+            className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700"
+          >
+            Upload document
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
-        {/* Folder list */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-3 h-max">
-          <div className="relative mb-2">
-            <input
-              type="text"
-              value={folderSearch}
-              onChange={(e) => setFolderSearch(e.target.value)}
-              placeholder="Search"
-              className="w-full pl-8 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-purple-400"
-            />
-            <svg className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <circle cx="11" cy="11" r="7" />
-              <path d="m21 21-4.3-4.3" strokeLinecap="round" />
-            </svg>
-          </div>
-          <div className="space-y-0.5">
-            {visibleFolders.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-gray-400">No folders found.</p>
-            ) : (
-              visibleFolders.map((f) => (
-                <button
-                  key={f.name}
-                  onClick={() => setActiveFolder(f.name)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors ${
-                    f.name === activeFolder ? 'bg-purple-50' : 'hover:bg-gray-50'
-                  }`}
-                >
-                  <FolderIcon className={`w-4 h-4 mt-0.5 shrink-0 ${f.name === activeFolder ? 'text-purple-600' : 'text-gray-400'}`} />
-                  <span className="min-w-0">
-                    <span className={`block text-sm font-medium truncate ${f.name === activeFolder ? 'text-purple-700' : 'text-slate-800'}`}>
-                      {f.name}
-                    </span>
-                    <span className="block text-xs text-gray-400">{f.documents.length} document{f.documents.length === 1 ? '' : 's'}</span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
+      {canSeeOthers && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm px-5 py-3 flex items-center gap-3 flex-wrap">
+          <label htmlFor="org-docs-employee" className="text-sm font-medium text-slate-700">
+            Employee
+          </label>
+          <select
+            id="org-docs-employee"
+            value={effectiveId ?? ''}
+            onChange={(e) => setSelectedId(e.target.value || null)}
+            className="min-w-0 flex-1 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-purple-400"
+          >
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name} — {e.title}
+              </option>
+            ))}
+          </select>
         </div>
+      )}
 
-        {/* Document table */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-          <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
-            <span className="w-9 h-9 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
-              <FolderIcon className="w-4 h-4" />
+      {actionError && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{actionError}</p>
+      )}
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-200">
+          <span className="w-9 h-9 rounded-full bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+            <FolderIcon className="w-4 h-4" />
+          </span>
+          <h3 className="text-base font-bold text-slate-900">
+            {selected ? `${selected.name}'s documents` : 'Documents'}
+          </h3>
+          {docs && (
+            <span className="text-xs text-gray-400">
+              {docs.length} document{docs.length === 1 ? '' : 's'}
             </span>
-            <h3 className="text-base font-bold text-slate-900">{folder.name}</h3>
-          </div>
-          <div className="overflow-x-auto">
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          {loadError ? (
+            <p className="px-5 py-8 text-center text-sm text-red-600">{loadError}</p>
+          ) : docs === null ? (
+            <p className="px-5 py-8 text-center text-sm text-gray-500">Loading...</p>
+          ) : docs.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-gray-500">
+              No documents on this record yet{canWrite ? ' — upload the first one above.' : '.'}
+            </p>
+          ) : (
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Document Title</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Description</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Expiration Date</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Document</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Type</th>
                   <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Size</th>
-                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Last Updated</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Uploaded by</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Uploaded at</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Expires</th>
+                  <th className="px-5 py-3 text-left text-[11px] font-semibold text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {folder.documents.map((doc) => (
-                  <tr key={doc.title} className="hover:bg-gray-50 transition-colors">
+                {docs.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-3">
-                      <button className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline text-left">
-                        {doc.title}
+                      <button
+                        type="button"
+                        onClick={() => setViewing(doc)}
+                        className="text-sm font-medium text-purple-600 hover:text-purple-700 hover:underline text-left"
+                      >
+                        {doc.originalFilename}
                       </button>
                     </td>
-                    <td className="px-5 py-3 text-sm text-gray-500">{doc.description || '—'}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.expires}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.size}</td>
-                    <td className="px-5 py-3 text-sm text-gray-700">{doc.updated}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">{doc.contentType || '—'}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {typeof doc.size === 'number' ? formatBytes(doc.size) : (doc.fileSize != null ? formatBytes(doc.fileSize) : '—')}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-700">{doc.uploadedByName || '—'}</td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-gray-700">
+                      {doc.expiryDate ?? '—'}
+                      {doc.isExpired && (
+                        <span className="ml-2 text-xs font-medium text-red-600">Expired</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-sm">
+                      <span className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setViewing(doc)}
+                          className="text-purple-600 hover:text-purple-700 hover:underline"
+                        >
+                          View
+                        </button>
+                        {doc.downloadUrl && (
+                          <a href={doc.downloadUrl} className="text-purple-600 hover:text-purple-700 hover:underline">
+                            Download
+                          </a>
+                        )}
+                        {canWrite && (
+                          <button
+                            type="button"
+                            disabled={deletingId === doc.id}
+                            onClick={() => void remove(doc)}
+                            className="text-red-600 hover:text-red-700 hover:underline disabled:opacity-50"
+                          >
+                            {deletingId === doc.id ? 'Deleting…' : 'Delete'}
+                          </button>
+                        )}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          )}
         </div>
       </div>
+
+      {showUpload && effectiveId && (
+        <DocumentUploadModal
+          title={`Upload to ${selected ? selected.name : 'employee'}'s record`}
+          entityType="employee_document"
+          entityId={effectiveId}
+          employeeId={Number(effectiveId)}
+          allowExpiryDate
+          onUploaded={() => {
+            setShowUpload(false);
+            void load();
+          }}
+          onClose={() => setShowUpload(false)}
+        />
+      )}
+      {viewing && <DocumentViewerModal document={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }
 
 /* ------------------------------ directory ------------------------------ */
 
-function Directory({ employees }: { employees: Employee[] }) {
+function Directory({ employees, onChanged }: { employees: Employee[]; onChanged: () => void }) {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('org.manage') || hasPermission('employees.write');
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     businessUnit: '',
     department: '',
@@ -393,6 +468,8 @@ function Directory({ employees }: { employees: Employee[] }) {
     costCenter: '',
   });
   const [search, setSearch] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState<'list' | 'gallery'>('list');
 
   const hasActiveFilter = Object.values(filters).some(Boolean) || search.trim() !== '';
 
@@ -416,6 +493,35 @@ function Directory({ employees }: { employees: Employee[] }) {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-lg font-bold text-slate-900">Employee Directory</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div role="group" aria-label="Change view" className="flex rounded-xl border border-gray-200 bg-gray-50 p-0.5">
+            {(['list', 'gallery'] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                  view === v ? 'bg-white text-slate-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                {v === 'list' ? 'List' : 'Gallery'}
+              </button>
+            ))}
+          </div>
+          {canManage ? (
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+            >
+              Add employee
+            </button>
+          ) : null}
+        </div>
+      </div>
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
         <div className="flex flex-wrap items-end gap-3">
           {filterKeys.map((key) => (
@@ -467,6 +573,31 @@ function Directory({ employees }: { employees: Employee[] }) {
         </div>
         {rows.length === 0 ? (
           <p className="px-5 py-12 text-center text-sm text-gray-500">No employees match these filters.</p>
+        ) : view === 'gallery' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+            {rows.map((e) => (
+              <div key={e.id} className="bg-white rounded-2xl border border-gray-200 p-5 hover:shadow-lg transition-shadow">
+                <div className="flex items-center gap-3 mb-1">
+                  <span
+                    className={`w-10 h-10 rounded-full bg-gradient-to-br ${e.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}
+                  >
+                    {e.initials}
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-gray-900 truncate">{e.name}</h3>
+                    <p className="text-indigo-600 text-sm font-semibold truncate">{e.title}</p>
+                  </div>
+                </div>
+                <div className="space-y-1 text-sm mt-2">
+                  <p className="text-gray-600">{e.department}</p>
+                  <p className="text-gray-500">{e.location}</p>
+                  {e.email ? (
+                    <p className="text-blue-600 truncate">{e.email}</p>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -506,6 +637,269 @@ function Directory({ employees }: { employees: Employee[] }) {
           </div>
         )}
       </div>
+
+      {showAdd ? (
+        <AddEmployeeModal
+          employees={employees}
+          onClose={() => setShowAdd(false)}
+          onCreated={() => {
+            setShowAdd(false);
+            onChanged();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/* ------------------------------ add employee ------------------------------ */
+
+const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern'];
+
+/**
+ * Creates a real Employee row (POST /api/employees). The manager select sets
+ * the reports-to link, so the new person appears under their manager in the
+ * chart as soon as the directory refetches — no manual DB reload.
+ */
+function AddEmployeeModal({
+  employees,
+  onClose,
+  onCreated,
+}: {
+  employees: Employee[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [departments, setDepartments] = useState<NamedEntity[]>([]);
+  const [designations, setDesignations] = useState<NamedEntity[]>([]);
+  const [locations, setLocations] = useState<NamedEntity[]>([]);
+
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [workEmail, setWorkEmail] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [designationId, setDesignationId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [managerId, setManagerId] = useState('');
+  const [employmentType, setEmploymentType] = useState('full_time');
+  const [dateOfJoining, setDateOfJoining] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [depts, desigs, locs] = await Promise.all([
+          fetchJson<NamedEntity[]>('/api/departments'),
+          fetchJson<NamedEntity[]>('/api/designations'),
+          fetchJson<NamedEntity[]>('/api/locations'),
+        ]);
+        if (!cancelled) {
+          setDepartments(depts);
+          setDesignations(desigs);
+          setLocations(locs);
+        }
+      } catch {
+        /* options stay empty; the form still submits */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!firstName.trim() || !workEmail.trim() || !employeeCode.trim()) {
+      setFormError('First name, work email and employee code are required.');
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await orgApi.createEmployee({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        work_email: workEmail.trim(),
+        employee_code: employeeCode.trim(),
+        department_id: departmentId || null,
+        designation_id: designationId || null,
+        location_id: locationId || null,
+        manager_id: managerId || null,
+        employment_type: employmentType,
+        date_of_joining: dateOfJoining || null,
+      });
+      onCreated();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not add the employee.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputClass =
+    'mt-1 block w-full px-3 py-2 text-sm bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-purple-400';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add employee"
+    >
+      <form
+        onSubmit={submit}
+        onClick={(ev) => ev.stopPropagation()}
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white rounded-2xl border border-gray-200 shadow-lg p-5"
+      >
+        <h3 className="text-base font-bold text-slate-900">Add employee</h3>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Saved to the employee directory — the new person shows in the directory and under their
+          manager in the chart.
+        </p>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">First name *</span>
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Last name</span>
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Work email *</span>
+            <input
+              type="email"
+              value={workEmail}
+              onChange={(e) => setWorkEmail(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Employee code *</span>
+            <input
+              type="text"
+              value={employeeCode}
+              onChange={(e) => setEmployeeCode(e.target.value)}
+              placeholder="e.g. EMP-0147"
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Department</span>
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Designation</span>
+            <select
+              value={designationId}
+              onChange={(e) => setDesignationId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {designations.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Location</span>
+            <select
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Select…</option>
+              {locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Manager (reports to)</span>
+            <select
+              value={managerId}
+              onChange={(e) => setManagerId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">No manager (top of org)</option>
+              {employees.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} — {m.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Employment type</span>
+            <select
+              value={employmentType}
+              onChange={(e) => setEmploymentType(e.target.value)}
+              className={inputClass}
+            >
+              {EMPLOYMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-semibold text-slate-600">Date of joining</span>
+            <input
+              type="date"
+              value={dateOfJoining}
+              onChange={(e) => setDateOfJoining(e.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
+        {formError ? <p className="mt-3 text-xs text-rose-700">{formError}</p> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-colors disabled:opacity-60"
+          >
+            {saving ? 'Adding…' : 'Add employee'}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -523,6 +917,52 @@ function ancestorsOf(employees: Employee[], id: string): string[] {
   return chain;
 }
 
+/**
+ * The default collapsed set: every manager at depth >= 1 (i.e. below the top
+ * level) starts collapsed, so the first paint shows roots + their direct
+ * reports only instead of all 146 people sprawling horizontally without
+ * bound. The user expands subtrees (or Expand all) from there. Depth is
+ * measured from the visible roots (no manager, or manager outside the list).
+ */
+function defaultCollapsedFor(list: Employee[]): Set<string> {
+  const ids = new Set(list.map((e) => e.id));
+  const childCount = new Map<string, number>();
+  for (const e of list) {
+    if (e.managerId && ids.has(e.managerId)) {
+      childCount.set(e.managerId, (childCount.get(e.managerId) ?? 0) + 1);
+    }
+  }
+  const depth = new Map<string, number>();
+  const queue: { id: string; d: number }[] = list
+    .filter((e) => !e.managerId || !ids.has(e.managerId))
+    .map((e) => ({ id: e.id, d: 0 }));
+  for (let i = 0; i < queue.length; i++) {
+    const { id, d } = queue[i];
+    if (depth.has(id)) continue;
+    depth.set(id, d);
+    for (const e of list) {
+      if (e.managerId === id) queue.push({ id: e.id, d: d + 1 });
+    }
+  }
+  const collapsed = new Set<string>();
+  for (const e of list) {
+    if ((depth.get(e.id) ?? 0) >= 1 && (childCount.get(e.id) ?? 0) > 0) {
+      collapsed.add(e.id);
+    }
+  }
+  return collapsed;
+}
+
+/** Every manager in the list, whatever their depth — the fully folded view. */
+function allCollapsedFor(list: Employee[]): Set<string> {
+  const ids = new Set(list.map((e) => e.id));
+  const hasChild = new Set<string>();
+  for (const e of list) {
+    if (e.managerId && ids.has(e.managerId)) hasChild.add(e.managerId);
+  }
+  return hasChild;
+}
+
 function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | null }) {
   const byId = (id: string) => employees.find((e) => e.id === id);
   const me = meId ? byId(meId) : undefined;
@@ -531,6 +971,36 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const [deptFocus, setDeptFocus] = useState(false);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [toast, setToast] = useState('');
+  const [zoom, setZoom] = useState(1);
+  const chartScrollRef = useRef<HTMLDivElement>(null);
+
+  // Fold the chart to the default two-level view on first load, so a wide org
+  // (17 departments, 146 people) doesn't paint fully expanded and sprawl
+  // off-screen. Runs once — later toggles and refetches are the user's own.
+  const autoFoldedRef = useRef(false);
+  useEffect(() => {
+    if (autoFoldedRef.current || employees.length === 0) return;
+    autoFoldedRef.current = true;
+    setCollapsed(defaultCollapsedFor(employees));
+  }, [employees]);
+
+  const zoomIn = () => setZoom((z) => Math.min(2, Math.round((z + 0.1) * 10) / 10));
+  const zoomOut = () => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10));
+  const zoomReset = () => setZoom(1);
+
+  // Ctrl+wheel zooms (native non-passive listener so preventDefault works).
+  useEffect(() => {
+    const el = chartScrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (e.deltaY < 0) zoomIn();
+      else if (e.deltaY > 0) zoomOut();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const toggle = (id: string) =>
     setCollapsed((prev) => {
@@ -555,7 +1025,7 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
   const goTopOfOrg = () => {
     setGroupByDept(false);
     setDeptFocus(false);
-    setCollapsed(new Set());
+    setCollapsed(defaultCollapsedFor(employees));
     setHighlightId(null);
   };
 
@@ -633,6 +1103,52 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Zoom controls */}
+          <div
+            className="inline-flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white"
+            role="group"
+            aria-label="Chart zoom"
+          >
+            <button
+              onClick={zoomOut}
+              disabled={zoom <= 0.4}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
+              title="Zoom out"
+              aria-label="Zoom out"
+            >
+              −
+            </button>
+            <button
+              onClick={zoomReset}
+              className="px-2 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200"
+              title="Reset zoom to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={zoomIn}
+              disabled={zoom >= 2}
+              className="px-2.5 py-2 text-sm font-bold text-gray-600 hover:bg-gray-50 transition-colors border-l border-gray-200 disabled:opacity-40"
+              title="Zoom in (or Ctrl+scroll)"
+              aria-label="Zoom in"
+            >
+              +
+            </button>
+          </div>
+          <button
+            onClick={() => setCollapsed(new Set())}
+            className="text-sm font-medium text-gray-700 hover:text-gray-900"
+            title="Expand every node"
+          >
+            Expand all
+          </button>
+          <button
+            onClick={() => setCollapsed(allCollapsedFor(employees))}
+            className="text-sm font-medium text-gray-700 hover:text-gray-900"
+            title="Fold every subtree back to the top level"
+          >
+            Collapse all
+          </button>
           <button
             onClick={() => setGroupByDept((v) => !v)}
             className="flex items-center gap-2 text-sm font-medium text-gray-700"
@@ -661,8 +1177,11 @@ function OrgChart({ employees, meId }: { employees: Employee[]; meId: string | n
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-x-auto">
-        <div className="flex justify-center gap-10 min-w-max">
+      <div ref={chartScrollRef} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-10 overflow-auto">
+        <div
+          className="flex justify-center gap-10 min-w-max"
+          style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+        >
           {roots.map((r) => (
             <OrgNode
               key={r.id}

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { BACKEND_API_URL } from './backend';
+import { MOCK_AUTH_ENABLED, MOCK_REFRESH_TOKEN } from './mock-auth';
+import { handleMockRequest } from './mock-data';
 
 const ACCESS_MAX_AGE = 15 * 60; // 15 minutes — matches the access-token JWT
 const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days — matches the refresh-token JWT
@@ -7,7 +9,7 @@ const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days — matches the refresh-toke
 function cookieBase() {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.SECURE_COOKIES === 'true',
     sameSite: 'lax' as const,
     path: '/',
   };
@@ -77,11 +79,22 @@ async function callRefresh(refreshToken: string): Promise<Rotated | null> {
 export async function proxyToBackend(
   req: NextRequest,
   path: string,
-  init: RequestInit = {},
+  init: RequestInit & { isMultipart?: boolean } = {},
 ): Promise<ProxyResult> {
+  if (MOCK_AUTH_ENABLED) {
+    if (req.cookies.get('refreshToken')?.value !== MOCK_REFRESH_TOKEN) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+    const method = (init.method as string) || 'GET';
+    const rawBody = typeof init.body === 'string' ? init.body : undefined;
+    const { status, body } = handleMockRequest(method, path, rawBody);
+    return { status, body };
+  }
+
   let accessToken = req.cookies.get('accessToken')?.value;
   const refreshToken = req.cookies.get('refreshToken')?.value;
   let rotated: Rotated | undefined;
+  const { isMultipart, ...restInit } = init;
 
   if (!accessToken && refreshToken) {
     const r = await callRefresh(refreshToken);
@@ -93,15 +106,24 @@ export async function proxyToBackend(
     return { status: 401, body: null, sessionExpired: true };
   }
 
-  const send = (token: string) =>
-    fetch(`${BACKEND_API_URL}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init.headers ?? {}),
-        Authorization: `Bearer ${token}`,
-      },
+  const send = (token: string) => {
+    const headers: any = {
+      ...(restInit.headers ?? {}),
+      Authorization: `Bearer ${token}`,
+    };
+    // Don't set Content-Type for multipart requests (let fetch handle it).
+    if (!isMultipart) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return fetch(`${BACKEND_API_URL}${path}`, {
+      ...restInit,
+      // Proxies a live backend resource on every call — never let Next.js's
+      // fetch cache serve a stale GET (e.g. Policy Settings read right back
+      // after its own PUT).
+      cache: 'no-store',
+      headers,
     });
+  };
 
   let res = await send(accessToken);
 
@@ -133,12 +155,24 @@ type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
  */
 export function createBackendProxyRoute(
   backendPrefix: string,
+  options: { trailingSlash?: boolean } = {},
 ): Record<Method, RouteHandler> {
+  // DRF's default routers expect a trailing slash (payroll, admin,
+  // notifications...); the attendance / leave / calendar / approvals routers
+  // are built with trailing_slash=False and need none.
+  const trailingSlash = options.trailingSlash ?? true;
   const make =
     (method: Method): RouteHandler =>
     async (req, ctx) => {
-      const { path = [] } = await ctx.params;
-      const backendPath = `/${backendPrefix}/${path.join('/')}${req.nextUrl.search}`;
+      // ctx.params is absent on a base (non-catch-all) route.ts, so guard it —
+      // otherwise destructuring undefined throws a 500 (e.g. /api/assets list).
+      const { path = [] } = (await ctx.params) ?? {};
+      const pathStr = path.length > 0 ? path.join('/') : '';
+      const base = pathStr ? `/${backendPrefix}/${pathStr}` : `/${backendPrefix}`;
+      // The admin proxy passes a trailing '' segment, so `base` may already end
+      // in '/'; adding another would produce '//', which Django 404s.
+      const needsSlash = (trailingSlash || !pathStr) && !base.endsWith('/');
+      const backendPath = `${base}${needsSlash ? '/' : ''}${req.nextUrl.search}`;
 
       const init: RequestInit = { method };
       if (method !== 'GET') {
@@ -188,5 +222,118 @@ export function createBackendProxyRoute(
     PUT: make('PUT'),
     PATCH: make('PATCH'),
     DELETE: make('DELETE'),
+  };
+}
+
+/**
+ * Same auth/refresh handling as {@link proxyToBackend}, but for a multipart
+ * file upload — the body is a `FormData`, forwarded as-is (never JSON), and
+ * the response is still the ordinary JSON envelope.
+ */
+export async function proxyFormDataToBackend(
+  req: NextRequest,
+  path: string,
+  formData: FormData,
+  method: 'POST' | 'PUT' | 'PATCH' = 'POST',
+): Promise<ProxyResult> {
+  let accessToken = req.cookies.get('accessToken')?.value;
+  const refreshToken = req.cookies.get('refreshToken')?.value;
+  let rotated: Rotated | undefined;
+
+  if (!accessToken && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    accessToken = r.accessToken;
+    rotated = r;
+  }
+  if (!accessToken) {
+    return { status: 401, body: null, sessionExpired: true };
+  }
+
+  // No Content-Type header here — fetch sets the multipart boundary itself
+  // when the body is a FormData instance.
+  const send = (token: string) =>
+    fetch(`${BACKEND_API_URL}${path}`, {
+      method,
+      body: formData,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  let res = await send(accessToken);
+
+  if (res.status === 401 && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    rotated = r;
+    res = await send(r.accessToken);
+    if (res.status === 401) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+  }
+
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body, rotated };
+}
+
+export type BinaryProxyResult = ProxyResult & {
+  arrayBuffer?: ArrayBuffer;
+  contentType?: string | null;
+  contentDisposition?: string | null;
+};
+
+/**
+ * Same auth/refresh handling as {@link proxyToBackend}, but for a response
+ * whose success case is raw bytes (a PDF, an image, a ZIP) rather than the
+ * JSON envelope — `res.json()` would fail on that body, so this reads it as
+ * an ArrayBuffer instead and carries the content headers through.
+ */
+export async function proxyBinaryFromBackend(
+  req: NextRequest,
+  path: string,
+): Promise<BinaryProxyResult> {
+  let accessToken = req.cookies.get('accessToken')?.value;
+  const refreshToken = req.cookies.get('refreshToken')?.value;
+  let rotated: Rotated | undefined;
+
+  if (!accessToken && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    accessToken = r.accessToken;
+    rotated = r;
+  }
+  if (!accessToken) {
+    return { status: 401, body: null, sessionExpired: true };
+  }
+
+  const send = (token: string) =>
+    fetch(`${BACKEND_API_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  let res = await send(accessToken);
+
+  if (res.status === 401 && refreshToken) {
+    const r = await callRefresh(refreshToken);
+    if (!r) return { status: 401, body: null, sessionExpired: true };
+    rotated = r;
+    res = await send(r.accessToken);
+    if (res.status === 401) {
+      return { status: 401, body: null, sessionExpired: true };
+    }
+  }
+
+  if (res.status !== 200) {
+    const body = await res.json().catch(() => null);
+    return { status: res.status, body, rotated };
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  return {
+    status: res.status,
+    body: null,
+    rotated,
+    arrayBuffer,
+    contentType: res.headers.get('Content-Type'),
+    contentDisposition: res.headers.get('Content-Disposition'),
   };
 }

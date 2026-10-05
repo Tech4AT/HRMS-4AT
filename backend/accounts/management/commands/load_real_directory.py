@@ -8,16 +8,36 @@ superadmin plus a few real demo logins so the app is usable immediately.
 
 The xlsx is real PII and gitignored; pass its path (default: the DIRECTORY_XLSX
 env var, else /data/roster.xlsx, which docker-compose mounts read-only).
-Re-runnable: it wipes first.
+
+IMPORTANT: requires --force to run. Refuses if employees already exist unless
+--force is passed, to prevent accidental data wipe on container restart.
+Run this once as an explicit operator step, never on automatic startup.
 """
 
 import os
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from accounts.models import Role, User
-from employees.models import Department, Designation, Employee, Location
+from employees.models import (
+    BusinessUnit,
+    CostCenter,
+    Department,
+    Employee,
+    JobTitle,
+    LegalEntity,
+    Location,
+    Position,
+    Team,
+)
+from employees.org_seed import (
+    REAL_LEGAL_ENTITY_NAME,
+    seed_derived_org_masters,
+    seed_keka_org_details,
+    seed_org_document_folders,
+)
 
 DEMO_PW = "Welcome@123"
 ADMIN_EMAIL = "admin@hrms.local"
@@ -52,8 +72,25 @@ class Command(BaseCommand):
             default=os.environ.get("DIRECTORY_XLSX", "/data/roster.xlsx"),
             help="Path to the HR export .xlsx",
         )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Required to actually run. Wipes all users/employees and reloads from xlsx.",
+        )
 
     def handle(self, *args, **opts):
+        if Employee.objects.exists() and not opts["force"]:
+            raise CommandError(
+                "Employees already exist in the database.\n"
+                "This command wipes ALL users, employees and org structure before reloading.\n"
+                "Pass --force to confirm you intend to overwrite a populated database.\n"
+                "Do NOT run this on automatic startup."
+            )
+        if not opts["force"]:
+            raise CommandError(
+                "load_real_directory is a destructive one-time operator step.\n"
+                "Pass --force to confirm you intend to wipe all users/employees and reload from xlsx."
+            )
         path = opts["xlsx"]
         if not os.path.exists(path):
             raise CommandError(f"xlsx not found: {path}")
@@ -77,10 +114,17 @@ class Command(BaseCommand):
         with transaction.atomic():
             Employee.objects.all().delete()
             User.objects.all().delete()
+            # Derived masters are rebuilt from the fresh directory below, so
+            # wipe them here (employees are already gone, satisfying the
+            # PROTECT links; Team.department is PROTECT, hence before deps).
+            Team.objects.all().delete()
+            Position.objects.all().delete()
+            BusinessUnit.objects.all().delete()
+            CostCenter.objects.all().delete()
             # Break self-referential parent links before deleting (parent FK is PROTECT).
             Department.objects.update(parent=None)
             Department.objects.all().delete()
-            Designation.objects.all().delete()
+            JobTitle.objects.all().delete()
             Location.objects.all().delete()
 
             dep, des, loc = {}, {}, {}
@@ -111,15 +155,26 @@ class Command(BaseCommand):
                 last = g(r, "Last Name")
                 email = f"{empno.lower()}@consult-4at.com"
                 exited = g(r, "Exit Status").lower() not in ("", "none", "no")
+                # Worker Type "Contingent" = contractor; Time Type "Part Time"
+                # overrides to part-time. Everything else is full-time.
+                worker_type = g(r, "Worker Type").strip().lower()
+                time_type = g(r, "Time Type").strip().lower()
+                if "conting" in worker_type or "contract" in worker_type:
+                    emp_type = "contract"
+                elif "part" in time_type:
+                    emp_type = "part_time"
+                else:
+                    emp_type = "full_time"
                 u = User(email=email, username=email, first_name=first, last_name=last)
                 u.set_unusable_password()
                 u.save()
                 Employee.objects.create(
                     user=u, employee_code=empno,
                     department=department(g(r, "Department"), g(r, "Sub Department")),
-                    designation=simple(des, Designation, g(r, "Job Title")),
+                    designation=simple(des, JobTitle, g(r, "Job Title")),
                     location=simple(loc, Location, g(r, "Location")),
                     status="exited" if exited else "active",
+                    employment_type=emp_type,
                 )
                 rm = g(r, "Reporting Manager")
                 if rm:
@@ -171,8 +226,8 @@ class Command(BaseCommand):
             admin = User(email=ADMIN_EMAIL, username=ADMIN_EMAIL, first_name="Admin",
                          last_name="", is_staff=True, is_superuser=True)
             admin.set_password(ADMIN_PW)
-            admin.role = roles.get("HR Admin")
             admin.save()
+            admin.roles.add(roles.get("HR Admin"))
             logins = [(ADMIN_EMAIL, ADMIN_PW, "HR Admin (superuser)")]
 
             def give(emp, role_name):
@@ -180,18 +235,54 @@ class Command(BaseCommand):
                     return
                 u = emp.user
                 u.set_password(DEMO_PW)
-                u.role = roles.get(role_name)
                 u.save()
+                u.roles.add(roles.get(role_name))
                 logins.append((u.email, DEMO_PW, f"{role_name} — {u.get_full_name()}"))
 
-            mgr = max(emps, key=lambda x: Employee.objects.filter(manager=x).count())
-            give(mgr, "Manager")
-            for rep in Employee.objects.filter(manager=mgr)[:2]:
-                give(rep, "Employee")
-            hr = Employee.objects.filter(department__name__icontains="HR").exclude(pk=mgr.pk).first()
-            give(hr, "HR Admin")
+            # EXPLICIT demo logins by email (durable: this command re-runs on
+            # every backend boot, so role holders must be pinned here, not just
+            # in the DB). Nobody else gets a demo password or a role, so only
+            # admin + these 4 can log in. Everyone else stays in the directory
+            # with an unusable password and no roles.
+            DEMO_LOGINS = [
+                ("4at0111@consult-4at.com", "HR Admin"),
+                ("4at0181@consult-4at.com", "Employee"),
+                ("4at0187@consult-4at.com", "Manager"),
+                ("4at0070@consult-4at.com", "Finance"),
+            ]
+            by_email = {e.user.email.lower(): e for e in emps}
+            for email, role_name in DEMO_LOGINS:
+                emp = by_email.get(email.lower())
+                if emp is None:
+                    self.stdout.write(f"  WARNING: demo login email not found: {email}")
+                    continue
+                give(emp, role_name)
+
+            # Derived org masters (BusinessUnit/CostCenter/Team/Position) from
+            # the real directory just loaded — idempotent, so every boot
+            # rebuilds them identically after the wipe above.
+            seed_counts = seed_derived_org_masters()
+            keka_counts = seed_keka_org_details()
+            folder_counts = seed_org_document_folders()
+
+            # Legal-entity link: every loaded employee belongs to the primary
+            # entity, so the Legal Entity stats count them (was 0 before).
+            entity = LegalEntity.objects.filter(name=REAL_LEGAL_ENTITY_NAME).first()
+            if entity is None:
+                entity = LegalEntity.objects.order_by("id").first()
+            if entity is not None:
+                Employee.objects.filter(legal_entity__isnull=True).update(legal_entity=entity)
+
+            # Laptop inventory from the mounted HR export (gitignored PII).
+            # Skipped when the file isn't mounted — must never break boot.
+            assets_csv = os.environ.get("ASSETS_CSV", "/data/docs/asset_laptops.csv")
+            if os.path.exists(assets_csv):
+                call_command("import_assets", path=assets_csv)
+            else:
+                self.stdout.write(f"  WARNING: assets CSV not mounted, skipping: {assets_csv}")
 
         self.stdout.write(self.style.SUCCESS(
-            f"Loaded {len(emps)} employees, {linked} manager links. Logins:"))
+            f"Loaded {len(emps)} employees, {linked} manager links. "
+            f"Derived masters: {seed_counts}. Keka details: {keka_counts}. Logins:"))
         for em, pw, note in logins:
             self.stdout.write(f"  {em} / {pw}   [{note}]")

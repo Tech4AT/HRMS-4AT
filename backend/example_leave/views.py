@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from approvals import service as approvals
 from audit.service import write_audit
 from core.permissions import ScopedEmployeePermission
 from core.scope import resolve_employee_scope
@@ -40,12 +41,21 @@ class LeaveRequestViewSet(
         if employee is None:
             raise PermissionDenied("This account has no employee record.")
         serializer.save(employee=employee)
+        leave = serializer.instance
         write_audit(
             self.request.user,
             "LeaveRequest.created",
             "LeaveRequest",
-            serializer.instance.pk,
+            leave.pk,
             {"employee": employee.pk},
+        )
+        # Plug into the approvals engine (#3): raise a request routed to the
+        # caller's manager. The decision comes back via request_decided
+        # (handlers.py), which sets this row's status — no direct approve needed.
+        approvals.create_request(
+            self.request.user,
+            "example_leave",
+            {"leave_request_id": leave.pk, "reason": leave.reason},
         )
 
     @action(detail=True, methods=["post"])

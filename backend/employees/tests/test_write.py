@@ -63,7 +63,7 @@ def test_hr_creates_an_employee_with_a_login_that_cannot_be_used_yet():
     assert data["department_id"] == str(department.pk)
     user = User.objects.get(email="nia.north@example.com")
     assert user.has_usable_password() is False
-    assert user.role.name == "Employee"
+    assert list(user.roles.values_list("name", flat=True)) == ["Employee"]
     assert AuditLog.objects.filter(action="Employee.created", entity_id=data["id"]).exists()
 
 
@@ -71,7 +71,7 @@ def test_a_role_in_the_request_body_is_ignored():
     """employees.write must not be a way to assign roles; that is roles.manage."""
     _hr().post(URL, _body(role="HR Admin", role_id=1), format="json")
 
-    assert User.objects.get(email="nia.north@example.com").role.name == "Employee"
+    assert list(User.objects.get(email="nia.north@example.com").roles.values_list("name", flat=True)) == ["Employee"]
 
 
 def test_duplicate_email_and_employee_code_are_rejected_with_field_errors():
@@ -258,3 +258,79 @@ def test_putting_someone_on_leave_does_not_touch_their_login():
 
     employee.user.refresh_from_db()
     assert employee.user.is_active is True
+
+
+# --- reporting lines: two-tier gating (admin vs manager) --------------------
+# Proves the objective end-to-end through the real seeded roles, not synthetic
+# ones: an HR Admin (employees.write ALL) may repoint anyone; a Manager
+# (employees.reporting_line.write TEAM; migration 0015 opened this and 0016
+# narrowed it from the broader employees.write) may repoint only within
+# their own subtree, and the change shows up on the directory read. What a
+# Manager may NOT do is covered in test_manager_reporting_line_scope.py.
+
+
+def _manager_client():
+    """A user holding the real 'Manager' role, with their own employee record."""
+    user = UserFactory(role=Role.objects.get(name="Manager"))
+    boss = EmployeeFactory(user=user)
+    return _client_for(user), boss
+
+
+def test_admin_can_set_any_managers_reporting_line():
+    a = EmployeeFactory()
+    b = EmployeeFactory()
+
+    response = _hr().patch(f"{URL}{a.pk}/", {"manager_id": b.pk}, format="json")
+
+    assert response.status_code == 200
+    a.refresh_from_db()
+    assert a.manager_id == b.pk
+
+
+def test_manager_repoints_a_report_within_their_own_subtree():
+    client, boss = _manager_client()
+    lead = EmployeeFactory(manager=boss)  # direct report
+    junior = EmployeeFactory(manager=lead)  # indirect report (subtree)
+
+    # Move the indirect report to report straight to the boss — both ends are
+    # inside the manager's TEAM scope.
+    response = client.patch(f"{URL}{junior.pk}/", {"manager_id": boss.pk}, format="json")
+
+    assert response.status_code == 200
+    junior.refresh_from_db()
+    assert junior.manager_id == boss.pk
+
+
+def test_manager_cannot_touch_a_report_outside_their_subtree():
+    client, _boss = _manager_client()
+    stranger = EmployeeFactory()  # not under this manager
+    other = EmployeeFactory()
+
+    response = client.patch(f"{URL}{stranger.pk}/", {"manager_id": other.pk}, format="json")
+
+    assert response.status_code == 403
+    stranger.refresh_from_db()
+    assert stranger.manager_id != other.pk
+
+
+def test_manager_cannot_point_a_report_at_a_manager_outside_their_subtree():
+    client, boss = _manager_client()
+    report = EmployeeFactory(manager=boss)
+    outsider = EmployeeFactory()  # outside the subtree
+
+    response = client.patch(f"{URL}{report.pk}/", {"manager_id": outsider.pk}, format="json")
+
+    assert response.status_code == 403
+    report.refresh_from_db()
+    assert report.manager_id == boss.pk
+
+
+def test_a_reporting_line_change_is_visible_on_the_directory_read():
+    a = EmployeeFactory()
+    b = EmployeeFactory()
+
+    _hr().patch(f"{URL}{a.pk}/", {"manager_id": b.pk}, format="json")
+
+    detail = _hr().get(f"{URL}{a.pk}/")
+    assert detail.status_code == 200
+    assert detail.json()["data"]["manager_id"] == str(b.pk)

@@ -22,8 +22,11 @@ function ManageOrganisation() {
   const [noManagerOnly, setNoManagerOnly] = useState(false);
 
   const canWrite = hasPermission('employees.write');
+  // A Manager can reassign reporting lines in their team without being able to edit
+  // anything else about people.
+  const canEditReportingLine = hasPermission('employees.reporting_line.write');
   const canStructure = hasPermission('org.manage');
-  const hasAccess = canWrite || canStructure;
+  const hasAccess = canWrite || canStructure || canEditReportingLine;
 
   useEffect(() => {
     if (!isLoading && (!user || !hasAccess)) router.push('/');
@@ -114,6 +117,7 @@ function ManageOrganisation() {
           employees={employees}
           lookups={lookups}
           canWrite={canWrite}
+          canEditReportingLine={canEditReportingLine}
           onClose={() => setSelected(null)}
           onSaved={async (_saved, message) => {
             await reloadEmployees();

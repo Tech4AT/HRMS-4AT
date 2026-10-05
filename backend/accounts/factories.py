@@ -34,10 +34,27 @@ class UserFactory(factory.django.DjangoModelFactory):
     class Meta:
         model = User
         django_get_or_create = ("username",)
+        skip_postgeneration_save = True
 
     username = factory.Sequence(lambda n: f"user{n}")
     email = factory.Sequence(lambda n: f"user{n}@example.com")
-    role = factory.SubFactory(RoleFactory)
+
+    @factory.post_generation
+    def role(obj, create, extracted, **kwargs):
+        """Legacy single-role hook: UserFactory(role=R) holds exactly R;
+        UserFactory(role=None) holds nothing. (No `role` argument at all
+        also holds nothing — an empty starter role grants nothing anyway,
+        so the old implicit empty role is behaviour-identical.)"""
+        if not create or extracted is None:
+            return
+        obj.roles.add(extracted)
+
+    @factory.post_generation
+    def roles(obj, create, extracted, **kwargs):
+        """Multi-role hook: UserFactory(roles=[R1, R2]) holds both."""
+        if not create or not extracted:
+            return
+        obj.roles.add(*extracted)
 
 
 class UserPermissionOverrideFactory(factory.django.DjangoModelFactory):

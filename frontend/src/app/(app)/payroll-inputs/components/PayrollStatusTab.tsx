@@ -75,7 +75,7 @@ export default function PayrollStatusTab() {
       {error && <div className="text-red-600 p-3 bg-red-50 rounded-lg">{error}</div>}
 
       <div className="flex justify-between items-center">
-        <h3 className="font-semibold text-slate-900">Employee Payroll Status</h3>
+        <h3 className="text-base font-bold text-slate-900">Employee Payroll Status</h3>
         <button
           onClick={() => setShowUpload(!showUpload)}
           className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
