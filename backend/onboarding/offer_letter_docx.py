@@ -3,14 +3,8 @@
 Uses `docxtpl` (Jinja2-in-Word) to substitute `{{placeholder}}` tokens typed
 directly into the document — it handles Word's habit of splitting one piece
 of visible text across several XML runs, which naive find/replace on the
-raw XML does not. The filled .docx is then converted to PDF by driving the
-real MS Word installed on this machine via COM automation (`docx2pdf`).
-
-This only works on Windows with MS Word installed — there is no portable
-equivalent without LibreOffice's headless `--convert-to pdf` (see the note
-in requirements.txt). If this backend ever needs to run on Linux/Mac or a
-machine without Word, swap this module for a LibreOffice-based one; nothing
-outside this file and services.py needs to change.
+raw XML does not. The filled .docx is then converted to PDF using LibreOffice's
+headless `--convert-to pdf` mode, which works on Ubuntu/Linux servers.
 """
 import logging
 import tempfile
@@ -23,35 +17,30 @@ logger = logging.getLogger(__name__)
 
 class DocxRenderError(ValueError):
     """Raised when the uploaded template can't be filled or converted —
-    e.g. it isn't a valid .docx, or Word/COM isn't available on this
+    e.g. it isn't a valid .docx, or LibreOffice isn't available on this
     machine. Subclasses ValueError so it's caught by the same handling as
     other offer-letter validation errors (see serializers.py, views.py)
     rather than surfacing as a raw 500."""
 
 
-def _convert_via_word(docx_path: str, pdf_path: str) -> None:
-    """Convert a .docx to PDF by spawning a fresh subprocess that owns its
-    own COM apartment.  Calling docx2pdf directly inside a Django worker
-    thread is unreliable on Windows: the thread may not have a message pump,
-    which causes Word to hang waiting for a DDE/COM callback that never
-    arrives.  Running the conversion in a fresh process sidesteps the issue
-    entirely — the child process's main thread initialises COM cleanly."""
-    import subprocess, sys
+def _convert_via_libreoffice(docx_path: str, pdf_path: str) -> None:
+    """Convert a .docx to PDF using LibreOffice headless mode.
 
-    script = (
-        "import pythoncom, sys; from docx2pdf import convert; "
-        "pythoncom.CoInitialize(); "
-        f"convert({docx_path!r}, {pdf_path!r}); "
-        "pythoncom.CoUninitialize()"
-    )
+    LibreOffice writes the output PDF to the same directory as the input
+    file, naming it after the input stem (rendered.docx -> rendered.pdf),
+    which matches the pdf_path the caller expects."""
+    import subprocess
+    from pathlib import Path
+
+    out_dir = str(Path(docx_path).parent)
     result = subprocess.run(
-        [sys.executable, "-c", script],
+        ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', out_dir, docx_path],
         capture_output=True,
         text=True,
         timeout=120,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or "docx2pdf subprocess failed")
+        raise RuntimeError(result.stderr or result.stdout or 'libreoffice conversion failed')
 
 
 def _expand_salary_table(docx_path: Path, rows: list) -> None:
@@ -141,22 +130,15 @@ def render_docx_template_to_pdf(source_path: str, context: dict, *, signed: bool
 
         rendered_pdf = tmp_dir_path / 'rendered.pdf'
         try:
-            _convert_via_word(str(rendered_docx), str(rendered_pdf))
-        except ImportError as exc:
-            logger.exception('docx2pdf/pywin32 not importable')
-            raise DocxRenderError(
-                'Could not convert the Word template to PDF: the server is missing the '
-                f'"{exc.name}" Python package. Run `pip install -r requirements.txt` with the '
-                'same Python that runs the backend, then restart it.'
-            ) from exc
+            _convert_via_libreoffice(str(rendered_docx), str(rendered_pdf))
         except Exception as exc:
-            logger.exception('docx2pdf conversion failed')
+            logger.exception('libreoffice conversion failed')
             raise DocxRenderError(
-                'Could not convert the Word template to PDF. This requires Microsoft Word '
-                'to be installed on the server — check it is available.'
+                'Could not convert the Word template to PDF. This requires LibreOffice '
+                'to be installed on the server — verify it is available with `libreoffice --version`.'
             ) from exc
 
         if not rendered_pdf.exists():
-            raise DocxRenderError('Word did not produce a PDF file — conversion failed silently.')
+            raise DocxRenderError('LibreOffice did not produce a PDF file — conversion failed silently.')
 
         return rendered_pdf.read_bytes()
