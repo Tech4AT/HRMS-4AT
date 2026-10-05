@@ -7,7 +7,7 @@ export function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   const publicRoutes = ['/login'];
-  const publicPrefixes = ['/set-password/'];
+  const publicPrefixes = ['/set-password/', '/offer/'];
 
   if (publicRoutes.includes(pathname) || publicPrefixes.some((p) => pathname.startsWith(p))) {
     if (hasSession && pathname === '/login') {
