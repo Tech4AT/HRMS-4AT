@@ -354,6 +354,7 @@ class MyPayrollViewSet(PayrollViewSet):
         "payslips": "payroll.read",
         "payslip": "payroll.read",
         "summary": "payroll.read",
+        "payment": "payroll.read",
     }
 
     def _me(self):
@@ -397,3 +398,35 @@ class MyPayrollViewSet(PayrollViewSet):
                 "ytd": output_service.ytd_for(employee, latest.period) if latest else None,
             }
         )
+
+    @action(detail=False, methods=["get"])
+    def payment(self, request):
+        employee = self._me()
+        data = svc.bank_and_statutory(employee, can_see_sensitive=False)
+        if data["bank"] is None:
+            # Payroll bank info not set up yet: fall back to what the employee
+            # gave during onboarding.
+            onboarding_bank = getattr(employee, "bank_details", None)
+            if onboarding_bank is not None:
+                data["bank"] = {
+                    "payment_method": "bank_transfer",
+                    "bank_name": onboarding_bank.bank_name,
+                    "bank_account_number": onboarding_bank.masked_account_number,
+                    "bank_ifsc_code": onboarding_bank.ifsc_code,
+                    "bank_account_holder_name": onboarding_bank.account_holder_name,
+                    "branch_name": onboarding_bank.branch_name,
+                    "is_masked": True,
+                }
+        profile = svc.profile_for(employee)
+        data["profile"] = (
+            None
+            if profile is None
+            else {
+                "payment_mode": profile.payment_mode,
+                "work_state": profile.work_state,
+                "tax_regime": profile.tax_regime,
+                "lwf_applicable": profile.lwf_applicable,
+                "pay_group": profile.pay_group.name if profile.pay_group_id else None,
+            }
+        )
+        return self.ok(data)

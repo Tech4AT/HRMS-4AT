@@ -174,6 +174,7 @@ const navItems: NavItem[] = [
       { label: 'Summary', href: '/payslips?tab=summary' },
       { label: 'My Pay', href: '/payslips?tab=pay' },
       { label: 'Manage Tax', href: '/payslips?tab=tax' },
+      { label: 'Expenses & Travel', href: '/payslips?tab=expenses' },
     ],
   },
   {

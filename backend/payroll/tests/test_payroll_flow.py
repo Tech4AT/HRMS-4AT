@@ -369,6 +369,16 @@ def test_full_monthly_cycle(admin, reviewer, approver, seeded):
     assert me.get(f"/api/v1/payroll/my/payslips/{other.pk}/").status_code == 403
     assert me.get(f"/api/v1/payroll/payslips/{other.pk}/").status_code == 403
 
+    # My Finances: bank/statutory are the caller's own, and masked
+    pay = data(me.get("/api/v1/payroll/my/payment/"))
+    stat = m.EmployeeStatutoryInfo.objects.get(employee=nikhil)
+    assert pay["statutory"]["pan_number"] != stat.pan_number
+    assert pay["statutory"]["pan_number"].endswith(stat.pan_number[-4:])
+    info = m.EmployeePaymentInfo.objects.get(employee=nikhil)
+    assert pay["bank"]["bank_account_number"].endswith(info.bank_account_number[-4:])
+    assert pay["bank"]["bank_account_number"] != info.bank_account_number
+    assert pay["profile"]["tax_regime"] in ("old", "new")
+
     bank = data(
         admin.post(
             f"/api/v1/payroll/runs/{run2['id']}/outputs/", {"kind": "bank_advice"}, format="json"
